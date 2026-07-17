@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -25,21 +23,25 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vineicut.app.model.Clip
 import com.vineicut.app.model.ClipType
 import com.vineicut.app.model.Project
-import com.vineicut.app.model.Track
 import com.vineicut.app.model.TrackType
 import com.vineicut.app.ui.theme.TrackAudio
 import com.vineicut.app.ui.theme.TrackImage
@@ -50,12 +52,20 @@ import com.vineicut.app.ui.theme.VcAccent
 import com.vineicut.app.ui.theme.VcBackground
 import com.vineicut.app.ui.theme.VcMuted
 import com.vineicut.app.ui.theme.VcOnSurface
-import com.vineicut.app.ui.theme.VcSurface
 import com.vineicut.app.ui.theme.VcSurfaceHigh
 
-private const val LANE_HEIGHT = 48
-private const val LANE_GAP = 4
-private const val RULER_HEIGHT = 26
+private const val RULER_H = 24f
+private const val LANE_H = 46f
+private const val LANE_GAP = 4f
+private const val HANDLE_W = 16f
+
+private val TRACK_ORDER = listOf(TrackType.MAIN, TrackType.OVERLAY, TrackType.TEXT, TrackType.AUDIO)
+
+// Drag modes
+private const val SCRUB = 0
+private const val MOVE = 1
+private const val TRIM_L = 2
+private const val TRIM_R = 3
 
 private fun trackColor(type: TrackType): Color = when (type) {
     TrackType.MAIN -> TrackVideo
@@ -65,10 +75,41 @@ private fun trackColor(type: TrackType): Color = when (type) {
     TrackType.STICKER -> TrackImage
 }
 
-/** px drag distance -> timeline milliseconds. */
-private fun Density.pxToMs(px: Float, pxPerSec: Float): Long =
-    (px.toDp().value / pxPerSec * 1000f).toLong()
+private fun laneTop(index: Int): Float = RULER_H + LANE_GAP + index * (LANE_H + LANE_GAP)
+private fun anchorDp(viewportW: Float, density: Float): Float = (viewportW / density) * 0.5f
+private fun timeToXdp(ms: Long, playheadMs: Long, pxPerSec: Float, anchor: Float): Float =
+    anchor + (ms - playheadMs) / 1000f * pxPerSec
+private fun xDpToTime(xDp: Float, playheadMs: Long, pxPerSec: Float, anchor: Float): Long =
+    (playheadMs + (xDp - anchor) / pxPerSec * 1000f).toLong()
 
+private data class ClipHit(val clip: Clip, val onLeftEdge: Boolean, val onRightEdge: Boolean)
+
+private fun hitTest(
+    xPx: Float, yPx: Float, project: Project, playheadMs: Long, pxPerSec: Float, viewportW: Float, density: Float
+): ClipHit? {
+    val xDp = xPx / density
+    val yDp = yPx / density
+    val anchor = anchorDp(viewportW, density)
+    val laneIndex = (0 until TRACK_ORDER.size).firstOrNull { i ->
+        val top = laneTop(i); yDp >= top && yDp <= top + LANE_H
+    } ?: return null
+    val type = TRACK_ORDER[laneIndex]
+    val clip = project.track(type)?.clips?.firstOrNull {
+        val l = timeToXdp(it.startMs, playheadMs, pxPerSec, anchor)
+        val r = timeToXdp(it.endMs, playheadMs, pxPerSec, anchor)
+        xDp in l..r
+    } ?: return null
+    val l = timeToXdp(clip.startMs, playheadMs, pxPerSec, anchor)
+    val r = timeToXdp(clip.endMs, playheadMs, pxPerSec, anchor)
+    return ClipHit(clip, xDp - l <= HANDLE_W, r - xDp <= HANDLE_W)
+}
+
+/**
+ * CapCut / VN-style timeline: the playhead stays fixed at the centre anchor and
+ * the filmstrip scrubs beneath it. A single unified gesture handler (no nested
+ * scroll to fight) means: drag empty/unselected strip = scrub time; tap a clip =
+ * select; drag the selected clip = move it; drag its edge handles = trim.
+ */
 @Composable
 fun TimelinePanel(
     project: Project,
@@ -76,7 +117,7 @@ fun TimelinePanel(
     pxPerSec: Float,
     selectedClipId: String?,
     onSeek: (Long) -> Unit,
-    onSelectClip: (String) -> Unit,
+    onSelectClip: (String?) -> Unit,
     onZoom: (Float) -> Unit,
     onDragStart: () -> Unit,
     onMove: (Long) -> Unit,
@@ -84,14 +125,21 @@ fun TimelinePanel(
     onTrimEnd: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val scroll = rememberScrollState()
+    val density = LocalDensity.current.density
+    var viewportW by remember { mutableStateOf(0f) }
+    val timelineH = RULER_H + TRACK_ORDER.size * (LANE_H + LANE_GAP) + LANE_GAP
+    val totalMs = maxOf(project.durationMs, 1L)
+    val anchor = anchorDp(viewportW, density)
 
-    val totalMs = maxOf(project.durationMs, 8000L)
-    val contentWidthDp = (totalMs / 1000f) * pxPerSec
-    val lanesHeight = (RULER_HEIGHT + 4 * (LANE_HEIGHT + 2 * LANE_GAP)).dp
+    // Live values read inside gestures so the gesture never restarts mid-drag.
+    val liveProject = rememberUpdatedState(project)
+    val livePlayhead = rememberUpdatedState(playheadMs)
+    val livePx = rememberUpdatedState(pxPerSec)
+    val liveSel = rememberUpdatedState(selectedClipId)
+    val liveVw = rememberUpdatedState(viewportW)
+    var dragMode by remember { mutableStateOf(SCRUB) }
 
     Column(modifier.background(VcBackground)) {
-        // Zoom controls + time readout
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -99,133 +147,101 @@ fun TimelinePanel(
             Text(formatTime(playheadMs), color = VcOnSurface, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             Text(" / ${formatTime(project.durationMs)}", color = VcMuted, fontSize = 12.sp)
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { onZoom(pxPerSec / 1.4f) }) {
-                Icon(Icons.Filled.Remove, "zoom out", tint = VcMuted)
-            }
-            IconButton(onClick = { onZoom(pxPerSec * 1.4f) }) {
-                Icon(Icons.Filled.Add, "zoom in", tint = VcMuted)
-            }
+            IconButton(onClick = { onZoom(pxPerSec / 1.4f) }) { Icon(Icons.Filled.Remove, "zoom out", tint = VcMuted) }
+            IconButton(onClick = { onZoom(pxPerSec * 1.4f) }) { Icon(Icons.Filled.Add, "zoom in", tint = VcMuted) }
         }
 
         Box(
             Modifier
                 .fillMaxWidth()
-                .horizontalScroll(scroll)
-        ) {
-            Column(
-                Modifier
-                    .width(contentWidthDp.dp)
-                    .pointerInput(pxPerSec, totalMs) {
-                        detectTapGestures { offset ->
-                            val ms = pxToMs(offset.x, pxPerSec)
-                            onSeek(ms.coerceIn(0, totalMs))
-                        }
+                .height(timelineH.dp)
+                .clipToBounds()
+                .onSizeChanged { viewportW = it.width.toFloat() }
+                .pointerInput(Unit) {
+                    detectTapGestures { pos ->
+                        val hit = hitTest(pos.x, pos.y, liveProject.value, livePlayhead.value, livePx.value, liveVw.value, density)
+                        onSelectClip(hit?.clip?.id)
                     }
-            ) {
-                TimeRuler(totalMs = totalMs, pxPerSec = pxPerSec)
-                for (type in listOf(TrackType.MAIN, TrackType.OVERLAY, TrackType.TEXT, TrackType.AUDIO)) {
-                    TrackLane(
-                        track = project.track(type),
-                        type = type,
-                        pxPerSec = pxPerSec,
-                        widthDp = contentWidthDp,
-                        selectedClipId = selectedClipId,
-                        onSelectClip = onSelectClip,
-                        onDragStart = onDragStart,
-                        onMove = onMove,
-                        onTrimStart = onTrimStart,
-                        onTrimEnd = onTrimEnd
+                }
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = { pos ->
+                            val hit = hitTest(pos.x, pos.y, liveProject.value, livePlayhead.value, livePx.value, liveVw.value, density)
+                            dragMode = when {
+                                hit == null -> SCRUB
+                                hit.clip.id != liveSel.value -> SCRUB
+                                hit.onLeftEdge -> TRIM_L
+                                hit.onRightEdge -> TRIM_R
+                                else -> MOVE
+                            }
+                            if (dragMode != SCRUB) onDragStart()
+                        },
+                        onDrag = { change, drag ->
+                            change.consume()
+                            val deltaMs = (drag.x / density / livePx.value * 1000f).toLong()
+                            when (dragMode) {
+                                SCRUB -> onSeek((livePlayhead.value - deltaMs).coerceIn(0, totalMs))
+                                MOVE -> onMove(deltaMs)
+                                TRIM_L -> onTrimStart(deltaMs)
+                                TRIM_R -> onTrimEnd(deltaMs)
+                            }
+                        }
+                    )
+                }
+        ) {
+            // Lane backgrounds
+            for (i in TRACK_ORDER.indices) {
+                Box(
+                    Modifier
+                        .offset(x = 0.dp, y = laneTop(i).dp)
+                        .fillMaxWidth()
+                        .height(LANE_H.dp)
+                        .background(VcSurfaceHigh.copy(alpha = 0.25f))
+                )
+            }
+
+            // Ruler ticks across the visible window
+            if (viewportW > 0f) {
+                val stepSec = tickStepSeconds(pxPerSec)
+                val leftTime = xDpToTime(0f, playheadMs, pxPerSec, anchor).coerceAtLeast(0L)
+                val rightTime = xDpToTime(viewportW / density, playheadMs, pxPerSec, anchor)
+                var s = (leftTime / 1000 / stepSec) * stepSec
+                while (s * 1000 <= rightTime + stepSec * 1000) {
+                    val xdp = timeToXdp(s * 1000, playheadMs, pxPerSec, anchor)
+                    Text(
+                        text = formatTime(s * 1000),
+                        color = VcMuted,
+                        fontSize = 10.sp,
+                        modifier = Modifier.offset(x = xdp.dp, y = 4.dp)
+                    )
+                    s += stepSec
+                }
+            }
+
+            // Clips
+            for (i in TRACK_ORDER.indices) {
+                val type = TRACK_ORDER[i]
+                project.track(type)?.clips?.forEach { clip ->
+                    ClipBlock(
+                        clip = clip,
+                        color = trackColor(type),
+                        leftDp = timeToXdp(clip.startMs, playheadMs, pxPerSec, anchor),
+                        widthDp = clip.durationMs / 1000f * pxPerSec,
+                        topDp = laneTop(i),
+                        selected = clip.id == selectedClipId
                     )
                 }
             }
 
-            // Playhead line + draggable knob spanning the lanes.
-            val playheadDp = (playheadMs / 1000f) * pxPerSec
+            // Fixed playhead + knob
             Box(
-                Modifier
-                    .offset(x = playheadDp.dp)
-                    .width(2.dp)
-                    .height(lanesHeight)
-                    .background(VcAccent)
+                Modifier.offset(x = anchor.dp).width(2.dp).fillMaxHeight().background(VcAccent)
             )
             Box(
                 Modifier
-                    .offset(x = (playheadDp - 9).dp)
-                    .width(20.dp)
-                    .height(RULER_HEIGHT.dp)
-                    .pointerInput(pxPerSec, totalMs) {
-                        detectDragGestures { change, drag ->
-                            change.consume()
-                            onSeek((playheadMs + pxToMs(drag.x, pxPerSec)).coerceIn(0, totalMs))
-                        }
-                    }
-            ) {
-                Box(
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .width(14.dp)
-                        .height(14.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(VcAccent)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TimeRuler(totalMs: Long, pxPerSec: Float) {
-    Box(
-        Modifier
-            .height(RULER_HEIGHT.dp)
-            .background(VcSurface)
-    ) {
-        val stepSec = tickStepSeconds(pxPerSec)
-        var s = 0L
-        while (s * 1000 <= totalMs) {
-            val x = (s.toFloat()) * pxPerSec
-            Text(
-                text = formatTime(s * 1000),
-                color = VcMuted,
-                fontSize = 10.sp,
-                modifier = Modifier.offset(x = x.dp).padding(start = 2.dp)
-            )
-            s += stepSec
-        }
-    }
-}
-
-@Composable
-private fun TrackLane(
-    track: Track?,
-    type: TrackType,
-    pxPerSec: Float,
-    widthDp: Float,
-    selectedClipId: String?,
-    onSelectClip: (String) -> Unit,
-    onDragStart: () -> Unit,
-    onMove: (Long) -> Unit,
-    onTrimStart: (Long) -> Unit,
-    onTrimEnd: (Long) -> Unit
-) {
-    Box(
-        Modifier
-            .padding(vertical = LANE_GAP.dp)
-            .width(widthDp.dp)
-            .height(LANE_HEIGHT.dp)
-            .background(VcSurfaceHigh.copy(alpha = 0.30f), RoundedCornerShape(4.dp))
-    ) {
-        track?.clips?.forEach { clip ->
-            ClipBlock(
-                clip = clip,
-                color = trackColor(type),
-                pxPerSec = pxPerSec,
-                selected = clip.id == selectedClipId,
-                onClick = { onSelectClip(clip.id) },
-                onDragStart = { onSelectClip(clip.id); onDragStart() },
-                onMove = onMove,
-                onTrimStart = onTrimStart,
-                onTrimEnd = onTrimEnd
+                    .offset(x = (anchor - 6f).dp)
+                    .width(12.dp).height(12.dp)
+                    .background(VcAccent, RoundedCornerShape(3.dp))
             )
         }
     }
@@ -235,42 +251,24 @@ private fun TrackLane(
 private fun ClipBlock(
     clip: Clip,
     color: Color,
-    pxPerSec: Float,
-    selected: Boolean,
-    onClick: () -> Unit,
-    onDragStart: () -> Unit,
-    onMove: (Long) -> Unit,
-    onTrimStart: (Long) -> Unit,
-    onTrimEnd: (Long) -> Unit
+    leftDp: Float,
+    widthDp: Float,
+    topDp: Float,
+    selected: Boolean
 ) {
-    val density = LocalDensity.current
-    val x = (clip.startMs / 1000f) * pxPerSec
-    val w = ((clip.durationMs / 1000f) * pxPerSec).dp.coerceAtLeast(14.dp)
-
+    val w = widthDp.dp.coerceAtLeast(10.dp)
     Box(
         Modifier
-            .offset(x = x.dp)
+            .offset(x = leftDp.dp, y = topDp.dp)
             .width(w)
-            .height(LANE_HEIGHT.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(color.copy(alpha = 0.85f))
+            .height(LANE_H.dp)
+            .background(color.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
             .then(if (selected) Modifier.border(2.dp, VcOnSurface, RoundedCornerShape(4.dp)) else Modifier)
-            // Tap to select; drag body to move the clip.
-            .pointerInput(clip.id, pxPerSec) {
-                detectTapGestures(onTap = { onClick() })
-            }
-            .pointerInput(clip.id, pxPerSec) {
-                detectDragGestures(
-                    onDragStart = { onDragStart() },
-                    onDrag = { change, drag ->
-                        change.consume()
-                        onMove(density.pxToMs(drag.x, pxPerSec))
-                    }
-                )
-            }
+            .clipToBounds()
     ) {
-        // Thumbnail fill for visual clips.
-        if (clip.sourceUri != null && (clip.type == ClipType.VIDEO || clip.type == ClipType.IMAGE || clip.type == ClipType.OVERLAY)) {
+        if (clip.sourceUri != null &&
+            (clip.type == ClipType.VIDEO || clip.type == ClipType.IMAGE || clip.type == ClipType.OVERLAY)
+        ) {
             MediaFrame(
                 uri = clip.sourceUri,
                 isVideo = clip.type == ClipType.VIDEO,
@@ -286,44 +284,24 @@ private fun ClipBlock(
             maxLines = 1,
             modifier = Modifier.align(Alignment.TopStart).padding(horizontal = 5.dp, vertical = 3.dp)
         )
-
         if (selected) {
-            // Left/right trim handles.
-            TrimHandle(
-                align = Alignment.CenterStart,
-                onDragStart = onDragStart,
-                onDrag = { px -> onTrimStart(density.pxToMs(px, pxPerSec)) }
-            )
-            TrimHandle(
-                align = Alignment.CenterEnd,
-                onDragStart = onDragStart,
-                onDrag = { px -> onTrimEnd(density.pxToMs(px, pxPerSec)) }
-            )
+            EdgeHandle(Alignment.CenterStart)
+            EdgeHandle(Alignment.CenterEnd)
         }
     }
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.TrimHandle(
-    align: Alignment,
-    onDragStart: () -> Unit,
-    onDrag: (Float) -> Unit
-) {
+private fun androidx.compose.foundation.layout.BoxScope.EdgeHandle(align: Alignment) {
     Box(
         Modifier
             .align(align)
-            .width(12.dp)
+            .width(HANDLE_W.dp)
             .fillMaxHeight()
-            .background(VcOnSurface.copy(alpha = 0.9f), RoundedCornerShape(3.dp))
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { onDragStart() },
-                    onDrag = { change, drag -> change.consume(); onDrag(drag.x) }
-                )
-            },
+            .background(VcOnSurface.copy(alpha = 0.9f), RoundedCornerShape(3.dp)),
         contentAlignment = Alignment.Center
     ) {
-        Box(Modifier.width(2.dp).height(16.dp).background(color = Color(0xFF303030)))
+        Box(Modifier.width(2.dp).height(16.dp).background(Color(0xFF303030)))
     }
 }
 
