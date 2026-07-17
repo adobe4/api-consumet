@@ -26,12 +26,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        setContent { VineiCutApp() }
+        setContent { VineiCutRoot() }
     }
 }
 
 @Composable
-private fun VineiCutApp() {
+private fun VineiCutRoot() {
     VineiCutTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             val vm: EditorViewModel = viewModel()

@@ -127,7 +127,7 @@ fun TimelinePanel(
                 Modifier
                     .offset(x = playheadDp.dp)
                     .width(2.dp)
-                    .height(26.dp + 4 * 52.dp)
+                    .height(234.dp) // ruler (26) + 4 lanes (~52 each)
                     .background(VcAccent)
             )
         }
