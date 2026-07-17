@@ -1,42 +1,35 @@
 {
   "name": "autoreel",
   "version": "0.1.0",
-  "description": "Auto-assemble a synced video from a voiceover, ordered visuals, and AI timecode instructions — with zoom animations and CapCut-style transitions.",
-  "author": "",
+  "description": "AutoReel — mobile (Android) app that assembles a synced portrait video from a voiceover, ordered visuals, and AI timecode instructions, with live preview and a custom transition designer.",
   "license": "MIT",
-  "main": "out/main/index.js",
-  "type": "module",
+  "main": "index.ts",
   "scripts": {
-    "dev": "electron-vite dev",
-    "start": "electron-vite preview",
-    "build": "electron-vite build",
-    "build:cli": "node scripts/build-cli.mjs",
-    "cli": "tsx src/cli/index.ts",
-    "dist": "electron-vite build && electron-builder",
-    "dist:dir": "electron-vite build && electron-builder --dir",
-    "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
-    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
-    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "start": "expo start",
+    "android": "expo run:android",
+    "prebuild": "expo prebuild --platform android --no-install",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0"
+    "@shopify/react-native-skia": "1.5.10",
+    "expo": "~52.0.11",
+    "expo-av": "~15.0.1",
+    "expo-document-picker": "~13.0.1",
+    "expo-file-system": "~18.0.4",
+    "expo-image-picker": "~16.0.3",
+    "expo-status-bar": "~2.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.5",
+    "react-native-gesture-handler": "~2.20.2",
+    "react-native-reanimated": "~3.16.1",
+    "react-native-safe-area-context": "4.12.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
-    "electron-vite": "^2.3.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vite": "^5.4.11",
+    "@types/react": "~18.3.12",
+    "typescript": "~5.7.2",
     "vitest": "^2.1.8"
-  }
+  },
+  "private": true
 }

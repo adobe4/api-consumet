@@ -7,7 +7,5 @@ export { TRANSITIONS, resolveTransitions, isKnownTransition } from './transition
 export type { TransitionDef, TransitionGroup } from './transitions';
 export { buildFfmpegArgs } from './ffmpegGraph';
 export type { GraphOptions, GraphResult } from './ffmpegGraph';
-export { render } from './render';
-export type { RenderHandle } from './render';
-export { probeDuration, detectKind } from './ffprobe';
+export { detectKind, extOf } from './media';
 export { makeRng } from './rng';

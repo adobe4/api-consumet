@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "AutoReel",
+    "slug": "autoreel",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "autoreel",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0d0f14",
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "package": "com.autoreel.app",
+      "versionCode": 1,
+      "permissions": [
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "READ_MEDIA_AUDIO"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "AutoReel needs access to your photos to add visuals to your video."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "newArchEnabled": false
+  }
+}
