@@ -1,0 +1,25 @@
+appId: com.autoreel.app
+productName: AutoReel
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+# The bundled ffmpeg / ffprobe binaries must live outside the asar archive so
+# they can be executed as real files at runtime.
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+  - node_modules/ffprobe-static/**
+mac:
+  category: public.app-category.video
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+  category: AudioVideo

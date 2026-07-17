@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "src/engine/**/*.ts",
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/cli/**/*.ts",
+    "src/types/**/*.d.ts",
+    "electron.vite.config.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["src/engine/**/*.test.ts"]
+}

@@ -1,45 +1,42 @@
 {
-    "name": "api.consumet.org",
-    "version": "1.0.0",
-    "main": "src/main.ts",
-    "scripts": {
-        "start": "ts-node src/main.ts",
-        "dev": "nodemon src/main.ts",
-        "build": "tsc",
-        "lint": "prettier --write \"src/**/*.ts\""
-    },
-    "engines": {
-        "node": ">=12.5.0",
-        "yarn": ">=1.17.3"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/consumet/consumet.ts.git"
-    },
-    "author": "prince-ao <princead@tutanota.com>",
-    "license": "MIT",
-    "bugs": {
-        "url": "https://github.com/consumet/consumet.ts/issues"
-    },
-    "homepage": "https://github.com/consumet/consumet.ts#readme",
-    "dependencies": {
-        "@consumet/extensions": "github:prince-ao/consumet.ts",
-        "@fastify/cors": "^8.5.0",
-        "@types/node": "^18.11.17",
-        "@types/ws": "^8.5.3",
-        "axios": "^1.0.0",
-        "chalk": "4.1.2",
-        "cheerio": "1.0.0-rc.12",
-        "dotenv": "^16.0.3",
-        "fastify": "^4.10.2",
-        "ioredis": "^5.2.4",
-        "reconnecting-websocket": "^4.4.0",
-        "ts-node": "^10.9.1",
-        "ws": "^8.8.1"
-    },
-    "devDependencies": {
-        "nodemon": "3.0.1",
-        "prettier": "^3.0.0",
-        "typescript": "5.3.3"
-    }
+  "name": "autoreel",
+  "version": "0.1.0",
+  "description": "Auto-assemble a synced video from a voiceover, ordered visuals, and AI timecode instructions — with zoom animations and CapCut-style transitions.",
+  "author": "",
+  "license": "MIT",
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "electron-vite build",
+    "build:cli": "node scripts/build-cli.mjs",
+    "cli": "tsx src/cli/index.ts",
+    "dist": "electron-vite build && electron-builder",
+    "dist:dir": "electron-vite build && electron-builder --dir",
+    "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
+  }
 }

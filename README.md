@@ -1,135 +1,164 @@
-<p align="center">
-  <a href="https://consumet.org/">
-    <img alt="Consumet" src="https://consumet.org/images/consumetlogo.png" width="150">
-  </a>
-</p>
+# AutoReel
 
-<h1 align="center">
-  Consumet API
-</h1>
-<p align="center">
-  Consumet provides an APIs for accessing information and links for various entertainments like movies, books, anime, etc.
-</p>
-<p align="center">
-    <a href="https://github.com/consumet/api.consumet.org/actions/workflows/docker-build.yml">
-      <img src="https://github.com/consumet/api.consumet.org/actions/workflows/docker-build.yml/badge.svg" alt="Discord">
-    </a>
-    <a href="https://github.com/consumet/api.consumet.org/actions/workflows/codeql-analysis.yml">
-      <img src="https://github.com/consumet/api.consumet.org/actions/workflows/codeql-analysis.yml/badge.svg" alt="Discord">
-    </a>
-    <a href="https://discord.gg/qTPfvMxzNH">
-      <img src="https://img.shields.io/discord/987492554486452315?color=7289da&label=discord&logo=discord&logoColor=7289da" alt="Discord">
-    </a>
-    <a href="https://github.com/consumet/api/blob/master/LICENSE">
-    <img src="https://img.shields.io/github/license/consumet/api" alt="GitHub">
-  </a>
-</p>
+**Turn a voiceover + a pile of visuals + AI timecode instructions into a finished, synced video — automatically.**
 
-Consumet scrapes data from various websites and provides APIs for accessing the data to satisfy your needs.
+AutoReel automates the tedious part of faceless / narration-style video editing: dropping dozens of images or short clips onto a timeline at exact timestamps, adding motion, and adding transitions. Instead of placing 50 visuals by hand in a video editor, you:
 
-> [!IMPORTANT]
-> Self-hosting the Consumet is required to use the API. Consumet API is no longer publicly available. Please refer to the [Installation section](#installation) for more information on hosting your own instance.
+1. Drop in your **voiceover audio**.
+2. Add your **visuals** (images or short AI clips) in order.
+3. Paste the **placement instructions** your AI already gives you
+   (`visual 1: 00:00 – 00:56`, `virtual 2 till 01:03`, …).
+4. Pick **motion** (slow zoom, Ken Burns, pan, random) and **transitions**
+   (fade, wipe, slide, circle, pixelize… random or fixed).
+5. **Export** at up to 4K, H.264 or ProRes.
 
-> [!CAUTION]
-> Consumet is not affiliated with any of the providers it scrapes data from. Consumet is not responsible for any misuse of the data provided by the API. Commercial utilization may lead to serious consequences, including potential site takedown measures. Ensure that you understand the legal implications before using this API.
+Everything is rendered with a bundled **ffmpeg** — nothing else to install.
 
-<h2> Table of Contents </h2>
+---
 
-- [Installation](#installation)
-  - [Locally](#locally)
-  - [Docker](#docker)
-  - [Heroku](#heroku)
-  - [Vercel](#vercel)
-  - [Render](#render)
-  - [Railway](#railway)
-- [Documentation](#documentation)
-- [Development](#development)
-- [Showcases](#showcases)
-- [Provider Request](#provider-request)
-- [Support](#support)
-- [Contributors ✨](#contributors-)
-- [Related repositories](#related-repositories)
+## The workflow it fits
 
-## Installation
-### Locally
-installation is simple.
-
-Run the following command to clone the repository, and install the dependencies.
-
-```sh
-$ git clone https://github.com/consumet/api.consumet.org.git
-$ cd api.consumet.org
-$ npm install #or yarn install
+```
+script  →  voiceover (TTS)  →  transcript/timecodes  →  AI gives visual placements
+                                                              │
+                                       generate visuals (images / 6–8s clips)
+                                                              │
+                                                     ┌────────▼────────┐
+                                                     │    AutoReel     │  ← you are here
+                                                     │  audio+visuals+ │
+                                                     │  instructions → │
+                                                     │  animated,      │
+                                                     │  transitioned,  │
+                                                     │  exported video │
+                                                     └─────────────────┘
 ```
 
-start the server!
+## Instruction formats understood
 
-```sh
-$ npm start #or yarn start
+The parser is deliberately forgiving. All of these work:
+
+```
+visual 1: 00:00 - 00:56
+virtual one is from 00:00 to 00:56
+virtual 2 is till 01:03
+Visual 3 till 01:40
+4) 1:40 - 2:10
+00:00 - 00:10          (auto-numbered in order)
 ```
 
-### Docker
-Docker image is available at [Docker Hub](https://hub.docker.com/r/riimuru/consumet-api).
+- Timecodes may be `SS`, `MM:SS`, or `HH:MM:SS` (with optional `.ms`).
+- A line with only an **end** time (`till 01:03`) starts where the previous
+  visual ended.
+- The last visual always runs to the end of the audio.
+- No instructions at all → visuals are spread evenly across the audio.
 
-run the following command to pull and run the docker image.
+## Motion (per visual)
 
-```sh
-$ docker pull riimuru/consumet-api
-$ docker run -p 3000:3000 riimuru/consumet-api
+`ken-burns` · `zoom-in` · `zoom-out` · `zoom-in-out` · `pan-left` · `pan-right`
+· `random` · `none`. Rendered with ffmpeg's `zoompan` on an oversized frame for
+smooth, jitter-free movement. (Video clips play as-is.)
+
+## Transitions (between visuals)
+
+40+ styles mapped to ffmpeg `xfade`: fades, wipes, slides, smooth slides,
+circle/rect crops, opens/closes, diagonals, slices, pixelize, radial, blur,
+zoom, squeeze, wind. Choose one style, or **random per cut**, or **hard cut**.
+Crossfade duration is adjustable and auto-clamped to the shortest segment.
+
+---
+
+## Install & run (development)
+
+Requires Node 18+.
+
+```bash
+npm install          # downloads Electron + the bundled ffmpeg/ffprobe binaries
+npm run dev          # launch the desktop app
 ```
-This will start the server on port 3000. You can access the server at http://localhost:3000/, And can change the port by changing the -p option to `-p <port>:3000`.
 
-Be sure to set `NODE_ENV` to `PROD` in your environment variables when running your own instance.
-Check out the `.env.example` file for more information.
+> In restricted/offline environments the ffmpeg binary download may be blocked.
+> On a normal machine `npm install` fetches it automatically.
 
-You can add `-d` flag to run the server in detached mode.
+### Build a distributable app
 
-### Heroku
-Host your own instance of Consumet API on Heroku using the button below.
+```bash
+npm run dist         # packaged app in ./release (dmg / nsis / AppImage)
+```
 
-[![Deploy on Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/consumet/api.consumet.org/tree/main)
+## Use it from the command line
 
-### Vercel
-Host your own instance of Consumet API on Vercel using the button below.
+No GUI needed — the same engine runs headless:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fconsumet%2Fapi.consumet.org)
+```bash
+npm run build:cli    # bundles the CLI to dist/cli.mjs (once)
 
-### Render
-Host your own instance of Consumet API on Render using the button below.
+node dist/cli.mjs \
+  --audio voice.mp3 \
+  --visuals ./images \
+  --instructions script.txt \
+  --out reel.mp4 \
+  --animation ken-burns \
+  --transition random \
+  --transition-duration 0.5 \
+  --quality high \
+  --size 1920x1080 --fps 30
+```
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/consumet/api.consumet.org)
+`--visuals` accepts a folder (files are natural-sorted: `img2` before `img10`)
+or a comma-separated list. Run `node dist/cli.mjs --help` for all options.
+During development you can also run it directly: `npm run cli -- --help`.
 
-### Railway
-Host your own instance of Consumet API on Railway using the button below.
+---
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template/C0FwuP?referralCode=dv4TuD)
+## How it works
 
-## Documentation
-Please refer to the [documentation](https://docs.consumet.org). Join our [Discord server](https://discord.gg/qTPfvMxzNH) if you need any additional help or have any questions, comments, or suggestions.
+```
+src/
+  engine/           Platform-agnostic core (unit-tested)
+    parseInstructions.ts   timecode text  → structured instructions
+    timeline.ts            instructions + visuals + audio length → segments
+    animations.ts          per-clip zoompan (Ken Burns) filter builder
+    transitions.ts         the xfade transition library
+    ffmpegGraph.ts         builds the full ffmpeg filter_complex + args
+    render.ts / ffprobe.ts spawn the bundled ffmpeg / ffprobe
+  main/             Electron main process (dialogs, IPC, invokes the engine)
+  preload/          Safe contextBridge API exposed to the UI
+  renderer/         React UI (sources · instructions · timeline · export)
+  cli/              Headless command-line front end to the same engine
+  shared/           Types shared across the main/renderer boundary
+```
 
-## Development
-Pull requests and stars are always welcome, for bugs and features create a new [issue](https://github.com/consumet/api.consumet.org/issues). If you're brave to make make a commit to the project see [CONTRIBUTING.md](https://github.com/consumet/consumet.ts/blob/master/docs/guides/contributing.md).
+The renderer never touches Node or ffmpeg directly; it sends a request over IPC
+and the main process builds the timeline and runs the render, streaming progress
+back.
 
-## Showcases
-Showcases are welcome! If you have a project that uses Consumet API, please let us know by making a new discussion [here](https://github.com/consumet/api.consumet.org/discussions/categories/show-and-tell) or by joining our [Discord server](https://discord.gg/qTPfvMxzNH). We will add your project to our [showcases page](https://consumet.org/showcase).
+### Timeline / transition math
 
-## Provider Request
-Make a new [issue](https://github.com/consumet/consumet.ts/issues/new?assignees=&labels=provider+request&template=provider-request.yml) with the name of the provider on the title, as well as a link to the provider in the body paragraph.
+Each non-final clip is rendered `duration + T` long (T = crossfade) so it has a
+tail to blend into the next clip. Each `xfade` `offset` is the cumulative start
+time of the next segment, which keeps the total output length exactly equal to
+the audio — so audio and visuals never drift.
 
-## Support
-You can contact the maintainers of consumet.ts via [email](mailto:consumet.org@gmail.com), or [join the discord server](https://discord.gg/qTPfvMxzNH) (Recommended).
+## Testing & typecheck
 
-<a href="https://discord.gg/qTPfvMxzNH">
-   <img src="https://discordapp.com/api/guilds/987492554486452315/widget.png?style=banner2"/>
-</a>
+```bash
+npm test             # engine unit tests (parser, timeline, ffmpeg graph)
+npm run typecheck    # node + web TypeScript projects
+```
 
+## Roadmap
 
-## Contributors ✨
-Thanks to the following people for keeping this project alive and thriving.
+The core assembly pipeline is complete. Planned next:
 
-[![](https://contrib.rocks/image?repo=consumet/consumet.ts)](https://github.com/consumet/consumet.ts/graphs/contributors)
+- **Real-time WebGL scrubbing preview** in the app (currently: computed timeline
+  + render-to-file).
+- **Custom transition designer** — build your own transitions from shapes,
+  opacity, blending, twist and zoom, save them as bundles, and import short
+  overlay clips as transitions.
+- **Per-visual** animation/transition overrides in the UI (the engine already
+  supports per-segment settings).
+- Effects/color adjustments and text/caption overlays.
 
-## Related repositories
- - [Consumet.ts](https://github.com/consumet/consumet.ts)
- - [Website](https://github.com/consumet/consumet.org)
- - [Providers Status](https://github.com/consumet/providers-status)
+## License
+
+MIT
