@@ -10,11 +10,11 @@ Legend: ✅ done (v0.1) · 🟡 partial/stub · ⬜ planned
 | Import audio | ✅ | |
 | Playhead scrub / seek | ✅ | |
 | Zoom timeline | ✅ | |
-| Split / trim | ✅ / 🟡 | Split done; drag-trim handles ⬜ |
+| Split / trim | ✅ | Split at playhead + drag trim handles on selected clip |
 | Duplicate / delete | ✅ | |
-| Move / drag clips | 🟡 | `moveSelected` in VM; drag gesture ⬜ |
+| Move / drag clips | ✅ | Drag clip body to move; drag playhead knob to scrub |
 | Grouping | 🟡 | Model supports `groupId`; UI ⬜ |
-| Undo / redo | ⬜ | Phase 4 |
+| Undo / redo | ✅ | 60-step history, one checkpoint per drag |
 
 ## Bulk / automatic (the reason Vinei Cut exists)
 | Feature | State |

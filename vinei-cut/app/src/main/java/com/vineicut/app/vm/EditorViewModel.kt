@@ -43,6 +43,54 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var isBusy by mutableStateOf(false)
         private set
 
+    // ---- undo / redo --------------------------------------------------------
+
+    private val undoStack = ArrayDeque<Project>()
+    private val redoStack = ArrayDeque<Project>()
+
+    var canUndo by mutableStateOf(false)
+        private set
+    var canRedo by mutableStateOf(false)
+        private set
+
+    private fun refreshHistoryFlags() {
+        canUndo = undoStack.isNotEmpty()
+        canRedo = redoStack.isNotEmpty()
+    }
+
+    /** Commit a structural change with an undo checkpoint. */
+    private fun commit(newProject: Project) {
+        undoStack.addLast(project)
+        if (undoStack.size > 60) undoStack.removeFirst()
+        redoStack.clear()
+        project = newProject.copy(updatedAt = System.currentTimeMillis())
+        refreshHistoryFlags()
+    }
+
+    /** Snapshot once at the start of a drag; live drag updates then skip history. */
+    fun beginInteraction() {
+        undoStack.addLast(project)
+        if (undoStack.size > 60) undoStack.removeFirst()
+        redoStack.clear()
+        refreshHistoryFlags()
+    }
+
+    fun undo() {
+        if (undoStack.isEmpty()) return
+        redoStack.addLast(project)
+        project = undoStack.removeLast()
+        refreshHistoryFlags()
+        statusMessage = "Undo"
+    }
+
+    fun redo() {
+        if (redoStack.isEmpty()) return
+        undoStack.addLast(project)
+        project = redoStack.removeLast()
+        refreshHistoryFlags()
+        statusMessage = "Redo"
+    }
+
     // ---- selection & transport ---------------------------------------------
 
     fun selectClip(id: String?) { selectedClipId = id }
@@ -65,7 +113,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- track mutation helpers --------------------------------------------
 
+    /** Structural track replacement (undoable). */
     private fun replaceTrack(updated: Track) {
+        commit(project.copy(tracks = project.tracks.map { if (it.id == updated.id) updated else it }))
+    }
+
+    /** Live track replacement used during drags — no undo checkpoint per frame. */
+    private fun replaceTrackLive(updated: Track) {
         project = project.copy(
             tracks = project.tracks.map { if (it.id == updated.id) updated else it },
             updatedAt = System.currentTimeMillis()
@@ -185,19 +239,46 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteSelected() {
         val id = selectedClipId ?: return
-        project = project.copy(tracks = project.tracks.map { t ->
+        commit(project.copy(tracks = project.tracks.map { t ->
             t.copy(clips = t.clips.filterNot { it.id == id })
-        })
+        }))
         selectedClipId = null
         statusMessage = "Deleted"
     }
 
-    fun moveSelected(deltaMs: Long) {
+    private val minClipMs = 200L
+
+    /** Live move during a drag. Call [beginInteraction] once at drag start. */
+    fun moveSelectedLive(deltaMs: Long) {
         val clip = selectedClip() ?: return
         val track = project.tracks.first { t -> t.clips.any { it.id == clip.id } }
         val newStart = (clip.startMs + deltaMs).coerceAtLeast(0)
-        replaceTrack(track.copy(clips = track.clips.map {
+        replaceTrackLive(track.copy(clips = track.clips.map {
             if (it.id == clip.id) it.copy(startMs = newStart) else it
+        }))
+    }
+
+    /** Drag the left edge: moves start and trims in-point, keeping the right edge fixed. */
+    fun trimStartLive(deltaMs: Long) {
+        val clip = selectedClip() ?: return
+        val track = project.tracks.first { t -> t.clips.any { it.id == clip.id } }
+        val maxDelta = clip.durationMs - minClipMs
+        val d = deltaMs.coerceIn(-clip.startMs, maxDelta)
+        val newStart = clip.startMs + d
+        val newDur = clip.durationMs - d
+        val newIn = (clip.inPointMs + d).coerceAtLeast(0)
+        replaceTrackLive(track.copy(clips = track.clips.map {
+            if (it.id == clip.id) it.copy(startMs = newStart, durationMs = newDur, inPointMs = newIn) else it
+        }))
+    }
+
+    /** Drag the right edge: changes duration (and out-point), keeping the left edge fixed. */
+    fun trimEndLive(deltaMs: Long) {
+        val clip = selectedClip() ?: return
+        val track = project.tracks.first { t -> t.clips.any { it.id == clip.id } }
+        val newDur = (clip.durationMs + deltaMs).coerceAtLeast(minClipMs)
+        replaceTrackLive(track.copy(clips = track.clips.map {
+            if (it.id == clip.id) it.copy(durationMs = newDur, outPointMs = it.inPointMs + newDur) else it
         }))
     }
 

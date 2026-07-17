@@ -14,11 +14,24 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -131,17 +144,27 @@ fun EditorScreen(
 
         // Transport
         Row(
-            Modifier.fillMaxWidth().background(VcSurface).padding(vertical = 6.dp),
-            horizontalArrangement = Arrangement.Center,
+            Modifier.fillMaxWidth().background(VcSurface).padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            IconButton(onClick = { vm.setPlayhead(prevBoundary(vm.project, vm.playheadMs)) }) {
+                Icon(Icons.Filled.SkipPrevious, "previous cut", tint = VcOnSurface)
+            }
+            Spacer(Modifier.weight(1f))
             IconButton(onClick = { isPlaying = !isPlaying }) {
                 Icon(
                     if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     "play/pause",
                     tint = VcOnSurface,
-                    modifier = Modifier.size(30.dp)
+                    modifier = Modifier.size(34.dp)
                 )
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { vm.setPlayhead(nextBoundary(vm.project, vm.playheadMs)) }) {
+                Icon(Icons.Filled.SkipNext, "next cut", tint = VcOnSurface)
+            }
+            IconButton(onClick = { vm.statusMessage = "Fullscreen preview — coming soon" }) {
+                Icon(Icons.Filled.Fullscreen, "fullscreen", tint = VcMuted)
             }
         }
 
@@ -154,8 +177,49 @@ fun EditorScreen(
             onSeek = { vm.setPlayhead(it) },
             onSelectClip = { vm.selectClip(it) },
             onZoom = { vm.setZoom(it) },
+            onDragStart = { vm.beginInteraction() },
+            onMove = { vm.moveSelectedLive(it) },
+            onTrimStart = { vm.trimStartLive(it) },
+            onTrimEnd = { vm.trimEndLive(it) },
             modifier = Modifier.fillMaxWidth()
         )
+
+        // Quick-action bar: undo/redo · add · split · duplicate · delete
+        Row(
+            Modifier.fillMaxWidth().background(VcSurface).padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(enabled = vm.canUndo, onClick = { vm.undo() }) {
+                Icon(Icons.AutoMirrored.Filled.Undo, "undo", tint = if (vm.canUndo) VcOnSurface else VcMuted.copy(alpha = 0.4f))
+            }
+            IconButton(enabled = vm.canRedo, onClick = { vm.redo() }) {
+                Icon(Icons.AutoMirrored.Filled.Redo, "redo", tint = if (vm.canRedo) VcOnSurface else VcMuted.copy(alpha = 0.4f))
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { vm.splitAtPlayhead() }) {
+                Icon(Icons.Filled.ContentCut, "split", tint = VcOnSurface)
+            }
+            IconButton(onClick = { vm.duplicateSelected() }) {
+                Icon(Icons.Filled.ContentCopy, "duplicate", tint = VcOnSurface)
+            }
+            IconButton(onClick = { vm.deleteSelected() }) {
+                Icon(Icons.Filled.Delete, "delete", tint = VcOnSurface)
+            }
+            Spacer(Modifier.width(6.dp))
+            // Purple add button, like the reference.
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(VcAccent)
+                    .clickable {
+                        pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Add, "add media", tint = VcOnSurface)
+            }
+        }
 
         // Status line
         vm.statusMessage?.let {
@@ -186,3 +250,15 @@ fun EditorScreen(
         )
     }
 }
+
+/** All clip start/end times across the project, sorted — used for snap navigation. */
+private fun boundaries(project: com.vineicut.app.model.Project): List<Long> =
+    (listOf(0L, project.durationMs) + project.tracks.flatMap { t -> t.clips.flatMap { listOf(it.startMs, it.endMs) } })
+        .distinct()
+        .sorted()
+
+private fun prevBoundary(project: com.vineicut.app.model.Project, playheadMs: Long): Long =
+    boundaries(project).lastOrNull { it < playheadMs } ?: 0L
+
+private fun nextBoundary(project: com.vineicut.app.model.Project, playheadMs: Long): Long =
+    boundaries(project).firstOrNull { it > playheadMs } ?: project.durationMs
