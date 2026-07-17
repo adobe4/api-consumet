@@ -1,0 +1,7 @@
+<resources>
+    <!-- Filmora-style dark base -->
+    <color name="vc_bg">#0E0E12</color>
+    <color name="vc_surface">#16161C</color>
+    <color name="vc_accent">#5A5CE6</color>
+    <color name="vc_white">#FFFFFF</color>
+</resources>

@@ -1,0 +1,44 @@
+name: Vinei Cut Android
+
+on:
+  push:
+    branches:
+      - "claude/vinei-cut-video-editor-cq73zk"
+    paths:
+      - "vinei-cut/**"
+      - ".github/workflows/vinei-cut-android.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vinei-cut
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Run unit tests
+        run: ./gradlew test --stacktrace
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vinei-cut-debug-apk
+          path: vinei-cut/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
