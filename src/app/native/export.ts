@@ -9,6 +9,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { buildFfmpegArgs } from '../../engine';
 import type { Timeline } from '../../engine/types';
 import type { ProjectSettings } from '../types';
+import { appendExportLog } from './exportLog';
 
 export interface ExportInput {
   timeline: Timeline;
@@ -124,6 +125,7 @@ export async function exportVideo(
   onProgress?: (p: number) => void,
 ): Promise<ExportResult> {
   try {
+    await appendExportLog('export tapped');
     if (input.timeline.segments.length === 0) {
       return { ok: false, error: 'Add at least one visual before exporting.' };
     }
@@ -135,8 +137,19 @@ export async function exportVideo(
     const outUri = `${FileSystem.cacheDirectory}vinei-export-${Date.now()}.mp4`;
     const outPath = stripFileScheme(outUri);
 
+    // Preflight: this is the FIRST call into ffmpeg, so it triggers loading the
+    // native library. Awaiting the breadcrumb first means that if the library
+    // load crashes the whole app, the last saved breadcrumb pinpoints it.
+    await appendExportLog('loading ffmpeg native library (running -version)');
+    const preflight = await runFfmpeg(['-version'], 1);
+    await appendExportLog(`ffmpeg loaded: success=${preflight.success}`);
+    if (!preflight.success) {
+      return { ok: false, error: `ffmpeg could not start: ${tail(preflight.logs, 200)}` };
+    }
+
     let lastLogs = '';
     for (const encoder of VIDEO_ENCODERS) {
+      await appendExportLog(`render start (encoder=${encoder.name}, segments=${input.timeline.segments.length})`);
       const { args } = buildFfmpegArgs({
         timeline: input.timeline,
         audioPath: stripFileScheme(input.audioUri),
@@ -153,16 +166,21 @@ export async function exportVideo(
 
       onProgress?.(0);
       const { success, logs } = await runFfmpeg(args, total, onProgress);
+      await appendExportLog(`render done (encoder=${encoder.name}, success=${success})`);
       if (success) {
         onProgress?.(1);
         const saved = await saveToGallery(outUri);
+        await appendExportLog(`saved to gallery: ${saved}`);
         return { ok: true, outPath: outUri, savedToGallery: saved };
       }
       lastLogs = logs;
       if (!MISSING_ENCODER.test(logs)) break; // real error → stop, don't retry
     }
+    await appendExportLog(`export failed: ${tail(lastLogs, 160)}`);
     return { ok: false, error: tail(lastLogs) || 'Export failed.' };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    const msg = err instanceof Error ? err.message : String(err);
+    await appendExportLog(`export threw: ${msg}`);
+    return { ok: false, error: msg };
   }
 }

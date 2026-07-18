@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import { useToast } from '../components/Toast';
 import { pickAudio, pickVisuals } from '../lib/pickers';
 import { fmtClock } from '../lib/format';
 import { exportVideo } from '../native/export';
+import { clearExportLog, readExportLog, type ExportLogEntry } from '../native/exportLog';
 import { BUILTIN_TRANSITION_PARAMS } from '../preview/transitionShader';
 import { ACCENT_GRADIENT, theme } from '../theme';
 import { ASPECT_PRESETS } from '../types';
@@ -51,6 +52,12 @@ export function EditorScreen() {
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportPct, setExportPct] = useState(0);
+  const [exportLog, setExportLog] = useState<ExportLogEntry[]>([]);
+
+  // Load the last export breadcrumb trail (survives a crash + relaunch).
+  useEffect(() => {
+    readExportLog().then(setExportLog);
+  }, []);
 
   const currentAspect =
     ASPECT_PRESETS.find((a) => a.width === p.settings.width && a.height === p.settings.height)?.id ?? '';
@@ -128,6 +135,7 @@ export function EditorScreen() {
       }
     } finally {
       setExporting(false);
+      readExportLog().then(setExportLog);
     }
   }
 
@@ -376,6 +384,25 @@ export function EditorScreen() {
             Rendering on your device — keep the app open. This can take a bit for long videos.
           </Text>
         )}
+
+        {exportLog.length > 0 && (
+          <View style={styles.diag}>
+            <View style={styles.diagHead}>
+              <Text style={styles.diagTitle}>Export diagnostics (last attempt)</Text>
+              <Pressable onPress={() => { clearExportLog(); setExportLog([]); }} hitSlop={8}>
+                <Text style={styles.diagClear}>clear</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.diagHint}>
+              If export crashes, screenshot this — the last line shows where it stopped.
+            </Text>
+            {exportLog.map((e, i) => (
+              <Text key={i} style={styles.diagLine} numberOfLines={2}>
+                {`${i + 1}. ${e.step}`}
+              </Text>
+            ))}
+          </View>
+        )}
       </Card>
       <View style={{ height: 30 }} />
     </ScrollView>
@@ -453,6 +480,19 @@ const styles = StyleSheet.create({
   },
   progressFill: { height: 8, borderRadius: 4, backgroundColor: theme.accent },
   exportNote: { color: theme.faint, fontSize: 11, marginTop: 8, lineHeight: 16 },
+  diag: {
+    marginTop: 14,
+    backgroundColor: theme.bg,
+    borderColor: theme.line,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+  },
+  diagHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  diagTitle: { color: theme.muted, fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6 },
+  diagClear: { color: theme.accent, fontSize: 11.5, fontWeight: '700' },
+  diagHint: { color: theme.faint, fontSize: 10.5, marginTop: 4, marginBottom: 6, lineHeight: 14 },
+  diagLine: { color: theme.text, fontSize: 11, lineHeight: 16, fontVariant: ['tabular-nums'] },
   sliderLabel: { color: theme.muted, fontSize: 12, marginTop: 12 },
   overridePanel: {
     marginTop: 6,
