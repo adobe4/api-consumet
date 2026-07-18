@@ -24,7 +24,7 @@ jobs:
       - run: npm test
 
   android:
-    name: Build debug APK
+    name: Build release APK
     runs-on: ubuntu-latest
     needs: test
     steps:
@@ -53,13 +53,17 @@ jobs:
       - name: Generate native Android project
         run: npx expo prebuild --platform android --no-install
 
-      - name: Build debug APK
+      # Build a RELEASE APK: the JS bundle is compiled into the APK, so the app
+      # runs fully offline with no Metro dev server. The Expo/RN template signs
+      # the release build type with the bundled debug keystore, so the APK is
+      # installable out of the box (fine for a personal / sideloaded app).
+      - name: Build release APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: autoreel-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: autoreel-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error

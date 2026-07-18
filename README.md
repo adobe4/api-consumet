@@ -18,8 +18,11 @@ Every push to the working branch builds an installable APK automatically via
 
 1. Open the repo's **Actions** tab on GitHub.
 2. Click the latest **Build Android APK** run.
-3. Download the **`autoreel-debug-apk`** artifact at the bottom.
-4. Copy `app-debug.apk` to your phone and install it (allow "install from unknown sources").
+3. Download the **`autoreel-apk`** artifact at the bottom.
+4. Copy `app-release.apk` to your phone and install it (allow "install from unknown sources").
+
+This is a **release** APK: all the app code is bundled inside it, so it runs
+**fully offline** — no dev server, no computer, nothing else required.
 
 You can also trigger a build manually: Actions → *Build Android APK* → **Run workflow**.
 
