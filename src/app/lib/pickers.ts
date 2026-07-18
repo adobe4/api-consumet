@@ -3,6 +3,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { detectKind } from '../../engine';
 import type { AudioTrack, UIVisual } from '../types';
+import { persistMedia } from './storage';
 
 let counter = 0;
 const uid = () => `v${Date.now()}-${counter++}`;
@@ -18,14 +19,21 @@ export async function pickVisuals(): Promise<UIVisual[]> {
     orderedSelection: true,
   });
   if (res.canceled) return [];
-  return res.assets.map((a) => ({
-    id: uid(),
-    uri: a.uri,
-    kind: detectKind(a.fileName ?? a.uri, a.mimeType),
-    name: a.fileName ?? a.uri.split('/').pop() ?? 'visual',
-    width: a.width,
-    height: a.height,
-  }));
+  // Copy each pick into private storage so the project survives restarts.
+  return Promise.all(
+    res.assets.map(async (a) => {
+      const name = a.fileName ?? a.uri.split('/').pop() ?? 'visual';
+      const uri = await persistMedia(a.uri, name);
+      return {
+        id: uid(),
+        uri,
+        kind: detectKind(name, a.mimeType),
+        name,
+        width: a.width,
+        height: a.height,
+      };
+    }),
+  );
 }
 
 /** Pick a voiceover audio file and read its duration. */
@@ -36,12 +44,10 @@ export async function pickAudio(): Promise<AudioTrack | null> {
   });
   if (res.canceled || res.assets.length === 0) return null;
   const asset = res.assets[0];
+  const name = asset.name ?? asset.uri.split('/').pop() ?? 'audio';
   const duration = await readAudioDuration(asset.uri);
-  return {
-    uri: asset.uri,
-    name: asset.name ?? asset.uri.split('/').pop() ?? 'audio',
-    duration,
-  };
+  const uri = await persistMedia(asset.uri, name);
+  return { uri, name, duration };
 }
 
 /** Load audio just long enough to read its duration, then unload. */

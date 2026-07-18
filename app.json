@@ -1,16 +1,26 @@
 {
   "expo": {
-    "name": "AutoReel",
-    "slug": "autoreel",
-    "version": "0.1.0",
+    "name": "Vinei Auto Edit",
+    "slug": "vinei-auto-edit",
+    "version": "0.2.0",
     "orientation": "portrait",
-    "scheme": "autoreel",
+    "scheme": "vinei",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0d0f14",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0d0f14"
+    },
     "assetBundlePatterns": ["**/*"],
     "android": {
-      "package": "com.autoreel.app",
-      "versionCode": 1,
+      "package": "com.vinei.autoedit",
+      "versionCode": 2,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
       "permissions": [
         "READ_MEDIA_IMAGES",
         "READ_MEDIA_VIDEO",
@@ -29,7 +39,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "AutoReel needs access to your photos to add visuals to your video."
+          "photosPermission": "Vinei needs access to your photos to add visuals to your video."
         }
       ],
       [

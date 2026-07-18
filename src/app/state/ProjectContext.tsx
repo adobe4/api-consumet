@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { parseInstructions, buildTimeline } from '../../engine';
 import type { Timeline } from '../../engine/types';
 import {
@@ -8,6 +8,7 @@ import {
   type ProjectSettings,
   type UIVisual,
 } from '../types';
+import { loadProject, saveProject } from './persistence';
 
 interface ProjectState {
   audio: AudioTrack | null;
@@ -36,6 +37,31 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const [instructions, setInstructions] = useState('');
   const [settings, setSettings] = useState<ProjectSettings>(DEFAULT_SETTINGS);
   const [customTransitions, setCustomTransitions] = useState<CustomTransition[]>([]);
+  const hydrated = useRef(false);
+
+  // Load the saved project once on startup.
+  useEffect(() => {
+    let active = true;
+    loadProject().then((p) => {
+      if (active && p) {
+        setAudio(p.audio ?? null);
+        setVisuals(p.visuals ?? []);
+        setInstructions(p.instructions ?? '');
+        setSettings({ ...DEFAULT_SETTINGS, ...(p.settings ?? {}) });
+        setCustomTransitions(p.customTransitions ?? []);
+      }
+      hydrated.current = true;
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Persist whenever anything meaningful changes (after the initial load).
+  useEffect(() => {
+    if (!hydrated.current) return;
+    saveProject({ audio, visuals, instructions, settings, customTransitions });
+  }, [audio, visuals, instructions, settings, customTransitions]);
 
   const timeline = useMemo<Timeline>(() => {
     const audioDuration = audio?.duration ?? 0;

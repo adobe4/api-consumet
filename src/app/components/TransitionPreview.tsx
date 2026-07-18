@@ -37,8 +37,8 @@ export function TransitionPreview({ fromUri, toUri, params, progress, width, hei
       {effect && (
         <Fill>
           <Shader source={effect} uniforms={uniforms}>
-            <ImageShader image={fromImage} fit="cover" rect={rect} tx="clamp" ty="clamp" />
-            <ImageShader image={toImage} fit="cover" rect={rect} tx="clamp" ty="clamp" />
+            <ImageShader image={fromImage} fit="cover" rect={rect} tx="clamp" ty="clamp" fm="linear" mm="linear" />
+            <ImageShader image={toImage} fit="cover" rect={rect} tx="clamp" ty="clamp" fm="linear" mm="linear" />
           </Shader>
         </Fill>
       )}

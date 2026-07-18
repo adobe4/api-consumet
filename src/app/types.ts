@@ -52,6 +52,21 @@ export interface ProjectSettings {
   seed?: number;
 }
 
+export interface AspectPreset {
+  id: string;
+  label: string;
+  hint: string;
+  width: number;
+  height: number;
+}
+
+export const ASPECT_PRESETS: AspectPreset[] = [
+  { id: '9:16', label: '9:16', hint: 'Reels / Shorts / TikTok', width: 1080, height: 1920 },
+  { id: '16:9', label: '16:9', hint: 'YouTube landscape', width: 1920, height: 1080 },
+  { id: '1:1', label: '1:1', hint: 'Square', width: 1080, height: 1080 },
+  { id: '4:5', label: '4:5', hint: 'Instagram portrait', width: 1080, height: 1350 },
+];
+
 export const DEFAULT_SETTINGS: ProjectSettings = {
   animation: 'ken-burns',
   transition: 'random',

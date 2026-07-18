@@ -20,6 +20,7 @@ import { pickAudio, pickVisuals } from '../lib/pickers';
 import { exportVideo } from '../native/export';
 import { BUILTIN_TRANSITION_PARAMS } from '../preview/transitionShader';
 import { theme } from '../theme';
+import { ASPECT_PRESETS } from '../types';
 import type { AnimationKind } from '../../engine/types';
 
 const ANIMATIONS: { value: AnimationKind; label: string }[] = [
@@ -41,7 +42,10 @@ const QUALITIES = [
 
 export function EditorScreen() {
   const p = useProject();
-  const { time, playing, toggle, seek } = usePlayhead(p.audio?.uri ?? null, p.timeline.duration);
+  const { time, playing, toggle, pause, seek } = usePlayhead(p.audio?.uri ?? null, p.timeline.duration);
+
+  const currentAspect =
+    ASPECT_PRESETS.find((a) => a.width === p.settings.width && a.height === p.settings.height)?.id ?? '';
 
   const screenW = Dimensions.get('window').width;
   const previewW = screenW - 24;
@@ -65,7 +69,7 @@ export function EditorScreen() {
 
   async function onExport() {
     if (!p.audio) return;
-    const out = `${p.audio.name.replace(/\.[^.]+$/, '')}-autoreel.mp4`;
+    const out = `${p.audio.name.replace(/\.[^.]+$/, '')}-vinei.mp4`;
     const res = await exportVideo({
       timeline: p.timeline,
       audioUri: p.audio.uri,
@@ -104,9 +108,20 @@ export function EditorScreen() {
           <Text style={styles.playIcon}>{playing ? '❚❚' : '▶'}</Text>
         </Pressable>
         <View style={{ flex: 1 }}>
-          <TimelineStrip timeline={p.timeline} time={time} onSeek={seek} />
+          <TimelineStrip timeline={p.timeline} time={time} onSeek={seek} onScrubStart={pause} />
         </View>
       </Row>
+
+      {/* Aspect ratio */}
+      <Label>Aspect ratio</Label>
+      <ChipRow
+        options={ASPECT_PRESETS.map((a) => ({ value: a.id, label: `${a.label}  ·  ${a.hint}` }))}
+        value={currentAspect}
+        onChange={(id) => {
+          const a = ASPECT_PRESETS.find((x) => x.id === id);
+          if (a) p.updateSettings({ width: a.width, height: a.height });
+        }}
+      />
 
       {/* Sources */}
       <Label>1 · Voiceover</Label>

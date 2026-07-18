@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, StatusBar } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, StatusBar } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ProjectProvider } from './src/app/state/ProjectContext';
@@ -19,9 +19,10 @@ export default function App() {
           <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
             <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
             <View style={styles.header}>
-              <Text style={styles.brand}>
-                <Text style={{ color: theme.accent }}>◆ </Text>AutoReel
-              </Text>
+              <View style={styles.brandRow}>
+                <Image source={require('./assets/logo.png')} style={styles.logo} />
+                <Text style={styles.brand}>Vinei</Text>
+              </View>
               <View style={styles.tabs}>
                 <TabButton label="Editor" active={tab === 'editor'} onPress={() => setTab('editor')} />
                 <TabButton label="Transitions" active={tab === 'designer'} onPress={() => setTab('designer')} />
@@ -57,7 +58,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: theme.line,
   },
-  brand: { color: theme.text, fontSize: 17, fontWeight: '800', letterSpacing: 0.3 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  logo: { width: 28, height: 28, resizeMode: 'contain' },
+  brand: { color: theme.text, fontSize: 18, fontWeight: '800', letterSpacing: 0.3 },
   tabs: { flexDirection: 'row', backgroundColor: theme.panel, borderRadius: 20, padding: 3 },
   tab: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 18 },
   tabActive: { backgroundColor: theme.accent },

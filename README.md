@@ -1,8 +1,8 @@
-# AutoReel (Android)
+# Vinei Auto Edit (Android)
 
 **A portrait, CapCut-style mobile app that assembles a synced video from a voiceover, a pile of visuals, and AI timecode instructions — with a live GPU preview and a custom transition designer.**
 
-You already have the workflow: script → voiceover → transcript → an AI tells you *which visual goes at which timecode*. AutoReel does the last, tedious step automatically:
+You already have the workflow: script → voiceover → transcript → an AI tells you *which visual goes at which timecode*. Vinei does the last, tedious step automatically:
 
 1. Add your **voiceover audio**.
 2. Add your **visuals** (images / short clips) in order.
@@ -18,7 +18,7 @@ Every push to the working branch builds an installable APK automatically via
 
 1. Open the repo's **Actions** tab on GitHub.
 2. Click the latest **Build Android APK** run.
-3. Download the **`autoreel-apk`** artifact at the bottom.
+3. Download the **`vinei-apk`** artifact at the bottom.
 4. Copy `app-release.apk` to your phone and install it (allow "install from unknown sources").
 
 This is a **release** APK: all the app code is bundled inside it, so it runs
