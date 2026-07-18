@@ -10,6 +10,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { ProjectProvider } from './src/app/state/ProjectContext';
+import { ErrorBoundary } from './src/app/components/ErrorBoundary';
 import { ToastProvider } from './src/app/components/Toast';
 import { EditorScreen } from './src/app/screens/EditorScreen';
 import { DesignerScreen } from './src/app/screens/DesignerScreen';
@@ -39,7 +40,8 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ProjectProvider>
+        <ErrorBoundary>
+          <ProjectProvider>
           <ToastProvider>
             <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
               <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
@@ -92,7 +94,8 @@ export default function App() {
               </Animated.View>
             </SafeAreaView>
           </ToastProvider>
-        </ProjectProvider>
+          </ProjectProvider>
+        </ErrorBoundary>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

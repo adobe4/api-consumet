@@ -30,3 +30,12 @@ export async function saveProject(project: PersistedProject): Promise<void> {
     // Best-effort; ignore write failures.
   }
 }
+
+/** Wipe the saved project — the escape hatch if saved state ever misbehaves. */
+export async function clearProject(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(KEY);
+  } catch {
+    // Best-effort.
+  }
+}

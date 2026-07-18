@@ -9,6 +9,8 @@ interface Props {
   count: number;
   selected: boolean;
   hasOverrides: boolean;
+  /** Disable the entrance animation (bulk imports animate only the first few). */
+  animateIn?: boolean;
   onSelect: () => void;
   onUp: () => void;
   onDown: () => void;
@@ -21,6 +23,7 @@ export function VisualRow({
   count,
   selected,
   hasOverrides,
+  animateIn = true,
   onSelect,
   onUp,
   onDown,
@@ -28,7 +31,7 @@ export function VisualRow({
 }: Props) {
   return (
     <Animated.View
-      entering={FadeInDown.duration(240)}
+      entering={animateIn ? FadeInDown.duration(240) : undefined}
       exiting={FadeOutUp.duration(180)}
       layout={LinearTransition.springify().damping(18)}
     >
@@ -39,7 +42,14 @@ export function VisualRow({
             <Text style={styles.videoIcon}>▶</Text>
           </View>
         ) : (
-          <Image source={{ uri: visual.uri }} style={styles.thumb} />
+          // resizeMethod="resize" decodes at thumbnail size instead of full
+          // resolution — without it, 50 photos in the list can OOM the app.
+          <Image
+            source={{ uri: visual.uri }}
+            style={styles.thumb}
+            resizeMethod="resize"
+            fadeDuration={0}
+          />
         )}
         <View style={styles.info}>
           <Text style={styles.name} numberOfLines={1}>

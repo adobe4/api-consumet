@@ -9,6 +9,7 @@ import {
   type UIVisual,
 } from '../types';
 import { loadProject, saveProject } from './persistence';
+import { deletePersistedMedia } from '../lib/storage';
 
 interface ProjectState {
   audio: AudioTrack | null;
@@ -69,18 +70,28 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Persist whenever anything meaningful changes (after the initial load).
+  // Debounced so fast typing / slider drags don't hammer storage.
   useEffect(() => {
     if (!hydrated.current) return;
-    saveProject({
-      audio,
-      visuals,
-      instructions,
-      settings,
-      customTransitions,
-      animationOverrides,
-      transitionOverrides,
-    });
+    const t = setTimeout(() => {
+      saveProject({
+        audio,
+        visuals,
+        instructions,
+        settings,
+        customTransitions,
+        animationOverrides,
+        transitionOverrides,
+      });
+    }, 400);
+    return () => clearTimeout(t);
   }, [audio, visuals, instructions, settings, customTransitions, animationOverrides, transitionOverrides]);
+
+  // Mirror of visuals for cleanup side effects outside state updaters.
+  const visualsRef = useRef(visuals);
+  useEffect(() => {
+    visualsRef.current = visuals;
+  }, [visuals]);
 
   const timeline = useMemo<Timeline>(() => {
     const audioDuration = audio?.duration ?? 0;
@@ -99,11 +110,14 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 
   const addVisuals = useCallback((v: UIVisual[]) => setVisuals((cur) => [...cur, ...v]), []);
   const removeVisual = useCallback((id: string) => {
+    const victim = visualsRef.current.find((x) => x.id === id);
+    if (victim) deletePersistedMedia(victim.uri);
     setVisuals((cur) => cur.filter((x) => x.id !== id));
     setAnimationOverrides(({ [id]: _drop, ...rest }) => rest);
     setTransitionOverrides(({ [id]: _drop, ...rest }) => rest);
   }, []);
   const clearVisuals = useCallback(() => {
+    for (const v of visualsRef.current) deletePersistedMedia(v.uri);
     setVisuals([]);
     setAnimationOverrides({});
     setTransitionOverrides({});

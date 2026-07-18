@@ -49,6 +49,7 @@ export function EditorScreen() {
   const toast = useToast();
   const { time, playing, toggle, pause, seek } = usePlayhead(p.audio?.uri ?? null, p.timeline.duration);
   const [selectedVisualId, setSelectedVisualId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const currentAspect =
     ASPECT_PRESETS.find((a) => a.width === p.settings.width && a.height === p.settings.height)?.id ?? '';
@@ -202,13 +203,20 @@ export function EditorScreen() {
         <Label>2 · Visuals ({p.visuals.length})</Label>
         <Row gap={8}>
           <Btn
-            label="＋ Add images / clips"
+            label={importing ? 'Importing…' : '＋ Add images / clips'}
             flex
+            disabled={importing}
             onPress={async () => {
-              const v = await pickVisuals();
-              if (v.length) {
-                p.addVisuals(v);
-                toast.show(`Added ${v.length} visual${v.length > 1 ? 's' : ''}`);
+              if (importing) return;
+              setImporting(true);
+              try {
+                const v = await pickVisuals();
+                if (v.length) {
+                  p.addVisuals(v);
+                  toast.show(`Added ${v.length} visual${v.length > 1 ? 's' : ''}`);
+                }
+              } finally {
+                setImporting(false);
               }
             }}
           />
@@ -230,6 +238,7 @@ export function EditorScreen() {
               visual={v}
               index={i}
               count={p.visuals.length}
+              animateIn={i < 8}
               selected={v.id === selectedVisualId}
               hasOverrides={!!p.animationOverrides[v.id] || !!p.transitionOverrides[v.id]}
               onSelect={() => setSelectedVisualId((cur) => (cur === v.id ? null : v.id))}
