@@ -12,6 +12,13 @@ export interface GraphOptions {
   seed?: number;
   /** Emit `-progress pipe:1` so the renderer can report progress. */
   progress?: boolean;
+  /**
+   * Override the video encoder args (e.g. mobile ffmpeg builds that lack
+   * libx264). When set, these replace the quality preset's `-c:v ...`.
+   */
+  videoCodecArgs?: string[];
+  /** Override the audio encoder args (default AAC 320k). */
+  audioCodecArgs?: string[];
 }
 
 export interface GraphResult {
@@ -124,8 +131,8 @@ export function buildFfmpegArgs(opts: GraphOptions): GraphResult {
   args.push('-filter_complex', filterComplex);
   args.push('-map', `[${finalLabel}]`, '-map', `${audioIndex}:a`);
   args.push('-r', String(fps));
-  args.push(...QUALITY_ARGS[quality]);
-  args.push('-c:a', 'aac', '-b:a', '320k');
+  args.push(...(opts.videoCodecArgs ?? QUALITY_ARGS[quality]));
+  args.push(...(opts.audioCodecArgs ?? ['-c:a', 'aac', '-b:a', '320k']));
   // Match output length to the audio/timeline exactly.
   args.push('-t', duration.toFixed(3));
   args.push('-movflags', '+faststart');

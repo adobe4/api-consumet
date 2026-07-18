@@ -2,7 +2,7 @@
   "expo": {
     "name": "Vinei Auto Edit",
     "slug": "vinei-auto-edit",
-    "version": "0.3.4",
+    "version": "0.3.5",
     "orientation": "portrait",
     "scheme": "vinei",
     "userInterfaceStyle": "dark",
@@ -18,7 +18,7 @@
     ],
     "android": {
       "package": "com.vinei.autoedit",
-      "versionCode": 7,
+      "versionCode": 8,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -34,8 +34,20 @@
         "expo-build-properties",
         {
           "android": {
-            "kotlinVersion": "1.9.25"
+            "kotlinVersion": "1.9.25",
+            "packagingOptions": {
+              "pickFirst": [
+                "**/libc++_shared.so"
+              ]
+            }
           }
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "savePhotosPermission": "Vinei saves your exported videos to your gallery.",
+          "isAccessMediaLocationEnabled": false
         }
       ],
       [

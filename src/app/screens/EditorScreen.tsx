@@ -49,6 +49,8 @@ export function EditorScreen() {
   const { time, playing, toggle, pause, seek } = usePlayhead(p.audio?.uri ?? null, p.timeline.duration);
   const [selectedVisualId, setSelectedVisualId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportPct, setExportPct] = useState(0);
 
   const currentAspect =
     ASPECT_PRESETS.find((a) => a.width === p.settings.width && a.height === p.settings.height)?.id ?? '';
@@ -107,16 +109,26 @@ export function EditorScreen() {
   }
 
   async function onExport() {
-    if (!p.audio) return;
-    const out = `${p.audio.name.replace(/\.[^.]+$/, '')}-vinei.mp4`;
-    const res = await exportVideo({
-      timeline: p.timeline,
-      audioUri: p.audio.uri,
-      outPath: out,
-      settings: p.settings,
-    });
-    if (res.ok) toast.show(`Exported ${res.outPath ?? out}`);
-    else toast.show(res.error ?? 'Export failed.', 'info');
+    if (!p.audio || exporting) return;
+    setExporting(true);
+    setExportPct(0);
+    try {
+      const res = await exportVideo(
+        { timeline: p.timeline, audioUri: p.audio.uri, settings: p.settings },
+        (pr) => setExportPct(pr),
+      );
+      if (res.ok) {
+        toast.show(
+          res.savedToGallery
+            ? 'Exported ✓  Saved to your gallery'
+            : 'Exported ✓  (allow gallery access to auto-save)',
+        );
+      } else {
+        toast.show(res.error ?? 'Export failed.', 'error');
+      }
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -348,7 +360,22 @@ export function EditorScreen() {
           onChange={(v) => p.updateSettings({ quality: v })}
         />
         <View style={{ height: 12 }} />
-        <Btn label="Export video" variant="primary" disabled={!ready} onPress={onExport} />
+        <Btn
+          label={exporting ? `Rendering…  ${Math.round(exportPct * 100)}%` : 'Export video'}
+          variant="primary"
+          disabled={!ready || exporting}
+          onPress={onExport}
+        />
+        {exporting && (
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${Math.round(exportPct * 100)}%` }]} />
+          </View>
+        )}
+        {exporting && (
+          <Text style={styles.exportNote}>
+            Rendering on your device — keep the app open. This can take a bit for long videos.
+          </Text>
+        )}
       </Card>
       <View style={{ height: 30 }} />
     </ScrollView>
@@ -417,6 +444,15 @@ const styles = StyleSheet.create({
   },
   parseRow: { marginTop: 8 },
   parseText: { color: theme.good, fontSize: 12, fontWeight: '600' },
+  progressTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.panel3,
+    marginTop: 10,
+    overflow: 'hidden',
+  },
+  progressFill: { height: 8, borderRadius: 4, backgroundColor: theme.accent },
+  exportNote: { color: theme.faint, fontSize: 11, marginTop: 8, lineHeight: 16 },
   sliderLabel: { color: theme.muted, fontSize: 12, marginTop: 12 },
   overridePanel: {
     marginTop: 6,
