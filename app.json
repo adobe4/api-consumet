@@ -19,6 +19,14 @@
     },
     "plugins": [
       [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "1.9.25"
+          }
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "AutoReel needs access to your photos to add visuals to your video."
