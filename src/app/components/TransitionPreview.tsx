@@ -31,14 +31,17 @@ export function TransitionPreview({ fromUri, toUri, params, progress, width, hei
     [params, progress, width, height],
   );
 
+  // Guard: never feed a null image into the shader (native crash on Android).
+  const ready = fromImage != null && toImage != null;
+
   return (
     <Canvas style={{ width, height }}>
       <Fill color="#000000" />
-      {effect && (
+      {effect && ready && (
         <Fill>
           <Shader source={effect} uniforms={uniforms}>
-            <ImageShader image={fromImage} fit="cover" rect={rect} tx="clamp" ty="clamp" fm="linear" mm="linear" />
-            <ImageShader image={toImage} fit="cover" rect={rect} tx="clamp" ty="clamp" fm="linear" mm="linear" />
+            <ImageShader image={fromImage} fit="cover" rect={rect} tx="clamp" ty="clamp" fm="linear" />
+            <ImageShader image={toImage} fit="cover" rect={rect} tx="clamp" ty="clamp" fm="linear" />
           </Shader>
         </Fill>
       )}

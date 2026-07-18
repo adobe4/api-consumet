@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import {
   Canvas,
   Fill,
+  Image as SkiaImage,
   ImageShader,
   Shader,
   Skia,
@@ -26,7 +27,6 @@ interface Props {
   transition: string;
   transitionDuration: number;
   customTransitions: CustomTransition[];
-  /** Per-visual override: transition used when cutting INTO that visual. */
   transitionOverrides?: Record<string, string>;
   seed?: number;
 }
@@ -37,9 +37,11 @@ function toTransform(zt: ZoomTransform, width: number, height: number) {
 
 /**
  * GPU-accelerated live preview of the assembled reel at a given playhead time.
- * Everything renders through ImageShaders (linear filtering) for clean scaling;
- * during a cut, both visuals are composited with the parameterised SkSL
- * transition, each carrying its own zoom so motion stays continuous.
+ *
+ * IMPORTANT: images load asynchronously, so `useImage` returns null for the
+ * first frame(s). Skia crashes natively if a null image is fed into an
+ * ImageShader/RuntimeShader, so every branch here is guarded to only draw once
+ * the required image(s) are actually decoded — otherwise it just shows black.
  */
 export function PreviewCanvas({
   timeline,
@@ -65,7 +67,9 @@ export function PreviewCanvas({
   const rect = useMemo(() => ({ x: 0, y: 0, width, height }), [width, height]);
   const origin = useMemo(() => ({ x: width / 2, y: height / 2 }), [width, height]);
 
-  const inTransition = frame?.transitionProgress != null && frame.fromIndex != null;
+  const wantsTransition = frame?.transitionProgress != null && frame.fromIndex != null;
+  // Only run the two-image shader when BOTH images are decoded.
+  const inTransition = wantsTransition && fromImage != null && currentImage != null;
 
   const currentTransform = useMemo(() => {
     if (!frame) return undefined;
@@ -76,16 +80,15 @@ export function PreviewCanvas({
   }, [frame, segs, time, width, height]);
 
   const fromTransform = useMemo(() => {
-    if (!inTransition || !frame || frame.fromIndex == null) return undefined;
+    if (!wantsTransition || !frame || frame.fromIndex == null) return undefined;
     const seg = segs[frame.fromIndex];
     if (!seg) return undefined;
     const p = segmentProgress(seg.start, seg.duration, time);
     return toTransform(zoomTransform(seg.animation, p), width, height);
-  }, [inTransition, frame, segs, time, width, height]);
+  }, [wantsTransition, frame, segs, time, width, height]);
 
   const transitionUniforms = useMemo(() => {
     if (!inTransition || !frame) return null;
-    // A per-visual override (keyed by the incoming visual) beats the global style.
     const incomingId = segs[frame.index]?.visual.id;
     const selection =
       (incomingId != null ? transitionOverrides?.[incomingId] : undefined) ?? transition;
@@ -107,7 +110,6 @@ export function PreviewCanvas({
               tx="clamp"
               ty="clamp"
               fm="linear"
-              mm="linear"
               transform={fromTransform}
               origin={origin}
             />
@@ -118,27 +120,23 @@ export function PreviewCanvas({
               tx="clamp"
               ty="clamp"
               fm="linear"
-              mm="linear"
               transform={currentTransform}
               origin={origin}
             />
           </Shader>
         </Fill>
-      ) : (
-        <Fill>
-          <ImageShader
-            image={currentImage}
-            fit="cover"
-            rect={rect}
-            tx="clamp"
-            ty="clamp"
-            fm="linear"
-            mm="linear"
-            transform={currentTransform}
-            origin={origin}
-          />
-        </Fill>
-      )}
+      ) : currentImage != null ? (
+        <SkiaImage
+          image={currentImage}
+          fit="cover"
+          x={0}
+          y={0}
+          width={width}
+          height={height}
+          transform={currentTransform}
+          origin={origin}
+        />
+      ) : null}
     </Canvas>
   );
 }
