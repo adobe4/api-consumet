@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { View, Text, ScrollView, TextInput, Pressable, StyleSheet, Dimensions } from 'react-native';
-import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
 import { useProject } from '../state/ProjectContext';
 import { TransitionPreview } from '../components/TransitionPreview';
 import { Btn, Card, ChipRow, Label, Row } from '../components/Controls';
@@ -70,7 +69,7 @@ export function DesignerScreen() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Animated.View entering={FadeInDown.duration(300)} style={[styles.preview, { width: pw, height: ph }]}>
+      <View style={[styles.preview, { width: pw, height: ph }]}>
         {canPreview ? (
           <View style={{ width: cw, height: ph }}>
             <TransitionPreview
@@ -85,7 +84,7 @@ export function DesignerScreen() {
         ) : (
           <Text style={styles.hint}>Add at least 2 visuals in the Editor to preview transitions live.</Text>
         )}
-      </Animated.View>
+      </View>
 
       <Card delay={40}>
         <Label>Start from a preset</Label>
@@ -152,13 +151,7 @@ export function DesignerScreen() {
         <Card delay={160}>
           <Label>Saved ({p.customTransitions.length})</Label>
           {p.customTransitions.map((c) => (
-            <Animated.View
-              key={c.id}
-              entering={FadeInDown.duration(220)}
-              exiting={FadeOutUp.duration(160)}
-              layout={LinearTransition.springify().damping(18)}
-              style={styles.savedRow}
-            >
+            <View key={c.id} style={styles.savedRow}>
               <Text style={styles.savedName}>★ {c.name}</Text>
               <Text style={styles.savedBase}>{c.exportBase}</Text>
               <Pressable
@@ -170,7 +163,7 @@ export function DesignerScreen() {
               >
                 <Text style={styles.savedRemove}>✕</Text>
               </Pressable>
-            </Animated.View>
+            </View>
           ))}
         </Card>
       )}

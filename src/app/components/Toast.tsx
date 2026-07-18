@@ -1,6 +1,5 @@
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { Text, StyleSheet, View } from 'react-native';
-import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { Text, StyleSheet, View, Animated, Easing } from 'react-native';
 import { theme } from '../theme';
 
 interface ToastState {
@@ -19,10 +18,14 @@ export function useToast(): ToastApi {
   return useContext(ToastContext);
 }
 
-/** App-wide sliding toast — a premium replacement for Alert popups. */
+/**
+ * App-wide toast. Uses React Native's built-in Animated (not Reanimated layout
+ * animations) so it's stable on Android.
+ */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<ToastState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const anim = useRef(new Animated.Value(0)).current;
 
   const show = useCallback((message: string, kind: ToastState['kind'] = 'success') => {
     if (timer.current) clearTimeout(timer.current);
@@ -30,19 +33,32 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     timer.current = setTimeout(() => setToast(null), 2600);
   }, []);
 
+  useEffect(() => {
+    if (!toast) return;
+    anim.setValue(0);
+    Animated.timing(anim, {
+      toValue: 1,
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [toast, anim]);
+
   return (
     <ToastContext.Provider value={{ show }}>
       {children}
       {toast && (
         <View style={styles.host} pointerEvents="none">
           <Animated.View
-            key={toast.id}
-            entering={FadeInDown.duration(260).springify().damping(17)}
-            exiting={FadeOutDown.duration(200)}
             style={[
               styles.toast,
               toast.kind === 'error' && styles.error,
-              toast.kind === 'info' && styles.info,
+              {
+                opacity: anim,
+                transform: [
+                  { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
+                ],
+              },
             ]}
           >
             <Text style={styles.icon}>
@@ -84,7 +100,6 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   error: { borderColor: theme.accentBorder },
-  info: {},
   icon: { color: theme.accent, fontSize: 14, fontWeight: '900' },
   text: { color: theme.text, fontSize: 13.5, fontWeight: '600', flexShrink: 1 },
 });

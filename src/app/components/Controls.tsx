@@ -2,7 +2,6 @@ import React from 'react';
 import { Pressable, Text, View, StyleSheet, ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
-  FadeInDown,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -155,24 +154,17 @@ export function Row({ children, gap = 8 }: { children: React.ReactNode; gap?: nu
   return <View style={[styles.row, { gap }]}>{children}</View>;
 }
 
-/** Elevated section card with a soft entrance animation. */
+/** Elevated section card. (No layout animation — kept static for stability.) */
 export function Card({
   children,
-  delay = 0,
   style,
 }: {
   children: React.ReactNode;
+  /** Accepted for call-site compatibility; no longer drives an animation. */
   delay?: number;
   style?: object;
 }) {
-  return (
-    <Animated.View
-      entering={FadeInDown.delay(delay).duration(320).springify().damping(18)}
-      style={[styles.card, style]}
-    >
-      {children}
-    </Animated.View>
-  );
+  return <View style={[styles.card, style]}>{children}</View>;
 }
 
 const styles = StyleSheet.create({

@@ -9,7 +9,6 @@ import {
   Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useProject } from '../state/ProjectContext';
 import { usePlayhead } from '../preview/usePlayhead';
 import { PreviewCanvas } from '../preview/PreviewCanvas';
@@ -123,7 +122,7 @@ export function EditorScreen() {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       {/* ---- Preview ---- */}
-      <Animated.View entering={FadeInDown.duration(300)} style={[styles.preview, { width: previewW, height: previewH }]}>
+      <View style={[styles.preview, { width: previewW, height: previewH }]}>
         {ready ? (
           <View style={{ width: canvasW, height: previewH }}>
             <PreviewCanvas
@@ -141,7 +140,7 @@ export function EditorScreen() {
         ) : (
           <Text style={styles.previewHint}>Add a voiceover and visuals to preview your reel</Text>
         )}
-      </Animated.View>
+      </View>
 
       {/* ---- Transport ---- */}
       <Row gap={9}>
@@ -238,7 +237,6 @@ export function EditorScreen() {
               visual={v}
               index={i}
               count={p.visuals.length}
-              animateIn={i < 8}
               selected={v.id === selectedVisualId}
               hasOverrides={!!p.animationOverrides[v.id] || !!p.transitionOverrides[v.id]}
               onSelect={() => setSelectedVisualId((cur) => (cur === v.id ? null : v.id))}
@@ -254,12 +252,7 @@ export function EditorScreen() {
 
         {/* Per-visual overrides for the selected visual */}
         {selectedVisual && (
-          <Animated.View
-            entering={FadeIn.duration(220)}
-            exiting={FadeOut.duration(150)}
-            layout={LinearTransition.springify().damping(18)}
-            style={styles.overridePanel}
-          >
+          <View style={styles.overridePanel}>
             <Text style={styles.overrideTitle} numberOfLines={1}>
               Fine-tune “{selectedVisual.name}”
             </Text>
@@ -277,7 +270,7 @@ export function EditorScreen() {
               value={p.transitionOverrides[selectedVisual.id] ?? 'follow'}
               onChange={(v) => p.setTransitionOverride(selectedVisual.id, v === 'follow' ? null : v)}
             />
-          </Animated.View>
+          </View>
         )}
       </Card>
 
@@ -297,7 +290,7 @@ export function EditorScreen() {
           onChangeText={p.setInstructions}
         />
         {p.instructions.trim().length > 0 && (
-          <Animated.View entering={FadeIn.duration(200)} style={styles.parseRow}>
+          <View style={styles.parseRow}>
             <Text style={[styles.parseText, parsedCount === 0 && { color: theme.accent }]}>
               {parsedCount === 0
                 ? '⚠ No timecodes recognised yet'
@@ -306,7 +299,7 @@ export function EditorScreen() {
                 ? `  ·  ${p.visuals.length} visuals loaded`
                 : ''}
             </Text>
-          </Animated.View>
+          </View>
         )}
       </Card>
 
@@ -335,16 +328,14 @@ export function EditorScreen() {
           onChange={(v) => p.updateSettings({ transitionDuration: v })}
         />
         {usingRandom && (
-          <Animated.View entering={FadeIn.duration(200)}>
-            <Btn
-              small
-              label="🎲 Shuffle random mix"
-              onPress={() => {
-                p.updateSettings({ seed: Math.floor(Math.random() * 1_000_000) });
-                toast.show('New random mix rolled', 'info');
-              }}
-            />
-          </Animated.View>
+          <Btn
+            small
+            label="🎲 Shuffle random mix"
+            onPress={() => {
+              p.updateSettings({ seed: Math.floor(Math.random() * 1_000_000) });
+              toast.show('New random mix rolled', 'info');
+            }}
+          />
         )}
       </Card>
 

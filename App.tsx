@@ -4,7 +4,6 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
-  FadeIn,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -89,9 +88,9 @@ export default function App() {
                 style={styles.hairline}
               />
 
-              <Animated.View key={tab} entering={FadeIn.duration(240)} style={{ flex: 1 }}>
+              <View style={{ flex: 1 }}>
                 {tab === 'editor' ? <EditorScreen /> : <DesignerScreen />}
-              </Animated.View>
+              </View>
             </SafeAreaView>
           </ToastProvider>
           </ProjectProvider>

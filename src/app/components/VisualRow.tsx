@@ -1,5 +1,4 @@
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
-import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
 import type { UIVisual } from '../types';
 import { theme } from '../theme';
 
@@ -9,72 +8,68 @@ interface Props {
   count: number;
   selected: boolean;
   hasOverrides: boolean;
-  /** Disable the entrance animation (bulk imports animate only the first few). */
-  animateIn?: boolean;
   onSelect: () => void;
   onUp: () => void;
   onDown: () => void;
   onRemove: () => void;
 }
 
+/**
+ * Plain (non-animated) list row. Row-level entrance/exit/layout animations were
+ * removed on purpose: Reanimated layout animations on Android crash hard when
+ * several rows mount at once (exactly what a bulk import does).
+ */
 export function VisualRow({
   visual,
   index,
   count,
   selected,
   hasOverrides,
-  animateIn = true,
   onSelect,
   onUp,
   onDown,
   onRemove,
 }: Props) {
   return (
-    <Animated.View
-      entering={animateIn ? FadeInDown.duration(240) : undefined}
-      exiting={FadeOutUp.duration(180)}
-      layout={LinearTransition.springify().damping(18)}
-    >
-      <Pressable onPress={onSelect} style={[styles.row, selected && styles.rowSelected]}>
-        <Text style={[styles.idx, selected && { color: theme.accent }]}>{index + 1}</Text>
-        {visual.kind === 'video' ? (
-          <View style={styles.videoTile}>
-            <Text style={styles.videoIcon}>▶</Text>
-          </View>
-        ) : (
-          // resizeMethod="resize" decodes at thumbnail size instead of full
-          // resolution — without it, 50 photos in the list can OOM the app.
-          <Image
-            source={{ uri: visual.uri }}
-            style={styles.thumb}
-            resizeMethod="resize"
-            fadeDuration={0}
-          />
-        )}
-        <View style={styles.info}>
-          <Text style={styles.name} numberOfLines={1}>
-            {visual.name}
-          </Text>
-          <View style={styles.metaRow}>
-            <Text style={styles.kind}>{visual.kind === 'video' ? 'clip' : 'image'}</Text>
-            {hasOverrides && (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>custom</Text>
-              </View>
-            )}
-          </View>
+    <Pressable onPress={onSelect} style={[styles.row, selected && styles.rowSelected]}>
+      <Text style={[styles.idx, selected && { color: theme.accent }]}>{index + 1}</Text>
+      {visual.kind === 'video' ? (
+        <View style={styles.videoTile}>
+          <Text style={styles.videoIcon}>▶</Text>
         </View>
-        <Pressable onPress={onUp} disabled={index === 0} style={styles.iconBtn} hitSlop={6}>
-          <Text style={[styles.icon, index === 0 && styles.iconOff]}>▲</Text>
-        </Pressable>
-        <Pressable onPress={onDown} disabled={index === count - 1} style={styles.iconBtn} hitSlop={6}>
-          <Text style={[styles.icon, index === count - 1 && styles.iconOff]}>▼</Text>
-        </Pressable>
-        <Pressable onPress={onRemove} style={styles.iconBtn} hitSlop={6}>
-          <Text style={[styles.icon, styles.iconDanger]}>✕</Text>
-        </Pressable>
+      ) : (
+        // resizeMethod="resize" decodes at thumbnail size instead of full
+        // resolution — critical to avoid memory pressure with many photos.
+        <Image
+          source={{ uri: visual.uri }}
+          style={styles.thumb}
+          resizeMethod="resize"
+          fadeDuration={0}
+        />
+      )}
+      <View style={styles.info}>
+        <Text style={styles.name} numberOfLines={1}>
+          {visual.name}
+        </Text>
+        <View style={styles.metaRow}>
+          <Text style={styles.kind}>{visual.kind === 'video' ? 'clip' : 'image'}</Text>
+          {hasOverrides && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>custom</Text>
+            </View>
+          )}
+        </View>
+      </View>
+      <Pressable onPress={onUp} disabled={index === 0} style={styles.iconBtn} hitSlop={6}>
+        <Text style={[styles.icon, index === 0 && styles.iconOff]}>▲</Text>
       </Pressable>
-    </Animated.View>
+      <Pressable onPress={onDown} disabled={index === count - 1} style={styles.iconBtn} hitSlop={6}>
+        <Text style={[styles.icon, index === count - 1 && styles.iconOff]}>▼</Text>
+      </Pressable>
+      <Pressable onPress={onRemove} style={styles.iconBtn} hitSlop={6}>
+        <Text style={[styles.icon, styles.iconDanger]}>✕</Text>
+      </Pressable>
+    </Pressable>
   );
 }
 
