@@ -1,17 +1,25 @@
 export const theme = {
-  bg: '#0c0d10',
-  panel: '#15171d',
-  panel2: '#1e2028',
-  line: '#2b2e38',
-  text: '#f2f4f8',
-  muted: '#9298a6',
+  bg: '#0b0c0f',
+  panel: '#14161b',
+  panel2: '#1d2027',
+  panel3: '#262a33',
+  line: '#282c36',
+  lineSoft: '#1f232c',
+  text: '#f4f5f8',
+  muted: '#959ba9',
+  faint: '#6a7080',
   accent: '#ef2b2d',
-  accent2: '#c31f21',
+  accent2: '#b31a1c',
   accentSoft: 'rgba(239,43,45,0.14)',
+  accentBorder: 'rgba(239,43,45,0.45)',
   danger: '#ef2b2d',
   good: '#39c07a',
-  radius: 14,
+  radius: 16,
+  radiusSm: 10,
 };
+
+/** Gradient stops for primary (brand) surfaces. */
+export const ACCENT_GRADIENT = ['#ff4d4f', '#ef2b2d', '#c11f21'] as const;
 
 // Segment swatches lean warm/red to match the brand while staying distinct.
 export const SEGMENT_COLORS = [

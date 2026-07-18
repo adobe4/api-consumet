@@ -26,6 +26,8 @@ interface Props {
   transition: string;
   transitionDuration: number;
   customTransitions: CustomTransition[];
+  /** Per-visual override: transition used when cutting INTO that visual. */
+  transitionOverrides?: Record<string, string>;
   seed?: number;
 }
 
@@ -47,6 +49,7 @@ export function PreviewCanvas({
   transition,
   transitionDuration,
   customTransitions,
+  transitionOverrides,
   seed,
 }: Props) {
   const segs = timeline.segments;
@@ -82,10 +85,14 @@ export function PreviewCanvas({
 
   const transitionUniforms = useMemo(() => {
     if (!inTransition || !frame) return null;
-    const resolved = resolveTransitionForCut(transition, frame.index, customTransitions, seed);
+    // A per-visual override (keyed by the incoming visual) beats the global style.
+    const incomingId = segs[frame.index]?.visual.id;
+    const selection =
+      (incomingId != null ? transitionOverrides?.[incomingId] : undefined) ?? transition;
+    const resolved = resolveTransitionForCut(selection, frame.index, customTransitions, seed);
     if (!resolved) return null;
     return paramsToUniforms(resolved.params, frame.transitionProgress ?? 0, width, height);
-  }, [inTransition, frame, transition, customTransitions, seed, width, height]);
+  }, [inTransition, frame, segs, transition, transitionOverrides, customTransitions, seed, width, height]);
 
   return (
     <Canvas style={{ width, height }}>

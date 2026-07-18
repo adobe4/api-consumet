@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { parseInstructions, buildTimeline } from '../../engine';
-import type { Timeline } from '../../engine/types';
+import type { AnimationKind, Timeline } from '../../engine/types';
 import {
   DEFAULT_SETTINGS,
   type AudioTrack,
@@ -16,6 +16,10 @@ interface ProjectState {
   instructions: string;
   settings: ProjectSettings;
   customTransitions: CustomTransition[];
+  /** Per-visual animation override (visual id -> animation). */
+  animationOverrides: Record<string, AnimationKind>;
+  /** Per-visual "transition into this visual" override (visual id -> style). */
+  transitionOverrides: Record<string, string>;
   /** Derived timeline (recomputed when inputs change). */
   timeline: Timeline;
 
@@ -27,6 +31,9 @@ interface ProjectState {
   setInstructions: (t: string) => void;
   updateSettings: (patch: Partial<ProjectSettings>) => void;
   addCustomTransition: (t: CustomTransition) => void;
+  removeCustomTransition: (id: string) => void;
+  setAnimationOverride: (visualId: string, anim: AnimationKind | null) => void;
+  setTransitionOverride: (visualId: string, style: string | null) => void;
 }
 
 const ProjectContext = createContext<ProjectState | null>(null);
@@ -37,6 +44,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const [instructions, setInstructions] = useState('');
   const [settings, setSettings] = useState<ProjectSettings>(DEFAULT_SETTINGS);
   const [customTransitions, setCustomTransitions] = useState<CustomTransition[]>([]);
+  const [animationOverrides, setAnimationOverrides] = useState<Record<string, AnimationKind>>({});
+  const [transitionOverrides, setTransitionOverrides] = useState<Record<string, string>>({});
   const hydrated = useRef(false);
 
   // Load the saved project once on startup.
@@ -49,6 +58,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         setInstructions(p.instructions ?? '');
         setSettings({ ...DEFAULT_SETTINGS, ...(p.settings ?? {}) });
         setCustomTransitions(p.customTransitions ?? []);
+        setAnimationOverrides(p.animationOverrides ?? {});
+        setTransitionOverrides(p.transitionOverrides ?? {});
       }
       hydrated.current = true;
     });
@@ -60,8 +71,16 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   // Persist whenever anything meaningful changes (after the initial load).
   useEffect(() => {
     if (!hydrated.current) return;
-    saveProject({ audio, visuals, instructions, settings, customTransitions });
-  }, [audio, visuals, instructions, settings, customTransitions]);
+    saveProject({
+      audio,
+      visuals,
+      instructions,
+      settings,
+      customTransitions,
+      animationOverrides,
+      transitionOverrides,
+    });
+  }, [audio, visuals, instructions, settings, customTransitions, animationOverrides, transitionOverrides]);
 
   const timeline = useMemo<Timeline>(() => {
     const audioDuration = audio?.duration ?? 0;
@@ -73,13 +92,22 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       width: settings.width,
       height: settings.height,
       animation: settings.animation,
+      animationOverrides,
       seed: settings.seed,
     });
-  }, [audio, visuals, instructions, settings.fps, settings.width, settings.height, settings.animation, settings.seed]);
+  }, [audio, visuals, instructions, settings.fps, settings.width, settings.height, settings.animation, settings.seed, animationOverrides]);
 
   const addVisuals = useCallback((v: UIVisual[]) => setVisuals((cur) => [...cur, ...v]), []);
-  const removeVisual = useCallback((id: string) => setVisuals((cur) => cur.filter((x) => x.id !== id)), []);
-  const clearVisuals = useCallback(() => setVisuals([]), []);
+  const removeVisual = useCallback((id: string) => {
+    setVisuals((cur) => cur.filter((x) => x.id !== id));
+    setAnimationOverrides(({ [id]: _drop, ...rest }) => rest);
+    setTransitionOverrides(({ [id]: _drop, ...rest }) => rest);
+  }, []);
+  const clearVisuals = useCallback(() => {
+    setVisuals([]);
+    setAnimationOverrides({});
+    setTransitionOverrides({});
+  }, []);
   const reorderVisuals = useCallback((from: number, to: number) => {
     setVisuals((cur) => {
       if (to < 0 || to >= cur.length) return cur;
@@ -97,15 +125,41 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     (t: CustomTransition) => setCustomTransitions((cur) => [...cur.filter((x) => x.id !== t.id), t]),
     [],
   );
+  const removeCustomTransition = useCallback(
+    (id: string) => setCustomTransitions((cur) => cur.filter((x) => x.id !== id)),
+    [],
+  );
+  const setAnimationOverride = useCallback((visualId: string, anim: AnimationKind | null) => {
+    setAnimationOverrides((cur) => {
+      if (anim == null) {
+        const { [visualId]: _drop, ...rest } = cur;
+        return rest;
+      }
+      return { ...cur, [visualId]: anim };
+    });
+  }, []);
+  const setTransitionOverride = useCallback((visualId: string, style: string | null) => {
+    setTransitionOverrides((cur) => {
+      if (style == null) {
+        const { [visualId]: _drop, ...rest } = cur;
+        return rest;
+      }
+      return { ...cur, [visualId]: style };
+    });
+  }, []);
 
   const value = useMemo<ProjectState>(
     () => ({
       audio, visuals, instructions, settings, customTransitions, timeline,
+      animationOverrides, transitionOverrides,
       setAudio, addVisuals, removeVisual, reorderVisuals, clearVisuals,
-      setInstructions, updateSettings, addCustomTransition,
+      setInstructions, updateSettings, addCustomTransition, removeCustomTransition,
+      setAnimationOverride, setTransitionOverride,
     }),
     [audio, visuals, instructions, settings, customTransitions, timeline,
-      addVisuals, removeVisual, reorderVisuals, clearVisuals, updateSettings, addCustomTransition],
+      animationOverrides, transitionOverrides,
+      addVisuals, removeVisual, reorderVisuals, clearVisuals, updateSettings,
+      addCustomTransition, removeCustomTransition, setAnimationOverride, setTransitionOverride],
   );
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;

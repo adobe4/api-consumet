@@ -2,7 +2,7 @@
   "expo": {
     "name": "Vinei Auto Edit",
     "slug": "vinei-auto-edit",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "orientation": "portrait",
     "scheme": "vinei",
     "userInterfaceStyle": "dark",
@@ -13,10 +13,12 @@
       "resizeMode": "contain",
       "backgroundColor": "#0d0f14"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "android": {
       "package": "com.vinei.autoedit",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"

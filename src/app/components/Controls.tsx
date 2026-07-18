@@ -1,6 +1,29 @@
 import React from 'react';
 import { Pressable, Text, View, StyleSheet, ScrollView } from 'react-native';
-import { theme } from '../theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, {
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { ACCENT_GRADIENT, theme } from '../theme';
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+/** Pressable that springs down slightly while pressed — the app-wide feel. */
+function useSpringPress() {
+  const scale = useSharedValue(1);
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const onPressIn = () => {
+    scale.value = withSpring(0.96, { damping: 18, stiffness: 380 });
+  };
+  const onPressOut = () => {
+    scale.value = withSpring(1, { damping: 16, stiffness: 300 });
+  };
+  return { style, onPressIn, onPressOut };
+}
 
 export function Btn({
   label,
@@ -8,28 +31,66 @@ export function Btn({
   variant = 'default',
   disabled,
   flex,
+  small,
 }: {
   label: string;
   onPress: () => void;
-  variant?: 'default' | 'primary' | 'danger';
+  variant?: 'default' | 'primary' | 'danger' | 'ghost';
   disabled?: boolean;
   flex?: boolean;
+  small?: boolean;
 }) {
+  const press = useSpringPress();
+
+  if (variant === 'primary') {
+    return (
+      <AnimatedPressable
+        onPress={onPress}
+        disabled={disabled}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        style={[press.style, flex && { flex: 1 }, disabled && styles.disabled]}
+      >
+        <LinearGradient
+          colors={[...ACCENT_GRADIENT]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.btn, styles.btnPrimary, small && styles.btnSmall]}
+        >
+          <Text style={[styles.btnText, styles.btnTextPrimary, small && styles.btnTextSmall]}>
+            {label}
+          </Text>
+        </LinearGradient>
+      </AnimatedPressable>
+    );
+  }
+
   return (
-    <Pressable
+    <AnimatedPressable
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [
+      onPressIn={press.onPressIn}
+      onPressOut={press.onPressOut}
+      style={[
+        press.style,
         styles.btn,
-        variant === 'primary' && styles.btnPrimary,
         variant === 'danger' && styles.btnDanger,
+        variant === 'ghost' && styles.btnGhost,
+        small && styles.btnSmall,
         flex && { flex: 1 },
-        disabled && styles.btnDisabled,
-        pressed && !disabled && styles.btnPressed,
+        disabled && styles.disabled,
       ]}
     >
-      <Text style={[styles.btnText, variant === 'primary' && styles.btnTextPrimary]}>{label}</Text>
-    </Pressable>
+      <Text
+        style={[
+          styles.btnText,
+          variant === 'danger' && { color: theme.danger },
+          small && styles.btnTextSmall,
+        ]}
+      >
+        {label}
+      </Text>
+    </AnimatedPressable>
   );
 }
 
@@ -42,10 +103,23 @@ export function Chip({
   active: boolean;
   onPress: () => void;
 }) {
+  const press = useSpringPress();
+  const glow = useAnimatedStyle(
+    () => ({
+      borderColor: withTiming(active ? theme.accentBorder : theme.line, { duration: 180 }),
+      backgroundColor: withTiming(active ? theme.accentSoft : theme.panel, { duration: 180 }),
+    }),
+    [active],
+  );
   return (
-    <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
+    <AnimatedPressable
+      onPress={onPress}
+      onPressIn={press.onPressIn}
+      onPressOut={press.onPressOut}
+      style={[styles.chip, glow, press.style]}
+    >
       <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 
@@ -69,11 +143,36 @@ export function ChipRow<T extends string>({
 }
 
 export function Label({ children }: { children: React.ReactNode }) {
-  return <Text style={styles.label}>{children}</Text>;
+  return (
+    <View style={styles.labelRow}>
+      <View style={styles.labelTick} />
+      <Text style={styles.label}>{children}</Text>
+    </View>
+  );
 }
 
 export function Row({ children, gap = 8 }: { children: React.ReactNode; gap?: number }) {
   return <View style={[styles.row, { gap }]}>{children}</View>;
+}
+
+/** Elevated section card with a soft entrance animation. */
+export function Card({
+  children,
+  delay = 0,
+  style,
+}: {
+  children: React.ReactNode;
+  delay?: number;
+  style?: object;
+}) {
+  return (
+    <Animated.View
+      entering={FadeInDown.delay(delay).duration(320).springify().damping(18)}
+      style={[styles.card, style]}
+    >
+      {children}
+    </Animated.View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -81,30 +180,46 @@ const styles = StyleSheet.create({
     backgroundColor: theme.panel2,
     borderColor: theme.line,
     borderWidth: 1,
-    borderRadius: theme.radius,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    borderRadius: theme.radius - 4,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  btnPrimary: { backgroundColor: theme.accent, borderColor: theme.accent },
-  btnDanger: { borderColor: '#3a2730' },
-  btnDisabled: { opacity: 0.4 },
-  btnPressed: { opacity: 0.8 },
-  btnText: { color: theme.text, fontSize: 14, fontWeight: '600' },
+  btnPrimary: { borderWidth: 0, shadowColor: theme.accent, shadowOpacity: 0.5, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
+  btnDanger: { borderColor: '#3a2226', backgroundColor: '#1d1416' },
+  btnGhost: { backgroundColor: 'transparent', borderColor: theme.line },
+  btnSmall: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
+  disabled: { opacity: 0.4 },
+  btnText: { color: theme.text, fontSize: 14, fontWeight: '700', letterSpacing: 0.2 },
   btnTextPrimary: { color: '#fff' },
+  btnTextSmall: { fontSize: 12.5 },
   chip: {
-    backgroundColor: theme.panel,
-    borderColor: theme.line,
     borderWidth: 1,
-    borderRadius: 20,
-    paddingVertical: 7,
-    paddingHorizontal: 14,
+    borderRadius: 22,
+    paddingVertical: 8,
+    paddingHorizontal: 15,
     marginRight: 8,
   },
-  chipActive: { backgroundColor: theme.accent, borderColor: theme.accent },
-  chipText: { color: theme.muted, fontSize: 13 },
-  chipTextActive: { color: '#fff', fontWeight: '600' },
+  chipText: { color: theme.muted, fontSize: 13, fontWeight: '500' },
+  chipTextActive: { color: theme.text, fontWeight: '700' },
   chipRow: { paddingVertical: 2 },
-  label: { color: theme.muted, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, marginTop: 14 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 9, marginTop: 2 },
+  labelTick: { width: 3, height: 12, borderRadius: 2, backgroundColor: theme.accent },
+  label: {
+    color: theme.muted,
+    fontSize: 11.5,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    fontWeight: '700',
+  },
   row: { flexDirection: 'row' },
+  card: {
+    backgroundColor: theme.panel,
+    borderColor: theme.lineSoft,
+    borderWidth: 1,
+    borderRadius: theme.radius,
+    padding: 14,
+    marginBottom: 12,
+  },
 });

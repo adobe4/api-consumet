@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { AnimationKind } from '../../engine/types';
 import type { AudioTrack, CustomTransition, ProjectSettings, UIVisual } from '../types';
 
 const KEY = 'vinei.project.v1';
@@ -9,6 +10,8 @@ export interface PersistedProject {
   instructions: string;
   settings: ProjectSettings;
   customTransitions: CustomTransition[];
+  animationOverrides?: Record<string, AnimationKind>;
+  transitionOverrides?: Record<string, string>;
 }
 
 export async function loadProject(): Promise<PersistedProject | null> {

@@ -87,10 +87,16 @@ export function usePlayhead(audioUri: string | null, duration: number): Playhead
   const play = useCallback(() => {
     const s = soundRef.current;
     if (!s) return;
+    // Replay from the start when the playhead sits at (or past) the end.
+    if (duration > 0 && baseTime.current >= duration - 0.05) {
+      baseTime.current = 0;
+      setTime(0);
+      s.setPositionAsync(0).catch(() => {});
+    }
     baseClock.current = performance.now();
     s.playAsync().catch(() => {});
     setPlaying(true);
-  }, []);
+  }, [duration]);
 
   const pause = useCallback(() => {
     soundRef.current?.pauseAsync().catch(() => {});
