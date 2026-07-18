@@ -14,6 +14,7 @@ import { ToastProvider } from './src/app/components/Toast';
 import { EditorScreen } from './src/app/screens/EditorScreen';
 import { DesignerScreen } from './src/app/screens/DesignerScreen';
 import { theme } from './src/app/theme';
+import { APP_VERSION } from './src/app/version';
 
 type Tab = 'editor' | 'designer';
 const TABS: { key: Tab; label: string }[] = [
@@ -50,7 +51,7 @@ export default function App() {
                   <Image source={require('./assets/logo.png')} style={styles.logo} />
                   <View>
                     <Text style={styles.brand}>Vinei</Text>
-                    <Text style={styles.brandSub}>AUTO EDIT</Text>
+                    <Text style={styles.brandSub}>AUTO EDIT · v{APP_VERSION}</Text>
                   </View>
                 </View>
 
