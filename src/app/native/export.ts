@@ -1,4 +1,9 @@
-import { FFmpegKit, FFmpegKitConfig, ReturnCode } from '@wokcito/ffmpeg-kit-react-native';
+import {
+  FFmpegKit,
+  ReturnCode,
+  type FFmpegSession,
+  type Statistics,
+} from '@wokcito/ffmpeg-kit-react-native';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { buildFfmpegArgs } from '../../engine';
@@ -19,10 +24,8 @@ export interface ExportResult {
 }
 
 /**
- * Video encoders to try, best first. Each one fails immediately (before any
- * rendering) if it isn't compiled into the bundled ffmpeg, so falling back is
- * cheap. libx264 = best quality (GPL builds); libopenh264 = LGPL H.264;
- * mpeg4 = universal fallback that exists in every ffmpeg build.
+ * Video encoders to try, best first. Each fails immediately (before rendering)
+ * if it isn't compiled into the bundled ffmpeg, so falling back is cheap.
  */
 const VIDEO_ENCODERS: { name: string; args: string[] }[] = [
   { name: 'libx264', args: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p'] },
@@ -36,8 +39,69 @@ function stripFileScheme(uri: string): string {
   return uri.replace(/^file:\/\//, '');
 }
 
-function tail(text: string, n = 600): string {
-  return text.length > n ? text.slice(-n) : text;
+function tail(text: string, n = 700): string {
+  return text.length > n ? '…' + text.slice(-n) : text;
+}
+
+/**
+ * Run one ffmpeg command safely. Uses the async (callback) API — the blocking
+ * variant can wedge the JS thread — and swallows every possible throw (the
+ * statistics callback is invoked by native code, so a throw there would crash
+ * the whole app). Always resolves; never rejects.
+ */
+function runFfmpeg(
+  args: string[],
+  totalSeconds: number,
+  onProgress?: (p: number) => void,
+): Promise<{ success: boolean; logs: string }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (success: boolean, logs: string) => {
+      if (settled) return;
+      settled = true;
+      resolve({ success, logs });
+    };
+
+    const onComplete = async (session: FFmpegSession) => {
+      try {
+        const rc = await session.getReturnCode();
+        if (ReturnCode.isSuccess(rc)) {
+          done(true, '');
+        } else {
+          let logs = '';
+          try {
+            logs = await session.getAllLogsAsString();
+          } catch {
+            logs = 'render failed';
+          }
+          done(false, logs);
+        }
+      } catch (e) {
+        done(false, e instanceof Error ? e.message : String(e));
+      }
+    };
+
+    const onStats = (stats: Statistics) => {
+      try {
+        const seconds = (stats?.getTime?.() ?? 0) / 1000;
+        if (seconds > 0 && totalSeconds > 0) {
+          onProgress?.(Math.max(0, Math.min(1, seconds / totalSeconds)));
+        }
+      } catch {
+        /* never let the native-invoked callback throw */
+      }
+    };
+
+    try {
+      const maybePromise = FFmpegKit.executeWithArgumentsAsync(args, onComplete, undefined, onStats);
+      // Some versions return a promise that can reject if the session fails to start.
+      (maybePromise as unknown as Promise<unknown>)?.catch?.((e: unknown) =>
+        done(false, e instanceof Error ? e.message : String(e)),
+      );
+    } catch (e) {
+      done(false, e instanceof Error ? e.message : String(e));
+    }
+  });
 }
 
 async function saveToGallery(fileUri: string): Promise<boolean> {
@@ -52,31 +116,26 @@ async function saveToGallery(fileUri: string): Promise<boolean> {
 }
 
 /**
- * Render the timeline + audio to an MP4 on-device using the bundled ffmpeg,
- * then save it to the gallery. Reports 0..1 progress.
+ * Render the timeline + audio to an MP4 on-device, then save it to the gallery.
+ * Never throws — any failure comes back as { ok:false, error }.
  */
 export async function exportVideo(
   input: ExportInput,
   onProgress?: (p: number) => void,
 ): Promise<ExportResult> {
-  if (input.timeline.segments.length === 0) {
-    return { ok: false, error: 'Add at least one visual before exporting.' };
-  }
-  if (!input.audioUri) {
-    return { ok: false, error: 'Add a voiceover before exporting.' };
-  }
-
-  const total = input.timeline.duration || 1;
-  const outUri = `${FileSystem.cacheDirectory}vinei-export-${Date.now()}.mp4`;
-  const outPath = stripFileScheme(outUri);
-
-  FFmpegKitConfig.enableStatisticsCallback((stats) => {
-    const seconds = (stats.getTime?.() ?? 0) / 1000;
-    onProgress?.(Math.max(0, Math.min(1, seconds / total)));
-  });
-
-  let lastLogs = '';
   try {
+    if (input.timeline.segments.length === 0) {
+      return { ok: false, error: 'Add at least one visual before exporting.' };
+    }
+    if (!input.audioUri) {
+      return { ok: false, error: 'Add a voiceover before exporting.' };
+    }
+
+    const total = input.timeline.duration || 1;
+    const outUri = `${FileSystem.cacheDirectory}vinei-export-${Date.now()}.mp4`;
+    const outPath = stripFileScheme(outUri);
+
+    let lastLogs = '';
     for (const encoder of VIDEO_ENCODERS) {
       const { args } = buildFfmpegArgs({
         timeline: input.timeline,
@@ -88,26 +147,22 @@ export async function exportVideo(
         seed: input.settings.seed,
         progress: false,
         videoCodecArgs: encoder.args,
+        // Lower zoom pre-scale on mobile to keep memory in check.
+        oversample: 1.5,
       });
 
       onProgress?.(0);
-      const session = await FFmpegKit.executeWithArguments(args);
-      const rc = await session.getReturnCode();
-
-      if (ReturnCode.isSuccess(rc)) {
+      const { success, logs } = await runFfmpeg(args, total, onProgress);
+      if (success) {
         onProgress?.(1);
         const saved = await saveToGallery(outUri);
         return { ok: true, outPath: outUri, savedToGallery: saved };
       }
-
-      lastLogs = await session.getAllLogsAsString();
-      // Only fall back to the next encoder when THIS one is simply missing.
-      if (!MISSING_ENCODER.test(lastLogs)) break;
+      lastLogs = logs;
+      if (!MISSING_ENCODER.test(logs)) break; // real error → stop, don't retry
     }
     return { ok: false, error: tail(lastLogs) || 'Export failed.' };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  } finally {
-    FFmpegKitConfig.enableStatisticsCallback(() => {});
   }
 }

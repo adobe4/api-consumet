@@ -19,6 +19,11 @@ export interface GraphOptions {
   videoCodecArgs?: string[];
   /** Override the audio encoder args (default AAC 320k). */
   audioCodecArgs?: string[];
+  /**
+   * zoompan pre-scale factor. Higher = smoother zoom but more memory/CPU.
+   * Defaults to 2; mobile uses a lower value to avoid OOM on large photos.
+   */
+  oversample?: number;
 }
 
 export interface GraphResult {
@@ -87,14 +92,17 @@ export function buildFfmpegArgs(opts: GraphOptions): GraphResult {
   // ---- Per-clip filter chains -----------------------------------------
   const chains: string[] = [];
   segments.forEach((seg, i) => {
-    const filter = buildClipFilter({
-      kind: seg.visual.kind,
-      animation: seg.animation,
-      duration: clipLengths[i],
-      fps,
-      width,
-      height,
-    });
+    const filter = buildClipFilter(
+      {
+        kind: seg.visual.kind,
+        animation: seg.animation,
+        duration: clipLengths[i],
+        fps,
+        width,
+        height,
+      },
+      opts.oversample,
+    );
     chains.push(`[${i}:v]${filter}[c${i}]`);
   });
 
