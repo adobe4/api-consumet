@@ -1,8 +1,7 @@
 package com.vineicut.app.ui.editor
 
+import android.content.Context
 import android.net.Uri
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -11,12 +10,31 @@ import androidx.compose.ui.platform.LocalContext
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
+import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.request.videoFrameMillis
 
 /**
+ * One app-wide loader so every thumbnail shares a single memory cache —
+ * a per-composable loader made the timeline flicker and stutter.
+ */
+private object ThumbLoader {
+    @Volatile private var instance: ImageLoader? = null
+
+    fun get(context: Context): ImageLoader =
+        instance ?: synchronized(this) {
+            instance ?: ImageLoader.Builder(context.applicationContext)
+                .components { add(VideoFrameDecoder.Factory()) }
+                .memoryCachePolicy(CachePolicy.ENABLED)
+                .crossfade(false)
+                .build()
+                .also { instance = it }
+        }
+}
+
+/**
  * Renders a still frame for any media uri. For videos it decodes the frame at
- * [frameMs] using Coil's [VideoFrameDecoder]; for images it just loads the image.
+ * [frameMs]; for images it just loads the image.
  */
 @Composable
 fun MediaFrame(
@@ -27,25 +45,18 @@ fun MediaFrame(
     contentScale: ContentScale = ContentScale.Fit
 ) {
     val context = LocalContext.current
-    val loader = remember {
-        ImageLoader.Builder(context)
-            .components { add(VideoFrameDecoder.Factory()) }
-            .crossfade(true)
-            .build()
-    }
+    val loader = remember { ThumbLoader.get(context) }
     val request = remember(uri, frameMs, isVideo) {
         ImageRequest.Builder(context)
             .data(Uri.parse(uri))
             .apply { if (isVideo) videoFrameMillis(frameMs) }
             .build()
     }
-    Box(modifier) {
-        AsyncImage(
-            model = request,
-            imageLoader = loader,
-            contentDescription = null,
-            contentScale = contentScale,
-            modifier = Modifier.fillMaxSize()
-        )
-    }
+    AsyncImage(
+        model = request,
+        imageLoader = loader,
+        contentDescription = null,
+        contentScale = contentScale,
+        modifier = modifier
+    )
 }

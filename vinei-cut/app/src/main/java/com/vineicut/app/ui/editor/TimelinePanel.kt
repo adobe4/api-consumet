@@ -1,7 +1,9 @@
 package com.vineicut.app.ui.editor
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -14,10 +16,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,7 +35,10 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -44,22 +52,22 @@ import com.vineicut.app.model.ClipType
 import com.vineicut.app.model.Project
 import com.vineicut.app.model.TrackType
 import com.vineicut.app.ui.theme.TrackAudio
-import com.vineicut.app.ui.theme.TrackImage
 import com.vineicut.app.ui.theme.TrackOverlay
 import com.vineicut.app.ui.theme.TrackText
-import com.vineicut.app.ui.theme.TrackVideo
-import com.vineicut.app.ui.theme.VcAccent
 import com.vineicut.app.ui.theme.VcBackground
 import com.vineicut.app.ui.theme.VcMuted
 import com.vineicut.app.ui.theme.VcOnSurface
 import com.vineicut.app.ui.theme.VcSurfaceHigh
+import kotlin.math.ceil
+import kotlin.random.Random
 
-private const val RULER_H = 24f
-private const val LANE_H = 46f
-private const val LANE_GAP = 4f
+private const val RULER_H = 22f
+private const val MAIN_H = 54f      // main filmstrip lane
+private const val SUB_H = 34f       // overlay / text / audio lanes
+private const val LANE_GAP = 5f
 private const val HANDLE_W = 16f
-
-private val TRACK_ORDER = listOf(TrackType.MAIN, TrackType.OVERLAY, TrackType.TEXT, TrackType.AUDIO)
+private const val TILE_W = 56f      // filmstrip tile width (dp)
+private const val ADD_TILE_W = 44f  // trailing "+" tile on the main track
 
 // Drag modes
 private const val SCRUB = 0
@@ -67,16 +75,22 @@ private const val MOVE = 1
 private const val TRIM_L = 2
 private const val TRIM_R = 3
 
-private fun trackColor(type: TrackType): Color = when (type) {
-    TrackType.MAIN -> TrackVideo
-    TrackType.OVERLAY -> TrackOverlay
-    TrackType.TEXT -> TrackText
-    TrackType.AUDIO -> TrackAudio
-    TrackType.STICKER -> TrackImage
+private data class Lane(val type: TrackType, val top: Float, val height: Float)
+
+/** Main lane always shows; sub-lanes only when they have content — like CapCut. */
+private fun buildLanes(project: Project): Pair<List<Lane>, Float> {
+    var y = RULER_H + LANE_GAP
+    val lanes = mutableListOf<Lane>()
+    lanes += Lane(TrackType.MAIN, y, MAIN_H); y += MAIN_H + LANE_GAP
+    for (t in listOf(TrackType.OVERLAY, TrackType.TEXT, TrackType.AUDIO)) {
+        if (project.track(t)?.clips?.isNotEmpty() == true) {
+            lanes += Lane(t, y, SUB_H); y += SUB_H + LANE_GAP
+        }
+    }
+    return lanes to y
 }
 
-private fun laneTop(index: Int): Float = RULER_H + LANE_GAP + index * (LANE_H + LANE_GAP)
-private fun anchorDp(viewportW: Float, density: Float): Float = (viewportW / density) * 0.5f
+private fun anchorDp(viewportWpx: Float, density: Float): Float = (viewportWpx / density) * 0.5f
 private fun timeToXdp(ms: Long, playheadMs: Long, pxPerSec: Float, anchor: Float): Float =
     anchor + (ms - playheadMs) / 1000f * pxPerSec
 private fun xDpToTime(xDp: Float, playheadMs: Long, pxPerSec: Float, anchor: Float): Long =
@@ -85,16 +99,15 @@ private fun xDpToTime(xDp: Float, playheadMs: Long, pxPerSec: Float, anchor: Flo
 private data class ClipHit(val clip: Clip, val onLeftEdge: Boolean, val onRightEdge: Boolean)
 
 private fun hitTest(
-    xPx: Float, yPx: Float, project: Project, playheadMs: Long, pxPerSec: Float, viewportW: Float, density: Float
+    xPx: Float, yPx: Float,
+    project: Project, lanes: List<Lane>,
+    playheadMs: Long, pxPerSec: Float, viewportWpx: Float, density: Float
 ): ClipHit? {
     val xDp = xPx / density
     val yDp = yPx / density
-    val anchor = anchorDp(viewportW, density)
-    val laneIndex = (0 until TRACK_ORDER.size).firstOrNull { i ->
-        val top = laneTop(i); yDp >= top && yDp <= top + LANE_H
-    } ?: return null
-    val type = TRACK_ORDER[laneIndex]
-    val clip = project.track(type)?.clips?.firstOrNull {
+    val anchor = anchorDp(viewportWpx, density)
+    val lane = lanes.firstOrNull { yDp >= it.top && yDp <= it.top + it.height } ?: return null
+    val clip = project.track(lane.type)?.clips?.firstOrNull {
         val l = timeToXdp(it.startMs, playheadMs, pxPerSec, anchor)
         val r = timeToXdp(it.endMs, playheadMs, pxPerSec, anchor)
         xDp in l..r
@@ -105,10 +118,10 @@ private fun hitTest(
 }
 
 /**
- * CapCut / VN-style timeline: the playhead stays fixed at the centre anchor and
- * the filmstrip scrubs beneath it. A single unified gesture handler (no nested
- * scroll to fight) means: drag empty/unselected strip = scrub time; tap a clip =
- * select; drag the selected clip = move it; drag its edge handles = trim.
+ * CapCut-style timeline: fixed centre playhead, filmstrip scrubs beneath it.
+ * Main track renders real frame tiles; audio renders as a waveform block.
+ * One unified gesture: drag strip = scrub, tap = select, drag selected = move,
+ * drag its edges = trim. Tap the trailing + tile to append media.
  */
 @Composable
 fun TimelinePanel(
@@ -123,15 +136,18 @@ fun TimelinePanel(
     onMove: (Long) -> Unit,
     onTrimStart: (Long) -> Unit,
     onTrimEnd: (Long) -> Unit,
+    onAddMedia: () -> Unit,
+    onAddAudio: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current.density
     var viewportW by remember { mutableStateOf(0f) }
-    val timelineH = RULER_H + TRACK_ORDER.size * (LANE_H + LANE_GAP) + LANE_GAP
+    val (lanes, contentH) = buildLanes(project)
     val totalMs = maxOf(project.durationMs, 1L)
     val anchor = anchorDp(viewportW, density)
+    val hasAudio = project.track(TrackType.AUDIO)?.clips?.isNotEmpty() == true
 
-    // Live values read inside gestures so the gesture never restarts mid-drag.
+    // Live values read inside gestures so a drag never restarts mid-gesture.
     val liveProject = rememberUpdatedState(project)
     val livePlayhead = rememberUpdatedState(playheadMs)
     val livePx = rememberUpdatedState(pxPerSec)
@@ -141,7 +157,7 @@ fun TimelinePanel(
 
     Column(modifier.background(VcBackground)) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(formatTime(playheadMs), color = VcOnSurface, fontSize = 12.sp, fontWeight = FontWeight.Medium)
@@ -154,19 +170,39 @@ fun TimelinePanel(
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(timelineH.dp)
+                .height(contentH.dp)
                 .clipToBounds()
                 .onSizeChanged { viewportW = it.width.toFloat() }
                 .pointerInput(Unit) {
                     detectTapGestures { pos ->
-                        val hit = hitTest(pos.x, pos.y, liveProject.value, livePlayhead.value, livePx.value, liveVw.value, density)
-                        onSelectClip(hit?.clip?.id)
+                        val p = liveProject.value
+                        val (ln, _) = buildLanes(p)
+                        val hit = hitTest(pos.x, pos.y, p, ln, livePlayhead.value, livePx.value, liveVw.value, density)
+                        if (hit != null) {
+                            onSelectClip(hit.clip.id)
+                        } else {
+                            // Trailing + tile on the main lane appends media.
+                            val a = anchorDp(liveVw.value, density)
+                            val mainEndX = timeToXdp(mainEnd(p), livePlayhead.value, livePx.value, a)
+                            val xDp = pos.x / density
+                            val yDp = pos.y / density
+                            val mainLane = ln.first()
+                            if (yDp >= mainLane.top && yDp <= mainLane.top + mainLane.height &&
+                                xDp >= mainEndX && xDp <= mainEndX + ADD_TILE_W + 8f
+                            ) {
+                                onAddMedia()
+                            } else {
+                                onSelectClip(null)
+                            }
+                        }
                     }
                 }
                 .pointerInput(Unit) {
                     detectDragGestures(
                         onDragStart = { pos ->
-                            val hit = hitTest(pos.x, pos.y, liveProject.value, livePlayhead.value, livePx.value, liveVw.value, density)
+                            val p = liveProject.value
+                            val (ln, _) = buildLanes(p)
+                            val hit = hitTest(pos.x, pos.y, p, ln, livePlayhead.value, livePx.value, liveVw.value, density)
                             dragMode = when {
                                 hit == null -> SCRUB
                                 hit.clip.id != liveSel.value -> SCRUB
@@ -189,18 +225,7 @@ fun TimelinePanel(
                     )
                 }
         ) {
-            // Lane backgrounds
-            for (i in TRACK_ORDER.indices) {
-                Box(
-                    Modifier
-                        .offset(x = 0.dp, y = laneTop(i).dp)
-                        .fillMaxWidth()
-                        .height(LANE_H.dp)
-                        .background(VcSurfaceHigh.copy(alpha = 0.25f))
-                )
-            }
-
-            // Ruler ticks across the visible window
+            // Ruler: time labels with dot ticks between, following the scrub.
             if (viewportW > 0f) {
                 val stepSec = tickStepSeconds(pxPerSec)
                 val leftTime = xDpToTime(0f, playheadMs, pxPerSec, anchor).coerceAtLeast(0L)
@@ -211,78 +236,238 @@ fun TimelinePanel(
                     Text(
                         text = formatTime(s * 1000),
                         color = VcMuted,
-                        fontSize = 10.sp,
-                        modifier = Modifier.offset(x = xdp.dp, y = 4.dp)
+                        fontSize = 9.sp,
+                        modifier = Modifier.offset(x = xdp.dp, y = 3.dp)
+                    )
+                    val midX = timeToXdp((s + stepSec / 2f).toLong() * 1000, playheadMs, pxPerSec, anchor)
+                    Box(
+                        Modifier
+                            .offset(x = midX.dp, y = 9.dp)
+                            .size(3.dp)
+                            .background(VcMuted.copy(alpha = 0.5f), CircleShape)
                     )
                     s += stepSec
                 }
             }
 
-            // Clips
-            for (i in TRACK_ORDER.indices) {
-                val type = TRACK_ORDER[i]
-                project.track(type)?.clips?.forEach { clip ->
-                    ClipBlock(
-                        clip = clip,
-                        color = trackColor(type),
-                        leftDp = timeToXdp(clip.startMs, playheadMs, pxPerSec, anchor),
-                        widthDp = clip.durationMs / 1000f * pxPerSec,
-                        topDp = laneTop(i),
-                        selected = clip.id == selectedClipId
-                    )
+            // Clips per lane (off-screen clips culled for smooth scrubbing).
+            val viewportDp = if (viewportW > 0f) viewportW / density else 2000f
+            lanes.forEach { lane ->
+                project.track(lane.type)?.clips?.forEach { clip ->
+                    val left = timeToXdp(clip.startMs, playheadMs, pxPerSec, anchor)
+                    val width = clip.durationMs / 1000f * pxPerSec
+                    if (left + width < -24f || left > viewportDp + 24f) return@forEach
+                    when (lane.type) {
+                        TrackType.MAIN -> FilmstripClip(
+                            clip, left, width, lane.top, lane.height, pxPerSec,
+                            selected = clip.id == selectedClipId
+                        )
+                        TrackType.AUDIO -> AudioClip(
+                            clip, left, width, lane.top, lane.height,
+                            selected = clip.id == selectedClipId
+                        )
+                        else -> LabelClip(
+                            clip, left, width, lane.top, lane.height,
+                            color = if (lane.type == TrackType.TEXT) TrackText else TrackOverlay,
+                            selected = clip.id == selectedClipId
+                        )
+                    }
                 }
             }
 
-            // Fixed playhead + knob
-            Box(
-                Modifier.offset(x = anchor.dp).width(2.dp).fillMaxHeight().background(VcAccent)
-            )
+            // Trailing "+" tile that appends media to the main track.
+            run {
+                val mainLane = lanes.first()
+                val x = timeToXdp(mainEnd(project), playheadMs, pxPerSec, anchor) + 6f
+                Box(
+                    Modifier
+                        .offset(x = x.dp, y = mainLane.top.dp)
+                        .width(ADD_TILE_W.dp)
+                        .height(mainLane.height.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(VcSurfaceHigh),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Add, "add media", tint = VcOnSurface)
+                }
+            }
+
+            // Fixed playhead + knob.
+            Box(Modifier.offset(x = anchor.dp).width(2.dp).fillMaxHeight().background(VcOnSurface))
             Box(
                 Modifier
-                    .offset(x = (anchor - 6f).dp)
-                    .width(12.dp).height(12.dp)
-                    .background(VcAccent, RoundedCornerShape(3.dp))
+                    .offset(x = (anchor - 5f).dp)
+                    .size(10.dp)
+                    .background(VcOnSurface, RoundedCornerShape(3.dp))
             )
+        }
+
+        // "+ Add audio" pill, CapCut-style, when the audio track is empty.
+        if (!hasAudio) {
+            Row(
+                Modifier
+                    .padding(start = 12.dp, top = 4.dp, bottom = 2.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(VcSurfaceHigh)
+                    .clickable(onClick = onAddAudio)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Filled.MusicNote, null, tint = TrackAudio, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Add audio", color = VcOnSurface, fontSize = 12.sp)
+            }
         }
     }
 }
 
+private fun mainEnd(project: Project): Long =
+    project.track(TrackType.MAIN)?.clips?.maxOfOrNull { it.endMs } ?: 0L
+
+/** Main-track clip drawn as a strip of real frame tiles, like CapCut. */
 @Composable
-private fun ClipBlock(
+private fun FilmstripClip(
     clip: Clip,
-    color: Color,
     leftDp: Float,
     widthDp: Float,
     topDp: Float,
+    heightDp: Float,
+    pxPerSec: Float,
     selected: Boolean
 ) {
-    val w = widthDp.dp.coerceAtLeast(10.dp)
+    val w = widthDp.dp.coerceAtLeast(12.dp)
     Box(
         Modifier
             .offset(x = leftDp.dp, y = topDp.dp)
             .width(w)
-            .height(LANE_H.dp)
-            .background(color.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
-            .then(if (selected) Modifier.border(2.dp, VcOnSurface, RoundedCornerShape(4.dp)) else Modifier)
+            .height(heightDp.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .background(VcSurfaceHigh)
+            .then(if (selected) Modifier.border(2.dp, VcOnSurface, RoundedCornerShape(5.dp)) else Modifier)
             .clipToBounds()
     ) {
-        if (clip.sourceUri != null &&
-            (clip.type == ClipType.VIDEO || clip.type == ClipType.IMAGE || clip.type == ClipType.OVERLAY)
-        ) {
-            MediaFrame(
-                uri = clip.sourceUri,
-                isVideo = clip.type == ClipType.VIDEO,
-                frameMs = clip.inPointMs,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
+        if (clip.sourceUri != null) {
+            if (clip.type == ClipType.VIDEO) {
+                // Video: a strip of frame tiles (capped so long clips stay smooth).
+                Row(Modifier.fillMaxSize()) {
+                    val tiles = ceil(widthDp / TILE_W).toInt().coerceIn(1, 40)
+                    repeat(tiles) { i ->
+                        MediaFrame(
+                            uri = clip.sourceUri,
+                            isVideo = true,
+                            frameMs = clip.inPointMs + (i * TILE_W / pxPerSec * 1000f).toLong(),
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.width(TILE_W.dp).fillMaxHeight()
+                        )
+                    }
+                }
+            } else {
+                // Image: single cropped frame filling the block.
+                MediaFrame(
+                    uri = clip.sourceUri,
+                    isVideo = false,
+                    frameMs = clip.inPointMs,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
         Text(
-            text = clip.label.ifBlank { clip.type.name.lowercase() },
+            text = "${clip.durationMs / 1000f}s".replace(".0s", "s"),
             color = Color.White,
-            fontSize = 9.sp,
+            fontSize = 8.sp,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(3.dp)
+                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(3.dp))
+                .padding(horizontal = 3.dp, vertical = 1.dp)
+        )
+        if (selected) {
+            EdgeHandle(Alignment.CenterStart)
+            EdgeHandle(Alignment.CenterEnd)
+        }
+    }
+}
+
+/** Audio clip: rounded green block with a deterministic pseudo-waveform. */
+@Composable
+private fun AudioClip(
+    clip: Clip,
+    leftDp: Float,
+    widthDp: Float,
+    topDp: Float,
+    heightDp: Float,
+    selected: Boolean
+) {
+    val w = widthDp.dp.coerceAtLeast(12.dp)
+    Box(
+        Modifier
+            .offset(x = leftDp.dp, y = topDp.dp)
+            .width(w)
+            .height(heightDp.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(TrackAudio.copy(alpha = 0.9f))
+            .then(if (selected) Modifier.border(2.dp, VcOnSurface, RoundedCornerShape(6.dp)) else Modifier)
+            .clipToBounds()
+    ) {
+        Canvas(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 5.dp)) {
+            val rnd = Random(clip.id.hashCode())
+            val barW = 2.dp.toPx()
+            val gap = 2.dp.toPx()
+            var x = 0f
+            while (x < size.width) {
+                val h = size.height * (0.2f + 0.8f * rnd.nextFloat())
+                drawRect(
+                    color = Color.White.copy(alpha = 0.6f),
+                    topLeft = Offset(x, (size.height - h) / 2f),
+                    size = Size(barW, h)
+                )
+                x += barW + gap
+            }
+        }
+        Text(
+            text = clip.label.ifBlank { "Audio" },
+            color = Color.White,
+            fontSize = 8.sp,
             maxLines = 1,
-            modifier = Modifier.align(Alignment.TopStart).padding(horizontal = 5.dp, vertical = 3.dp)
+            modifier = Modifier.align(Alignment.TopStart).padding(horizontal = 5.dp, vertical = 2.dp)
+        )
+        if (selected) {
+            EdgeHandle(Alignment.CenterStart)
+            EdgeHandle(Alignment.CenterEnd)
+        }
+    }
+}
+
+/** Text / overlay clip: compact labeled block. */
+@Composable
+private fun LabelClip(
+    clip: Clip,
+    leftDp: Float,
+    widthDp: Float,
+    topDp: Float,
+    heightDp: Float,
+    color: Color,
+    selected: Boolean
+) {
+    val w = widthDp.dp.coerceAtLeast(12.dp)
+    Box(
+        Modifier
+            .offset(x = leftDp.dp, y = topDp.dp)
+            .width(w)
+            .height(heightDp.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(color.copy(alpha = 0.85f))
+            .then(if (selected) Modifier.border(2.dp, VcOnSurface, RoundedCornerShape(6.dp)) else Modifier)
+            .clipToBounds(),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(
+            text = clip.textStyle?.text ?: clip.label.ifBlank { clip.type.name.lowercase() },
+            color = Color.White,
+            fontSize = 10.sp,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 8.dp)
         )
         if (selected) {
             EdgeHandle(Alignment.CenterStart)
@@ -298,10 +483,10 @@ private fun androidx.compose.foundation.layout.BoxScope.EdgeHandle(align: Alignm
             .align(align)
             .width(HANDLE_W.dp)
             .fillMaxHeight()
-            .background(VcOnSurface.copy(alpha = 0.9f), RoundedCornerShape(3.dp)),
+            .background(VcOnSurface.copy(alpha = 0.92f), RoundedCornerShape(3.dp)),
         contentAlignment = Alignment.Center
     ) {
-        Box(Modifier.width(2.dp).height(16.dp).background(Color(0xFF303030)))
+        Box(Modifier.width(2.dp).height(14.dp).background(Color(0xFF2A2A2A), RoundedCornerShape(1.dp)))
     }
 }
 

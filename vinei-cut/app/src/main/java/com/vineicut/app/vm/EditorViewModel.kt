@@ -303,19 +303,24 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             isBusy = true
-            val total = withContext(Dispatchers.IO) {
-                if (totalDurationMs > 0) totalDurationMs
-                else audioUri?.let { readDurationMs(it) } ?: 0L
+            val cues = TranscriptParser.parse(transcriptRaw)
+            val audioDur = withContext(Dispatchers.IO) { audioUri?.let { readDurationMs(it) } }
+
+            // Duration priority: manual > audio length > transcript's own timestamps > 3s per media.
+            // The old code silently bailed here with no audio/duration — the "bulk doesn't work" bug.
+            val total: Long = when {
+                totalDurationMs > 0 -> totalDurationMs
+                audioDur != null && audioDur > 0 -> audioDur
+                cues.isNotEmpty() -> {
+                    val last = cues.last()
+                    last.endMs ?: (last.startMs + averageCueGap(cues))
+                }
+                else -> uris.size * 3000L
             }
-            if (total <= 0) {
-                statusMessage = "Add audio or set a total duration"
-                isBusy = false
-                return@launch
-            }
+
             val refs = withContext(Dispatchers.IO) {
                 uris.map { resolveRef(it, it in videoUris) }
             }
-            val cues = TranscriptParser.parse(transcriptRaw)
             val options = TranscriptAligner.Options(
                 totalDurationMs = total,
                 kenBurnsOnImages = kenBurns
@@ -325,19 +330,42 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             else
                 TranscriptAligner.align(refs, cues, options)
 
-            val main = trackForType(TrackType.MAIN)
-            replaceTrack(main.copy(clips = clips))
+            // One atomic commit: main clips + audio (placed at 0, spanning its length).
+            val newTracks = project.tracks.map { t ->
+                when (t.type) {
+                    TrackType.MAIN -> t.copy(clips = clips)
+                    TrackType.AUDIO -> if (audioUri != null && audioDur != null && audioDur > 0) {
+                        t.copy(clips = listOf(
+                            Clip(
+                                type = ClipType.AUDIO,
+                                sourceUri = audioUri.toString(),
+                                startMs = 0,
+                                durationMs = audioDur,
+                                outPointMs = audioDur,
+                                label = "Audio"
+                            )
+                        ))
+                    } else t
+                    else -> t
+                }
+            }
+            commit(project.copy(tracks = newTracks))
 
-            audioUri?.let { importAudio(it) }
-
-            selectedClipId = clips.firstOrNull()?.id
+            selectedClipId = null
             playheadMs = 0
             statusMessage = if (cues.isEmpty())
-                "Placed ${clips.size} clips evenly"
+                "Placed ${clips.size} clips evenly across ${total / 1000}s"
             else
                 "Aligned ${clips.size} clips to ${cues.size} transcript points"
             isBusy = false
         }
+    }
+
+    /** Typical spacing between cues, used to give the final clip a sensible tail. */
+    private fun averageCueGap(cues: List<com.vineicut.app.engine.TranscriptCue>): Long {
+        if (cues.size < 2) return 3000L
+        val gap = (cues.last().startMs - cues.first().startMs) / (cues.size - 1)
+        return gap.coerceIn(2000L, 10_000L)
     }
 
     fun clearStatus() { statusMessage = null }

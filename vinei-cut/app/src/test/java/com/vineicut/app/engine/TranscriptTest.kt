@@ -46,6 +46,32 @@ class TranscriptParserTest {
         assertEquals(3_723_000L, TranscriptParser.parseClock("1:02:03"))
         assertEquals(4_500L, TranscriptParser.parseClock("00:00:04,500"))
     }
+
+    @Test
+    fun parsesWhisperJson() {
+        val raw = """
+            {"segments":[
+              {"start":0.0,"end":1.2,"text":"Hello"},
+              {"start":1.2,"end":4.5,"text":"world"}
+            ]}
+        """.trimIndent()
+        val cues = TranscriptParser.parse(raw)
+        assertEquals(2, cues.size)
+        assertEquals(0L, cues[0].startMs)
+        assertEquals(1200L, cues[0].endMs)
+        assertEquals(1200L, cues[1].startMs)
+        assertEquals("world", cues[1].text)
+    }
+
+    @Test
+    fun parsesJsonArrayWithClockStrings() {
+        val raw = """[{"time":"1:20","text":"reveal"},{"time":"2:05"}]"""
+        val cues = TranscriptParser.parse(raw)
+        assertEquals(2, cues.size)
+        assertEquals(80_000L, cues[0].startMs)
+        assertEquals(125_000L, cues[1].startMs)
+        assertEquals("reveal", cues[0].text)
+    }
 }
 
 class TranscriptAlignerTest {

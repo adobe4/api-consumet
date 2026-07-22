@@ -1,5 +1,12 @@
 package com.vineicut.app.engine
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
+
 /** A single timestamped line from a transcript or subtitle file. */
 data class TranscriptCue(
     val startMs: Long,
@@ -33,9 +40,50 @@ object TranscriptParser {
         """^\s*[\[(]?\s*((?:\d{1,2}:)?\d{1,2}:\d{2}|\d{1,3})\s*[\])]?\s*[-–—:]?\s*(.*)$"""
     )
 
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
     fun parse(raw: String): List<TranscriptCue> {
         if (raw.isBlank()) return emptyList()
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            parseJson(trimmed)?.let { return it }
+        }
         return if (srtRange.containsMatchIn(raw)) parseSrt(raw) else parseLoose(raw)
+    }
+
+    /**
+     * Parses JSON "instructions", including AI/Whisper transcripts. Accepts a bare
+     * array or an object wrapping one under cues/instructions/segments/items.
+     * Each entry needs a start (start/time/timestamp/t) and optional end/text.
+     * Numeric times are read as **seconds** (Whisper style); strings go through
+     * [parseClock] so "1:20" / "00:01:20,000" / "90" all work.
+     */
+    private fun parseJson(raw: String): List<TranscriptCue>? {
+        val root: JsonElement = try { json.parseToJsonElement(raw) } catch (e: Exception) { return null }
+        val arr: JsonArray = when (root) {
+            is JsonArray -> root
+            is JsonObject -> (root["cues"] ?: root["instructions"] ?: root["segments"]
+                ?: root["items"] ?: root["clips"])?.let { it as? JsonArray } ?: return null
+            else -> return null
+        }
+        val cues = arr.mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            val start = clockFromJson(obj["start"] ?: obj["time"] ?: obj["timestamp"] ?: obj["t"])
+                ?: return@mapNotNull null
+            val end = clockFromJson(obj["end"])
+            val text = (obj["text"] ?: obj["caption"] ?: obj["label"])
+                ?.let { (it as? JsonPrimitive)?.content } ?: ""
+            TranscriptCue(start, end, text.trim())
+        }.sortedBy { it.startMs }
+        return cues.ifEmpty { null }
+    }
+
+    private fun clockFromJson(el: JsonElement?): Long? {
+        val prim = el as? JsonPrimitive ?: return null
+        if (prim.isString) return parseClock(prim.content)
+        // Numeric: seconds (possibly fractional) -> ms.
+        prim.doubleOrNull?.let { return (it * 1000).toLong() }
+        return null
     }
 
     private fun parseSrt(raw: String): List<TranscriptCue> {

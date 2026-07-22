@@ -33,7 +33,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -59,8 +63,10 @@ fun BulkAlignScreen(
     var videoUris by remember { mutableStateOf<Set<Uri>>(emptySet()) }
     var audioUri by remember { mutableStateOf<Uri?>(null) }
     var transcript by remember { mutableStateOf("") }
+    var transcriptFile by remember { mutableStateOf<String?>(null) }
     var manualDuration by remember { mutableStateOf("") }
     var kenBurns by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
 
     val pickMedia = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(80)
@@ -73,6 +79,21 @@ fun BulkAlignScreen(
     val pickAudio = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri -> audioUri = uri }
+    val pickTranscriptFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }.getOrNull()
+            }
+            if (!text.isNullOrBlank()) {
+                transcript = text
+                transcriptFile = uri.lastPathSegment?.substringAfterLast('/') ?: "instructions"
+            }
+        }
+    }
 
     Column(
         Modifier
@@ -118,14 +139,28 @@ fun BulkAlignScreen(
         )
 
         Spacer(Modifier.height(14.dp))
-        StepLabel("3 · Transcript (SRT or lines like \"1:20 the reveal\")")
+        StepLabel("3 · Instructions — upload .srt / .json, or paste below")
+        OutlinedButton(onClick = {
+            pickTranscriptFile.launch(
+                arrayOf(
+                    "application/json",
+                    "application/x-subrip",
+                    "text/plain",
+                    "text/*",
+                    "application/octet-stream"
+                )
+            )
+        }) {
+            Text(transcriptFile?.let { "Loaded: $it" } ?: "Upload .srt / .json file")
+        }
+        Spacer(Modifier.height(6.dp))
         OutlinedTextField(
             value = transcript,
-            onValueChange = { transcript = it },
-            label = { Text("Paste transcript / .srt", color = VcMuted) },
+            onValueChange = { transcript = it; transcriptFile = null },
+            label = { Text("…or paste transcript / SRT / JSON", color = VcMuted) },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(160.dp)
+                .height(150.dp)
         )
 
         Spacer(Modifier.height(12.dp))

@@ -181,6 +181,10 @@ fun EditorScreen(
             onMove = { vm.moveSelectedLive(it) },
             onTrimStart = { vm.trimStartLive(it) },
             onTrimEnd = { vm.trimEndLive(it) },
+            onAddMedia = {
+                pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+            },
+            onAddAudio = { pickAudio.launch("audio/*") },
             modifier = Modifier.fillMaxWidth()
         )
 
