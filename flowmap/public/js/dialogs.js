@@ -370,7 +370,14 @@ export function openSettings() {
   let tpl = 'creator';
   const pw = { current: '', next: '' };
   const soundBtn = h('button', { class: `btn${sound.enabled ? ' on' : ''}`, onclick: (e) => { sound.enabled = !sound.enabled; e.currentTarget.classList.toggle('on', sound.enabled); e.currentTarget.textContent = sound.enabled ? '🔊 Sound on' : '🔇 Sound off'; if (sound.enabled) sfx.pop(); } }, sound.enabled ? '🔊 Sound on' : '🔇 Sound off');
+  const themeHost = h('div');
+  const paintTheme = () => clear(themeHost).append(chipGroup(
+    [{ value: 'system', label: '🖥️ Same as device' }, { value: 'light', label: '☀️ Light' }, { value: 'dark', label: '🌙 Dark' }],
+    window.flowmapTheme?.pref || 'system', (v) => { window.flowmapTheme?.set(v); paintTheme(); }));
+  paintTheme();
   const body = h('div', null,
+    h('div', { class: 'sec' }, 'Appearance'),
+    themeHost,
     h('div', { class: 'sec' }, 'Account'),
     field('Your name', h('input', { type: 'text', value: name, maxLength: 60, oninput: (e) => { name = e.target.value; } }), user.email),
     h('div', { class: 'grid2' },

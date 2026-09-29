@@ -49,7 +49,7 @@ function closeMenu() { menuEl?.remove(); menuEl = null; }
 const item = (icon, label, fn, cls = '') => h('button', { type: 'button', class: `mi ${cls}`, role: 'menuitem', onclick: () => { closeMenu(); fn(); } }, h('span', { class: 'mic' }, icon), label);
 function showMenu(title, items, x, y, { above = false } = {}) {
   closeMenu();
-  menuEl = h('div', { class: 'ctxmenu', role: 'menu' }, h('div', { class: 'mt' }, title), ...items);
+  menuEl = h('div', { class: 'ctxmenu', role: 'menu' }, h('div', { class: 'mt' }, title), ...items.filter(Boolean));
   document.body.append(menuEl);
   const r = menuEl.getBoundingClientRect();
   menuEl.style.left = `${Math.max(8, Math.min(window.innerWidth - r.width - 8, x))}px`;
@@ -64,6 +64,9 @@ export function openViewMenu(anchor) {
   showMenu('View', [
     item('✨', 'Tidy up the layout', () => tidy(), 'primary'),
     item('▦', zonesOn ? 'Hide areas' : 'Show areas', () => setZones(!zonesOn)),
+    window.flowmapTheme ? (window.flowmapTheme.current === 'light'
+      ? item('🌙', 'Dark mode', () => window.flowmapTheme.set('dark'))
+      : item('☀️', 'Light mode', () => window.flowmapTheme.set('light'))) : null,
     item('⟳', 'Rotate the view', () => ctx.renderer.rotateBy?.(Math.PI / 4)),
     item('◩', 'Tilted / top-down view', () => ctx.renderer.toggleTilt?.()),
     item('☀️', 'Replay since yesterday', () => morningReplay()),

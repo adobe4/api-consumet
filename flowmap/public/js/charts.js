@@ -22,9 +22,21 @@ export function lineChart(canvas, cfg) {
     max *= 1.08;
     const X = (i) => pad.l + (i / (n - 1)) * (W - pad.l - pad.r);
     const Y = (v) => pad.t + (1 - (v - min) / (max - min)) * (H - pad.t - pad.b);
+    // colours come from the page theme so the chart reads on dark and light panels
+    const css = getComputedStyle(document.documentElement);
+    const ink = css.getPropertyValue('--ink').trim() || '255, 255, 255';
+    const muted = css.getPropertyValue('--muted').trim() || '#a09a92';
+    // series colours are made for dark panels; darken them a little on light paper
+    const light = document.documentElement.getAttribute('data-theme') === 'light';
+    const tone = (hex) => {
+      const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
+      if (!light || !m) return hex;
+      const n = parseInt(m[1], 16);
+      return `rgb(${[16, 8, 0].map((sh) => Math.round(((n >> sh) & 255) * 0.72)).join(',')})`;
+    };
     ctx.font = '11px system-ui, sans-serif';
     ctx.textBaseline = 'middle';
-    ctx.strokeStyle = 'rgba(255,220,180,0.10)'; ctx.fillStyle = '#a09a92'; ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(${ink},0.10)`; ctx.fillStyle = muted; ctx.lineWidth = 1;
     for (let i = 0; i <= 4; i++) {
       const v = min + ((max - min) * i) / 4, y = Y(v);
       ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
@@ -35,15 +47,15 @@ export function lineChart(canvas, cfg) {
     for (const s of c.series) {
       ctx.beginPath();
       s.values.forEach((v, i) => ctx[i ? 'lineTo' : 'moveTo'](X(i), Y(v)));
-      ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 2.2; ctx.globalAlpha = s.dim ? 0.55 : 1; ctx.lineJoin = 'round'; ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = tone(s.color); ctx.lineWidth = s.width || 2.2; ctx.globalAlpha = s.dim ? 0.55 : 1; ctx.lineJoin = 'round'; ctx.stroke(); ctx.globalAlpha = 1;
     }
     if (c.marker > 0 && c.marker < n) {
-      ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(255,190,140,0.8)';
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = `rgba(${ink},0.55)`;
       ctx.beginPath(); ctx.moveTo(X(c.marker), pad.t); ctx.lineTo(X(c.marker), H - pad.b); ctx.stroke(); ctx.setLineDash([]);
     }
     if (hoverIdx !== null) {
       const x = X(hoverIdx);
-      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.strokeStyle = `rgba(${ink},0.4)`;
       ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, H - pad.b); ctx.stroke();
       const lines = [hoverIdx === 0 ? 'Today' : `+${hoverIdx} days`, ...c.series.map((s) => `${s.label}: ${c.format(s.values[hoverIdx])}`)];
       ctx.font = '600 11.5px system-ui, sans-serif';

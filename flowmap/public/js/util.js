@@ -23,7 +23,11 @@ function append(el, kids) {
     else el.append(k instanceof Node ? k : document.createTextNode(String(k)));
   }
 }
-export const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+// Empties an element; the returned append() skips null/false so optional parts never render as "null".
+export const clear = (el) => {
+  while (el.firstChild) el.removeChild(el.firstChild);
+  return { append: (...parts) => { el.append(...parts.flat().filter((x) => x !== null && x !== undefined && x !== false)); return el; } };
+};
 export const $ = (sel, root = document) => root.querySelector(sel);
 
 export const clamp = (v, a, b) => Math.min(b, Math.max(a, v));

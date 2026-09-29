@@ -5,7 +5,7 @@ import { S, snap, dayFraction, project, projects, on, loadAll, resetLocal, refre
 import { RESOURCES, KINDS } from '/shared/engine.js';
 import { createRenderer as createRenderer2d } from './renderer.js';
 import { showAuth, brand } from './auth-ui.js';
-import { initPanels, openTab } from './panels.js';
+import { initPanels, openTab, render as renderPanels } from './panels.js';
 import { openProjectEditor, openLinkEditor, openActionDialog, openHelp, openSettings, dialogHooks } from './dialogs.js';
 import { toast, closeAllModals, hasModal } from './ui-common.js';
 import { sfx, sound } from './audio.js';
@@ -95,6 +95,7 @@ async function buildApp() {
   on('selection', () => { const s = S.selection; if (s?.type === 'project') renderer.focus(s.id); });
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshToday(); });
+  window.addEventListener('flowmap-theme', () => { renderPanels(); updateAll(); }); // charts and inline colours redraw
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !hasModal()) {
       if (S.tool) setTool(null); else if (S.selection) select(null); else $('dock').classList.remove('open');

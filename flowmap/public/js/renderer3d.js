@@ -32,10 +32,17 @@ const SKY = [
   [10, '#131110', 0.82, '#fff0dc', 1.45], [15, '#13110e', 0.8, '#ffe9cf', 1.4], [18, '#180d07', 0.66, '#ffa968', 1.15],
   [20, '#0d0806', 0.5, '#ff9a5c', 0.8], [22, '#070605', 0.42, '#ffb27a', 0.55], [24, '#060504', 0.42, '#ffb27a', 0.5],
 ];
-export function skyAt(hour) {
+// light theme: a pale warm room whose light still follows the clock (dimmer, warmer at night)
+const SKY_LIGHT = [
+  [0, '#d8cfc4', 0.9, '#ffc9a0', 0.6], [5, '#ddd2c6', 0.95, '#ffcfae', 0.75], [7, '#ece0d3', 1.05, '#ffd9bb', 1.1],
+  [10, '#f1ebe3', 1.15, '#fff3e4', 1.35], [15, '#f0e9e0', 1.12, '#ffefdc', 1.3], [18, '#ecdccb', 1.02, '#ffc28e', 1.1],
+  [20, '#e0d3c5', 0.95, '#ffb885', 0.8], [22, '#d9cfc4', 0.9, '#ffc9a0', 0.65], [24, '#d8cfc4', 0.9, '#ffc9a0', 0.6],
+];
+export function skyAt(hour, light = false) {
+  const K = light ? SKY_LIGHT : SKY;
   let i = 0;
-  while (i < SKY.length - 2 && SKY[i + 1][0] <= hour) i++;
-  const [h0, bg0, sk0, sun0, st0] = SKY[i], [h1, bg1, sk1, sun1, st1] = SKY[i + 1];
+  while (i < K.length - 2 && K[i + 1][0] <= hour) i++;
+  const [h0, bg0, sk0, sun0, st0] = K[i], [h1, bg1, sk1, sun1, st1] = K[i + 1];
   const f = clamp((hour - h0) / (h1 - h0 || 1), 0, 1);
   const angle = ((hour - 6) / 12) * Math.PI; // sunrise at 6, sunset at 18
   return {
@@ -63,10 +70,11 @@ const LIQUID_VS = /* glsl */`
     gl_Position = projectionMatrix * viewMatrix * wp;
   }`;
 const LIQUID_FS = /* glsl */`
-  uniform vec3 uColor; uniform float uTime; uniform float uDead; uniform float uFlash; uniform float uGlow;
+  uniform vec3 uColor; uniform float uTime; uniform float uDead; uniform float uFlash; uniform float uGlow; uniform float uLightMode;
   varying vec3 vN; varying vec3 vView; varying float vH; varying float vAng;
   void main() {
-    vec3 col = mix(uColor * 0.14, uColor * 0.55, smoothstep(0.0, 1.0, vH));
+    // in the light theme the liquid is clearer and brighter, so it does not read as murky on pale ground
+    vec3 col = mix(uColor * mix(0.14, 0.4, uLightMode), uColor * mix(0.55, 0.85, uLightMode), smoothstep(0.0, 1.0, vH));
     float c = sin(vH * 16.0 - uTime * 0.45 + sin(vAng * 3.0 + uTime * 0.2) * 1.6) * 0.5 + 0.5;
     col += uColor * pow(c, 8.0) * 0.12;
     float fres = pow(1.0 - clamp(abs(dot(vN, vView)), 0.0, 1.0), 3.0);
@@ -128,12 +136,12 @@ const GAUGE_VS = /* glsl */`
   varying vec2 vP;
   void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 const GAUGE_FS = /* glsl */`
-  uniform float uFrac; uniform vec3 uColor; uniform float uPulse;
+  uniform float uFrac; uniform vec3 uColor; uniform float uPulse; uniform vec3 uTrack;
   varying vec2 vP;
   void main() {
     float a = atan(vP.x, vP.y);
     float f = (a < 0.0 ? a + 6.2831853 : a) / 6.2831853;
-    vec3 col = f <= uFrac ? uColor * (0.8 + 0.3 * uPulse) : vec3(0.075, 0.068, 0.062);
+    vec3 col = f <= uFrac ? uColor * (0.8 + 0.3 * uPulse) : uTrack;
     gl_FragColor = vec4(col, 1.0);
   }`;
 const GROUND_VS = /* glsl */`
@@ -141,6 +149,7 @@ const GROUND_VS = /* glsl */`
   void main() { vec4 wp = modelMatrix * vec4(position, 1.0); vW = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`;
 const GROUND_FS = /* glsl */`
   uniform vec3 uCenter; uniform float uFuture; uniform float uTime; uniform float uLight;
+  uniform vec3 uFar; uniform vec3 uNear; uniform vec3 uLine; uniform float uLineAmt;
   varying vec3 vW;
   void main() {
     vec2 p = vW.xz;
@@ -152,9 +161,9 @@ const GROUND_FS = /* glsl */`
     float major = 1.0 - min(min(g2.x, g2.y), 1.0);
     float d = length(p - uCenter.xz);
     float fade = exp(-d * 0.05);
-    vec3 base = mix(vec3(0.028, 0.025, 0.023), vec3(0.075, 0.058, 0.046), fade);
-    vec3 lc = mix(vec3(1.0, 0.86, 0.72), vec3(1.0, 0.55, 0.25), uFuture);
-    vec3 col = base + lc * (line * 0.035 + major * 0.06) * fade;
+    vec3 base = mix(uFar, uNear, fade);
+    vec3 lc = mix(uLine, vec3(1.0, 0.55, 0.25), uFuture);
+    vec3 col = mix(base, lc, (line * 0.035 + major * 0.06) * uLineAmt * fade);
     col += vec3(1.0, 0.5, 0.2) * uFuture * 0.03 * (0.5 + 0.5 * sin(p.y * 2.0 - uTime * 2.0)) * fade;
     gl_FragColor = vec4(col * uLight, 1.0);
   }`;
@@ -222,14 +231,40 @@ export function createRenderer(canvas, hooks) {
     if (!force && performance.now() - skyAtMs < 20000) return;
     skyAtMs = performance.now();
     const d = new Date();
-    skyNow = skyAt(d.getHours() + d.getMinutes() / 60);
+    skyNow = skyAt(d.getHours() + d.getMinutes() / 60, isLight);
     BG.copy(skyNow.bg);
     hemi.intensity = skyNow.sky;
     key.color.copy(skyNow.sun);
     key.intensity = skyNow.strength;
     key.position.copy(skyNow.sunPos);
-    groundMat.uniforms.uLight.value = 0.75 + skyNow.sky * 0.4;
+    groundMat.uniforms.uLight.value = isLight ? 0.85 + skyNow.sky * 0.13 : 0.75 + skyNow.sky * 0.4;
   }
+
+  // ---------- light / dark theme ----------
+  function applyTheme(theme) {
+    isLight = theme === 'light';
+    themeU.light.value = isLight ? 1 : 0;
+    themeU.track.value.setRGB(...(isLight ? [0.6, 0.55, 0.49] : [0.075, 0.068, 0.062]));
+    const gu = groundMat.uniforms;
+    gu.uFar.value.set(...(isLight ? [0.66, 0.6, 0.52] : [0.028, 0.025, 0.023]));
+    gu.uNear.value.set(...(isLight ? [0.9, 0.85, 0.78] : [0.075, 0.058, 0.046]));
+    gu.uLine.value.set(...(isLight ? [0.28, 0.18, 0.11] : [1, 0.86, 0.72]));
+    gu.uLineAmt.value = isLight ? 2.2 : 1;
+    plinthMat.color.set(isLight ? '#cdc4b8' : '#1b1714');
+    plinthMat.metalness = isLight ? 0.3 : 0.7;
+    plinthMat.roughness = isLight ? 0.5 : 0.32;
+    bloom.strength = isLight ? 0.12 : 0.32;
+    scene.environmentIntensity = isLight ? 0.85 : 0.55;
+    futureTint = new THREE.Color(isLight ? '#f1d8bf' : '#1a100a');
+    motes.material.color.set(isLight ? '#a57a52' : '#ffcf9a');
+    motes.material.opacity = isLight ? 0.3 : 0.55;
+    // glows are added light on dark ground; on pale ground they become soft tinted shadows instead
+    const mats = [motes.material, ...[...tanks.values()].map((t) => t.pool.material), ...[...zones.values()].map((z) => z.mesh.material)];
+    for (const m of mats) { m.blending = glowBlend(); m.needsUpdate = true; }
+    updateSky(true);
+  }
+  const onTheme = (e) => applyTheme(e.detail);
+  window.addEventListener('flowmap-theme', onTheme);
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 400);
   const composer = new EffectComposer(renderer);
@@ -241,7 +276,11 @@ export function createRenderer(canvas, hooks) {
   let bloomOn = true;
 
   // ground
-  const groundMat = new THREE.ShaderMaterial({ vertexShader: GROUND_VS, fragmentShader: GROUND_FS, uniforms: { uCenter: { value: new THREE.Vector3() }, uFuture: { value: 0 }, uTime: { value: 0 }, uLight: { value: 1 } } });
+  const groundMat = new THREE.ShaderMaterial({ vertexShader: GROUND_VS, fragmentShader: GROUND_FS, uniforms: {
+    uCenter: { value: new THREE.Vector3() }, uFuture: { value: 0 }, uTime: { value: 0 }, uLight: { value: 1 },
+    uFar: { value: new THREE.Vector3(0.028, 0.025, 0.023) }, uNear: { value: new THREE.Vector3(0.075, 0.058, 0.046) },
+    uLine: { value: new THREE.Vector3(1, 0.86, 0.72) }, uLineAmt: { value: 1 },
+  } });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), groundMat);
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
@@ -275,6 +314,11 @@ export function createRenderer(canvas, hooks) {
     wave: new THREE.RingGeometry(0.94, 1, 96),
   };
   const glassMat = new THREE.MeshPhysicalMaterial({ color: '#ffffff', metalness: 0, roughness: 0.06, transparent: true, opacity: 0.1, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 0.9, side: THREE.DoubleSide, depthWrite: false });
+  // values every tank shares, switched by the light/dark theme
+  const themeU = { light: { value: 0 }, track: { value: new THREE.Color(0.075, 0.068, 0.062) } };
+  let isLight = false;
+  let futureTint = new THREE.Color('#1a100a');
+  const glowBlend = () => (isLight ? THREE.NormalBlending : THREE.AdditiveBlending);
   const pipeGlassMat = new THREE.MeshPhysicalMaterial({ color: '#fff4ea', metalness: 0, roughness: 0.1, transparent: true, opacity: 0.07, envMapIntensity: 0.7, depthWrite: false });
   const plinthMat = new THREE.MeshStandardMaterial({ color: '#1b1714', metalness: 0.7, roughness: 0.32 });
   const hitMat = new THREE.MeshBasicMaterial({ visible: false });
@@ -343,20 +387,20 @@ export function createRenderer(canvas, hooks) {
     const plinth = new THREE.Mesh(G.plinth, plinthMat);
     plinth.position.y = PLINTH / 2;
     // health gauge on the floor around the tank: fills clockwise from the back like a progress ring
-    const gaugeU = { uFrac: { value: 0 }, uColor: { value: new THREE.Color('#46e58a') }, uPulse: { value: 0 } };
+    const gaugeU = { uFrac: { value: 0 }, uColor: { value: new THREE.Color('#46e58a') }, uPulse: { value: 0 }, uTrack: themeU.track };
     const ringMat = new THREE.ShaderMaterial({ vertexShader: GAUGE_VS, fragmentShader: GAUGE_FS, uniforms: gaugeU });
     const ring = new THREE.Mesh(G.gauge, ringMat);
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.015;
     // goal ring just outside the health ring, in gold, only when the project has a goal
-    const goalU = { uFrac: { value: 0 }, uColor: { value: new THREE.Color('#e9b949') }, uPulse: { value: 0 } };
+    const goalU = { uFrac: { value: 0 }, uColor: { value: new THREE.Color('#e9b949') }, uPulse: { value: 0 }, uTrack: themeU.track };
     const goalRing = new THREE.Mesh(G.goal, new THREE.ShaderMaterial({ vertexShader: GAUGE_VS, fragmentShader: GAUGE_FS, uniforms: goalU }));
     goalRing.rotation.x = -Math.PI / 2;
     goalRing.position.y = 0.016;
     goalRing.visible = false;
     const vessel = new THREE.Group(); // scaled to the tank's radius/height
     vessel.position.y = PLINTH;
-    const liquidU = { uColor: { value: calm(color) }, uTime: { value: 0 }, uDead: { value: 0 }, uFlash: { value: 0 }, uGlow: { value: 0.5 } };
+    const liquidU = { uColor: { value: calm(color) }, uTime: { value: 0 }, uDead: { value: 0 }, uFlash: { value: 0 }, uGlow: { value: 0.5 }, uLightMode: themeU.light };
     const liquid = new THREE.Mesh(G.liquid, new THREE.ShaderMaterial({ vertexShader: LIQUID_VS, fragmentShader: LIQUID_FS, uniforms: liquidU, transparent: true, depthWrite: false }));
     liquid.renderOrder = 1;
     const surfaceU = { uColor: liquidU.uColor, uTime: liquidU.uTime, uDead: liquidU.uDead, uFlash: liquidU.uFlash, uAmp: { value: 0.02 }, uSlosh: { value: 0 } };
@@ -374,7 +418,7 @@ export function createRenderer(canvas, hooks) {
     const bubbles = new THREE.InstancedMesh(G.bubble, bubbleMat, 14);
     bubbles.frustumCulled = false;
     bubbles.renderOrder = 2;
-    const pool = new THREE.Mesh(G.pool, new THREE.MeshBasicMaterial({ map: softTex, color: calm(color), transparent: true, opacity: 0.1, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const pool = new THREE.Mesh(G.pool, new THREE.MeshBasicMaterial({ map: softTex, color: calm(color), transparent: true, opacity: 0.1, depthWrite: false, blending: glowBlend() }));
     pool.rotation.x = -Math.PI / 2;
     pool.position.y = 0.012;
     const hit = new THREE.Mesh(G.hit, hitMat);
@@ -584,7 +628,7 @@ export function createRenderer(canvas, hooks) {
     smoke.push({ spr, life: 1, vx: (Math.random() - 0.5) * 0.15, vy: 0.35 + Math.random() * 0.25 });
   }
   function spawnWave(x, z, r, color, speed = 2.2) {
-    const mesh = new THREE.Mesh(G.wave, new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(1.8), transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(G.wave, new THREE.MeshBasicMaterial({ color: isLight ? new THREE.Color(color).multiplyScalar(0.8) : new THREE.Color(color).multiplyScalar(1.8), transparent: true, opacity: 0.9, depthWrite: false, blending: glowBlend(), toneMapped: false, side: THREE.DoubleSide }));
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, 0.03, z);
     mesh.scale.setScalar(r);
@@ -618,7 +662,7 @@ export function createRenderer(canvas, hooks) {
     for (const [name, members] of byGroup) {
       let z = zones.get(name);
       if (!z) {
-        const mesh = new THREE.Mesh(G.zone, new THREE.ShaderMaterial({ vertexShader: ZONE_VS, fragmentShader: ZONE_FS, uniforms: { uColor: { value: calm(tintFor(name)) }, uOpacity: { value: 0 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+        const mesh = new THREE.Mesh(G.zone, new THREE.ShaderMaterial({ vertexShader: ZONE_VS, fragmentShader: ZONE_FS, uniforms: { uColor: { value: calm(tintFor(name)) }, uOpacity: { value: 0 } }, transparent: true, depthWrite: false, blending: glowBlend() }));
         mesh.rotation.x = -Math.PI / 2;
         mesh.position.y = 0.006;
         scene.add(mesh);
@@ -744,7 +788,7 @@ export function createRenderer(canvas, hooks) {
     if (list.length) groundMat.uniforms.uCenter.value.set(cx / list.length, 0, cz / list.length);
     groundMat.uniforms.uTime.value = time;
     groundMat.uniforms.uFuture.value = damp(groundMat.uniforms.uFuture.value, S.offset > 0 ? 1 : 0, 3, dt);
-    scene.fog.color.copy(BG).lerp(new THREE.Color('#1a100a'), groundMat.uniforms.uFuture.value);
+    scene.fog.color.copy(BG).lerp(futureTint, groundMat.uniforms.uFuture.value);
     scene.background.copy(scene.fog.color);
 
     // pipes: parallel links between the same two projects fan out
@@ -1077,7 +1121,7 @@ export function createRenderer(canvas, hooks) {
   ro.observe(canvas);
   resize();
   applyCamera();
-  updateSky(true);
+  applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
   raf = requestAnimationFrame(frame);
 
   // ---------- public api ----------
@@ -1165,7 +1209,7 @@ export function createRenderer(canvas, hooks) {
     return { x: r.left + sp.x, y: r.top + sp.y };
   }
   function destroy() {
-    cancelAnimationFrame(raf); ro.disconnect(); offTool();
+    cancelAnimationFrame(raf); ro.disconnect(); offTool(); window.removeEventListener('flowmap-theme', onTheme);
     overlay.remove();
     renderer.dispose();
   }
