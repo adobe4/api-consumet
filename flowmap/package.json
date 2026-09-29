@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "dev": "node --watch --disable-warning=ExperimentalWarning server/index.js",
-    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\""
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\"",
+    "build:demo": "node demo/build.mjs"
   }
 }
