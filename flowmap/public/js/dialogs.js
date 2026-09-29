@@ -1,5 +1,6 @@
 // Modal dialogs: project / pipe / task editors, the "water it" dialog, help and settings.
 import { h, clear, fmtNum, fmtFull, download, fmtDay } from './util.js';
+import { MAP_STYLES, getMapStyle, setMapStyle } from './mapstyle.js';
 import { S, snap, project, projects, nameOf, addProject, updateProject, deleteProject, addLink, updateLink, deleteLink,
   addTask, updateTask, deleteTask, completeTask, notify, hasSample, clearSample, resetWorld, importWorld, exportWorld, scanProject, saveSecrets } from './store.js';
 import { KINDS, KIND_KEYS, RESOURCES, TASK_TYPES, CHANNELS, cfgOf, configBase } from '/shared/engine.js';
@@ -375,9 +376,14 @@ export function openSettings() {
     [{ value: 'system', label: '🖥️ Same as device' }, { value: 'light', label: '☀️ Light' }, { value: 'dark', label: '🌙 Dark' }],
     window.flowmapTheme?.pref || 'system', (v) => { window.flowmapTheme?.set(v); paintTheme(); }));
   paintTheme();
+  const styleHost = h('div');
+  const paintStyle = () => clear(styleHost).append(chipGroup(MAP_STYLES.map(({ value, label }) => ({ value, label })), getMapStyle(), (v) => { setMapStyle(v); paintStyle(); }),
+    h('div', { class: 'hint' }, MAP_STYLES.find((m) => m.value === getMapStyle()).hint));
+  paintStyle();
   const body = h('div', null,
     h('div', { class: 'sec' }, 'Appearance'),
-    themeHost,
+    field('Theme', themeHost),
+    field('Map style', styleHost),
     h('div', { class: 'sec' }, 'Account'),
     field('Your name', h('input', { type: 'text', value: name, maxLength: 60, oninput: (e) => { name = e.target.value; } }), user.email),
     h('div', { class: 'grid2' },

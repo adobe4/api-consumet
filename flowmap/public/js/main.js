@@ -10,12 +10,16 @@ import { openProjectEditor, openLinkEditor, openActionDialog, openHelp, openSett
 import { toast, closeAllModals, hasModal } from './ui-common.js';
 import { sfx, sound } from './audio.js';
 import { openBrainSettings } from './brain-ui.js';
-import { initMapUi, tankAction, openContextMenu, openViewMenu, toggleImmersive, updateToday, updateLiveBits, maybeMorningReplay, maybeWeekReview } from './map-ui.js';
+import { getMapStyle } from './mapstyle.js';
+import { initMapUi, setMapRenderer, tankAction, openContextMenu, openViewMenu, toggleImmersive, updateToday, updateLiveBits, maybeMorningReplay, maybeWeekReview } from './map-ui.js';
 
 const $ = (id) => document.getElementById(id);
 const boot = $('boot'), authEl = $('auth'), appEl = $('app');
 let built = false;
 let renderer = null;
+let mapHooks = null;
+let switching = false;
+const panelCtrl = { renderer: null };
 let hintText = '';
 let playTimer = null;
 
@@ -34,8 +38,11 @@ async function logout() {
 }
 setUnauthorizedHandler(() => { closeAllModals(); logout(); });
 
-// The 3D world needs WebGL 2; older devices get the flat map.
+// The garden is plain Canvas 2D. The glass tanks need WebGL 2; older devices get the flat map.
 async function makeRenderer(canvas, hooks) {
+  if (getMapStyle() === 'garden') {
+    try { return (await import('./garden.js')).createRenderer(canvas, hooks); } catch (e) { console.warn('Garden unavailable', e); }
+  }
   try {
     const m = await import('./renderer3d.js');
     if (m.webglAvailable()) return m.createRenderer(canvas, hooks);
@@ -66,10 +73,9 @@ async function start() {
 // ======================= app shell =======================
 async function buildApp() {
   buildTopbar();
-  buildLegend();
   buildTimeline();
 
-  renderer = await makeRenderer($('map'), {
+  renderer = await makeRenderer($('map'), mapHooks = {
     onSelect: (sel) => { select(sel); if (sel?.type === 'project') hideTip(); },
     onMoved: (id, x, y) => moveProject(id, x, y),
     onHover: showTip,
@@ -83,7 +89,10 @@ async function buildApp() {
   window.__flowmapRenderer = renderer; // handy in the browser console, and for automated checks
   initMapUi({ renderer, stage: $('stage'), app: appEl });
   buildZoom();
-  initPanels({ dock: $('dock'), tabs: $('tabs'), panel: $('panel') }, { renderer });
+  buildLegend();
+  initPanels({ dock: $('dock'), tabs: $('tabs'), panel: $('panel') }, panelCtrl);
+  panelCtrl.renderer = renderer;
+  window.addEventListener('flowmap-mapstyle', () => switchMapStyle());
   setInterval(updateLive, 1000);
 
   on('sim', updateAll);
@@ -104,6 +113,29 @@ async function buildApp() {
   $('sheet-toggle').addEventListener('click', () => $('dock').classList.toggle('open'));
   $('stage').addEventListener('pointerdown', () => { if (window.innerWidth <= 760) $('dock').classList.remove('open'); });
   window.addEventListener('resize', () => renderer.resize());
+}
+
+// Swap the map picture in place. A canvas that once held WebGL cannot give a 2D context (or the other way
+// round), so the old canvas is replaced by a fresh one.
+async function switchMapStyle() {
+  if (switching || !renderer) return;
+  switching = true;
+  try {
+    hideTip();
+    renderer.destroy();
+    const old = $('map'), fresh = old.cloneNode(false);
+    old.replaceWith(fresh);
+    renderer = await makeRenderer(fresh, mapHooks);
+    window.__flowmapRenderer = renderer;
+    panelCtrl.renderer = renderer;
+    setMapRenderer(renderer);
+    buildZoom();
+    buildLegend();
+    requestAnimationFrame(() => { renderer.resize(); if (renderer.intro) renderer.intro(); else renderer.fit({ animate: false }); });
+    const s = S.selection;
+    if (s?.type === 'project') setTimeout(() => renderer.focus(s.id), 900);
+    toast(renderer.kind === 'garden' ? '🌱 Garden view' : renderer.is3d ? '🫧 Glass tanks view' : 'Flat map view', 'info');
+  } finally { switching = false; }
 }
 
 function updateAll() {
@@ -219,9 +251,12 @@ function updateEmpty() {
 }
 
 // ---------- legend, zoom ----------
+const LEGEND_TEXT = { money: '· TZS', attention: '· views', customers: '· paying users', progress: '· speed-ups' };
 function buildLegend() {
-  const row = (k, text) => h('div', null, h('i', { class: 'dot', style: { background: RESOURCES[k].color, color: RESOURCES[k].color } }), h('b', null, RESOURCES[k].label), ` ${text}`);
-  clear($('legend')).append(row('money', '· TZS'), row('attention', '· views'), row('customers', '· paying users'), row('progress', '· speed-ups'));
+  const row = (k, name) => h('div', null, h('i', { class: 'dot', style: { background: RESOURCES[k].color, color: RESOURCES[k].color } }), h('b', null, name || RESOURCES[k].label), ` ${LEGEND_TEXT[k]}`);
+  // the garden names its own messengers (bees carry views, butterflies carry customers…)
+  const rows = renderer?.legend ? renderer.legend.map(([k, name]) => row(k, name)) : ['money', 'attention', 'customers', 'progress'].map((k) => row(k));
+  clear($('legend')).append(...rows);
 }
 function buildZoom() {
   clear($('zoom')).append(...[
@@ -229,7 +264,7 @@ function buildZoom() {
     h('button', { class: 'btn', title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => renderer.zoomBy(0.8) }, '－'),
     h('button', { class: 'btn', title: 'Fit everything', 'aria-label': 'Fit everything', onclick: () => renderer.fit() }, '⤢'),
     h('button', { class: 'btn', title: 'Full screen (F)', 'aria-label': 'Full screen', onclick: () => toggleImmersive() }, '⛶'),
-    renderer.is3d ? h('button', { class: 'btn', title: 'View: tidy up, areas, rotate, replay, week', 'aria-label': 'More view options', onclick: (e) => openViewMenu(e.currentTarget) }, '⋯') : null,
+    renderer.replay ? h('button', { class: 'btn', title: 'View: map style, tidy up, areas, replay, week', 'aria-label': 'More view options', onclick: (e) => openViewMenu(e.currentTarget) }, '⋯') : null,
   ].filter(Boolean));
 }
 

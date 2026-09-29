@@ -7,6 +7,7 @@ import { openProjectEditor, openLinkEditor, openActionDialog, openTaskEditor } f
 import { confirmDialog, openModal } from './ui-common.js';
 import { tidyLayout, crossings } from './layout.js';
 import { openTab } from './panels.js';
+import { getMapStyle, setMapStyle } from './mapstyle.js';
 
 let ctx = { renderer: null, stage: null, app: null };
 let menuEl = null;
@@ -26,6 +27,12 @@ export function initMapUi({ renderer, stage, app }) {
   });
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && app.classList.contains('immersive') && ctx.fsEntered) setImmersive(false); });
   document.addEventListener('pointerdown', (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); }, true);
+}
+
+// after switching map style
+export function setMapRenderer(renderer) {
+  ctx.renderer = renderer;
+  renderer.setZones?.(store_ls.get('flowmap.zones', true));
 }
 
 // ---------- tank quick actions ----------
@@ -61,14 +68,18 @@ function showMenu(title, items, x, y, { above = false } = {}) {
 export function openViewMenu(anchor) {
   const r = anchor.getBoundingClientRect();
   const zonesOn = store_ls.get('flowmap.zones', true);
+  const rd = ctx.renderer;
   showMenu('View', [
+    getMapStyle() === 'garden'
+      ? item('🫧', 'Switch to glass tanks', () => setMapStyle('tanks'))
+      : item('🌱', 'Switch to the garden', () => setMapStyle('garden')),
     item('✨', 'Tidy up the layout', () => tidy(), 'primary'),
     item('▦', zonesOn ? 'Hide areas' : 'Show areas', () => setZones(!zonesOn)),
     window.flowmapTheme ? (window.flowmapTheme.current === 'light'
       ? item('🌙', 'Dark mode', () => window.flowmapTheme.set('dark'))
       : item('☀️', 'Light mode', () => window.flowmapTheme.set('light'))) : null,
-    item('⟳', 'Rotate the view', () => ctx.renderer.rotateBy?.(Math.PI / 4)),
-    item('◩', 'Tilted / top-down view', () => ctx.renderer.toggleTilt?.()),
+    rd.rotateBy ? item('⟳', 'Rotate the view', () => rd.rotateBy(Math.PI / 4)) : null,
+    rd.toggleTilt ? item('◩', 'Tilted / top-down view', () => rd.toggleTilt()) : null,
     item('☀️', 'Replay since yesterday', () => morningReplay()),
     item('📊', 'Week in review', () => openWeekReview()),
   ], r.left - 230, r.bottom, { above: true });
