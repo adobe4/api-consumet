@@ -216,7 +216,9 @@ for (const res of Object.keys(RES)) {
     checkRefs(user.id, res, cols);
     const names = Object.keys(cols);
     const id = Number(db.prepare(`INSERT INTO ${table} (user_id, ${names.join(', ')}) VALUES (?, ${names.map(() => '?').join(', ')})`).run(user.id, ...names.map((n) => cols[n])).lastInsertRowid);
-    return fromRow(res, db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id));
+    const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+    if (res === 'tasks') return withReward(user.id, null, row);
+    return fromRow(res, row);
   });
   route('PATCH', `/api/${res}/:id`, ({ user, body, params }) => {
     const id = Number(params.id);
@@ -227,20 +229,24 @@ for (const res of Object.keys(RES)) {
     const names = Object.keys(cols);
     if (names.length) db.prepare(`UPDATE ${table} SET ${names.map((n) => `${n} = ?`).join(', ')} WHERE id = ? AND user_id = ?`).run(...names.map((n) => cols[n]), id, user.id);
     const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
-    const out = fromRow(res, row);
-    // finishing a task that carries a reward (e.g. a sponsored deal) pays into that day's log
-    if (res === 'tasks' && before.status !== 'done' && row.status === 'done' && row.reward > 0 && row.done_on) {
-      const prev = db.prepare('SELECT money FROM logs WHERE project_id = ? AND day = ?').get(row.project_id, row.done_on);
-      const log = upsertLog(user.id, row.project_id, row.done_on, { money: (prev?.money || 0) + row.reward });
-      return { ...out, log: fromRow('logs', log) };
-    }
-    return out;
+    return res === 'tasks' ? withReward(user.id, before, row) : fromRow(res, row);
   });
   route('DELETE', `/api/${res}/:id`, ({ user, params }) => {
     const r = db.prepare(`DELETE FROM ${table} WHERE id = ? AND user_id = ?`).run(Number(params.id), user.id);
     if (!r.changes) throw new HttpError(404, 'Not found');
     return { ok: true };
   });
+}
+
+// Finishing a task that carries a reward (e.g. a sponsored deal) pays into that day's log.
+function withReward(uid, before, row) {
+  const out = fromRow('tasks', row);
+  if ((!before || before.status !== 'done') && row.status === 'done' && row.reward > 0 && row.done_on) {
+    const prev = db.prepare('SELECT money FROM logs WHERE project_id = ? AND day = ?').get(row.project_id, row.done_on);
+    const log = upsertLog(uid, row.project_id, row.done_on, { money: (prev?.money || 0) + row.reward });
+    return { ...out, log: fromRow('logs', log) };
+  }
+  return out;
 }
 
 function saveLog(user, body) {

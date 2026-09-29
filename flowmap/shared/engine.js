@@ -10,9 +10,9 @@
 
 export const RESOURCES = {
   money: { label: 'Money', unit: 'TZS', color: '#ffc933', ref: 150000, speed: 0.8 },
-  attention: { label: 'Attention', unit: 'views', color: '#35d0ff', ref: 40000, speed: 1.15 },
+  attention: { label: 'Attention', unit: 'views', color: '#ff8a3d', ref: 40000, speed: 1.15 },
   customers: { label: 'Customers', unit: 'customers', color: '#46e58a', ref: 15, speed: 0.7 },
-  progress: { label: 'Progress', unit: 'energy', color: '#b28cff', ref: 1, speed: 0.95 },
+  progress: { label: 'Progress', unit: 'energy', color: '#ff5fa2', ref: 1, speed: 0.95 },
 };
 export const RESOURCE_KEYS = Object.keys(RESOURCES);
 
@@ -20,15 +20,15 @@ export const RESOURCE_KEYS = Object.keys(RESOURCES);
 export const KINDS = {
   youtube: { label: 'YouTube channel', icon: '▶️', color: '#ff4d5e', cadenceDays: 3, shape: 'screen',
     defaults: { viewsPerDay: 3000, rpm: 900, baseMoneyPerDay: 0, viewsPerAttention: 0.04 } },
-  tiktok: { label: 'TikTok account', icon: '🎵', color: '#35e0d0', cadenceDays: 1, shape: 'circle',
+  tiktok: { label: 'TikTok account', icon: '🎵', color: '#b8e04a', cadenceDays: 1, shape: 'circle',
     defaults: { viewsPerDay: 8000, viewsPerAttention: 0.03 } },
-  app: { label: 'App', icon: '📱', color: '#7c8cff', cadenceDays: 7, shape: 'phone',
+  app: { label: 'App', icon: '📱', color: '#e8b86b', cadenceDays: 7, shape: 'phone',
     defaults: { price: 5000, billing: 'monthly', activeCustomers: 20, newPerDay: 1, churnPct: 15, conversionPer1000: 1 } },
   website: { label: 'Website / marketplace', icon: '🌐', color: '#ffa94d', cadenceDays: 7, shape: 'browser',
     defaults: { price: 15000, billing: 'one_off', activeCustomers: 0, newPerDay: 0.6, churnPct: 0, conversionPer1000: 1 } },
   service: { label: 'Sales channel / service', icon: '💬', color: '#4be38a', cadenceDays: 2, shape: 'bubble',
     defaults: { price: 10000, billing: 'monthly', activeCustomers: 40, newPerDay: 0.8, churnPct: 12, conversionPer1000: 3 } },
-  custom: { label: 'Custom project', icon: '⬢', color: '#c0a3ff', cadenceDays: 7, shape: 'hex',
+  custom: { label: 'Custom project', icon: '⬢', color: '#d9b38c', cadenceDays: 7, shape: 'hex',
     defaults: { viewsPerDay: 0, price: 0, billing: 'none', activeCustomers: 0, newPerDay: 0, churnPct: 0, conversionPer1000: 1, baseMoneyPerDay: 0 } },
 };
 export const KIND_KEYS = Object.keys(KINDS);
