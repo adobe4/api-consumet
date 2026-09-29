@@ -214,6 +214,8 @@ function updateHud() {
 function updateTicker() {
   const host = $('stage-top');
   clear(host);
+  // the future-view label sits in the same stack as alerts, so the two never cover each other
+  if (S.offset) host.append(h('div', { class: 'future-banner inline' }, `⏩ FUTURE VIEW · ${fmtDay(snap().day)} · ${SCEN[S.scenario]}`));
   if (hintText) host.append(h('div', { class: 'tool-hint' }, hintText, ' ', h('button', { class: 'btn sm', style: 'margin-left:8px', onclick: () => setTool(null) }, 'Cancel')));
   const a = currentAlerts().find((x) => x.level === 'critical') || currentAlerts().find((x) => x.level === 'warn' && x.projectId);
   // minimized alerts stay small for the rest of the day; a different alert still shows in full
@@ -234,9 +236,7 @@ function updateTicker() {
   }
 }
 function updateBanner() {
-  const b = $('future-banner');
-  b.hidden = S.offset === 0;
-  if (S.offset) b.textContent = `⏩ FUTURE VIEW · ${fmtDay(snap().day)} · ${SCEN[S.scenario]}`;
+  $('future-banner').hidden = true; // shown inside the alert stack instead (see updateTicker)
 }
 function updateEmpty() {
   const e = $('empty');
@@ -254,6 +254,7 @@ function updateEmpty() {
 const LEGEND_TEXT = { money: '· TZS', attention: '· views', customers: '· paying users', progress: '· speed-ups' };
 function buildLegend() {
   const row = (k, name) => h('div', null, h('i', { class: 'dot', style: { background: RESOURCES[k].color, color: RESOURCES[k].color } }), h('b', null, name || RESOURCES[k].label), ` ${LEGEND_TEXT[k]}`);
+  if (renderer?.legendNote) return clear($('legend')).append(...renderer.legendNote.map(([ic, name, text]) => h('div', { class: 'ln' }, h('span', { class: `sw sw-${ic}` }, ic === 'health' ? '90%' : ''), h('b', null, name), ` · ${text}`)));
   const rows = renderer?.legend ? renderer.legend.map(([k, name]) => row(k, name)) : ['money', 'attention', 'customers', 'progress'].map((k) => row(k));
   clear($('legend')).append(...rows);
 }

@@ -181,6 +181,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .zoom { position: absolute; right: 12px; bottom: 12px; display: grid; gap: 6px; z-index: 4; }
 .zoom .btn { padding: 8px 11px; background: rgba(var(--paper), 0.85); }
 .future-banner { position: absolute; top: 12px; left: 12px; padding: 7px 12px; border-radius: 10px; background: rgba(255, 110, 70, 0.28); border: 1px solid rgba(255, 150, 90, 0.6); font-weight: 700; font-size: 12.5px; letter-spacing: 0.03em; z-index: 5; }
+.future-banner.inline { position: static; justify-self: center; width: max-content; max-width: 100%; }
 .tip { position: fixed; z-index: 60; pointer-events: none; padding: 10px 12px; border-radius: 12px; background: rgba(var(--paper), 0.96); border: 1px solid var(--line-strong); font-size: 12.5px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); max-width: 260px; display: grid; gap: 3px; }
 .tip b { font-size: 13.5px; }
 .tip .k { color: var(--muted); }
@@ -490,7 +491,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 /* ---------- River map style: a flow chart of the business ---------- */
 .river-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; --halo: 246, 243, 238; --rv-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, system-ui, sans-serif; font-family: var(--rv-font); }
 :root:not([data-theme="light"]) .river-labels { --halo: 15, 15, 14; }
-.rv-stage { position: absolute; left: 0; top: 0; font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; color: var(--muted); white-space: nowrap; }
+.rv-stage { position: absolute; left: 0; top: 0; display: grid; justify-items: center; gap: 2px; white-space: nowrap; }
+.rv-stage b { font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; color: var(--muted); }
+.rv-stage span { font-size: 12px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: -0.005em; }
 .rv-label { position: absolute; left: 0; top: 0; display: grid; gap: 1px; white-space: nowrap; pointer-events: auto; cursor: pointer; will-change: transform; transition: opacity 0.3s;
   text-shadow: 0 0 2px rgb(var(--halo)), 0 0 4px rgb(var(--halo)), 0 0 8px rgb(var(--halo)), 0 0 12px rgb(var(--halo)); }
 .rv-label.vert { justify-items: center; text-align: center; }
@@ -501,15 +504,30 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .rv-label.left .need { justify-self: end; }
 .rv-label.dim { opacity: 0.3; }
 .rv-label .nm { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; color: var(--strong); }
-.rv-label .sub { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rv-label .sub { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rv-label.left .sub { justify-content: flex-end; }
+.rv-label.vert .sub { justify-content: center; }
+.rv-label .hp { padding: 1px 6px; border-radius: 999px; font-size: 10.5px; font-weight: 700; color: var(--c); background: color-mix(in srgb, var(--c) 15%, transparent); text-shadow: none; }
+.rv-label .d { margin-left: 5px; font-size: 10.5px; font-weight: 700; }
+.rv-label .d.up { color: var(--good); }
+.rv-label .d.down { color: var(--bad); }
+.rv-label.plate { padding: 6px 10px 7px; border-radius: 12px; background: rgba(var(--paper), 0.82); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: 1px solid var(--line); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 6px 18px rgba(40, 25, 10, 0.08); text-shadow: none; }
+.rv-label.plate.sel { border-color: var(--line-strong); }
 .rv-label .late { font-size: 11px; font-weight: 600; color: var(--warn); }
 .rv-label .need { justify-self: start; margin-top: 3px; padding: 2px 9px; border: 0; border-radius: 999px; background: #f0392b; color: #fff; font: 600 10.5px var(--rv-font); cursor: pointer; text-shadow: none; }
 .rv-label.vert .need { justify-self: center; }
 .rv-label.sink { cursor: default; }
 .rv-label.sink .nm { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.rv-label.sink .sub { font-size: 13px; color: var(--text); }
-.rv-label.sink .sub b { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; display: block; }
-.rv-label.vert.sink .sub b { display: inline; font-size: 16px; }
+.rv-label.sink .sub { display: grid; gap: 0; font-size: 12px; color: var(--muted); }
+.rv-label.sink .sub b { font-size: 24px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.15; }
+.rv-label.vert.sink .sub { display: flex; justify-content: center; gap: 6px; align-items: baseline; }
+.rv-label.vert.sink .sub b { font-size: 18px; }
+.legend .ln { display: flex; align-items: center; gap: 6px; }
+.legend .sw { flex: none; display: inline-block; width: 22px; height: 8px; }
+.legend .sw-width { height: 10px; background: linear-gradient(90deg, rgba(255, 110, 90, 0.55), rgba(255, 110, 90, 0.2)); clip-path: polygon(0 0, 100% 35%, 100% 65%, 0 100%); }
+.legend .sw-colour { border-radius: 3px; background: linear-gradient(90deg, #ff4d5e, #b8e04a, #e8b86b); opacity: 0.8; }
+.legend .sw-dotted { height: 0; border-top: 2px dotted var(--muted); }
+.legend .sw-health { width: auto; height: auto; padding: 0 5px; border-radius: 999px; font-size: 9.5px; font-weight: 700; line-height: 14px; color: var(--good); background: color-mix(in srgb, var(--good) 15%, transparent); }
 .rv-tip { position: absolute; left: 0; top: 0; display: grid; gap: 1px; padding: 6px 11px; border-radius: 12px; background: rgba(var(--paper), 0.94); border: 1px solid var(--line); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .rv-tip b { font-size: 13px; color: var(--strong); }
 .rv-tip b::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; }

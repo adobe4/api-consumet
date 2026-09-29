@@ -34,9 +34,9 @@ const alpha = (hex, a) => { const [r, g, b] = rgb(hex); return `rgba(${r},${g},$
 
 const PAL = {
   light: { bg: '#f6f3ee', text: '#1d1b19', muted: '#8a837b', rule: 'rgba(60,40,25,0.07)', thriving: '#2fb457', steady: '#e2a800', thirsty: '#f08a00', dying: '#f0392b',
-    band: 0.3, bandHot: 0.6, bandDim: 0.1, tone: 0.85, sink: '#d99a00' },
+    band: 0.34, bandHot: 0.55, bandDim: 0.07, tone: 0.9, sink: '#d99a00' },
   dark: { bg: '#0f0f0e', text: '#f5f2ed', muted: '#9a948c', rule: 'rgba(255,240,220,0.07)', thriving: '#30d158', steady: '#ffd60a', thirsty: '#ff9f0a', dying: '#ff453a',
-    band: 0.42, bandHot: 0.75, bandDim: 0.1, tone: 1, sink: '#f2c14e' },
+    band: 0.36, bandHot: 0.6, bandDim: 0.06, tone: 1, sink: '#f2c14e' },
 };
 
 export function createRenderer(canvas, hooks) {
@@ -52,7 +52,7 @@ export function createRenderer(canvas, hooks) {
   let todayUnit = null;
   const nodes = new Map(); // project id or SINK -> visual state
   const bands = new Map(); // key -> visual state
-  const sparks = [];
+  let reveal = 0;
   const fx = [];
   let topo = null, topoKey = '';
   let geo = null; // this frame's layout
@@ -72,6 +72,7 @@ export function createRenderer(canvas, hooks) {
   window.addEventListener('flowmap-theme', onTheme);
   applyTheme(document.documentElement.getAttribute('data-theme'));
   const tone = (hex) => (pal.tone === 1 ? hex : mix(hex, '#000000', 1 - pal.tone));
+  const colorOf = (id) => (id === SINK ? pal.sink : tone(project(id)?.color || KINDS[project(id)?.kind]?.color || '#ff8a5c'));
 
   function resize() {
     const r = canvas.getBoundingClientRect();
@@ -212,13 +213,25 @@ export function createRenderer(canvas, hooks) {
   }
 
   // ---------- geometry for this frame ----------
-  const NW = 14;
+  const NW = 10;
+  let topCache = { at: 0, v: 0 };
+  function stageTopBottom() {
+    const now = performance.now();
+    if (now - topCache.at > 400) {
+      const el = document.getElementById('stage-top');
+      const r = el?.getBoundingClientRect(), sr = canvas.getBoundingClientRect();
+      topCache = { at: now, v: r && r.height ? r.bottom - sr.top : 0 };
+    }
+    return topCache.v;
+  }
   const push = (m, k, v) => (m.get(k) || m.set(k, []).get(k)).push(v);
   function layoutFrame(list, bl) {
     const key = `${vertical}|${list.map((p) => `${p.id}:${p.kind}`).join(',')}|${bl.map((b) => `${b.key}${b.arc ? 'a' : ''}`).join(',')}`;
     if (key !== topoKey) { topoKey = key; topo = buildTopo(list, bl); }
     const { cols, chains } = topo;
-    const pad = vertical ? { u0: 176, u1: 70, v0: 14, v1: 70 } : { u0: 190, u1: 200, v0: 150, v1: W < 1100 ? 150 : 60 };
+    // start below whatever sits at the top of the stage (alerts, the future-view label)
+    const topClear = stageTopBottom();
+    const pad = vertical ? { u0: Math.max(176, topClear + 24), u1: 130, v0: 14, v1: 70 } : { u0: 190, u1: 200, v0: Math.max(150, topClear + 72), v1: W < 1100 ? 150 : 60 };
     const L = vertical ? H : W, Bw = vertical ? W : H;
     const U0 = pad.u0, Ulen = Math.max(100, L - pad.u0 - pad.u1), V0 = pad.v0, B = Math.max(100, Bw - pad.v0 - pad.v1);
     const GAP = vertical ? 16 : 28, WGAP = 6, MIN = vertical ? 10 : 16;
@@ -360,59 +373,82 @@ export function createRenderer(canvas, hooks) {
     ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, W, H);
     drawStages();
 
-    // support arcs, behind the river
+    // faint guides under each stage
+    ctx.strokeStyle = pal.rule; ctx.lineWidth = 1; ctx.setLineDash([2, 6]);
+    for (const c of geo.cols) {
+      const p = geo.pos.get(c.find((id) => !isWay(id)));
+      if (!p) continue;
+      const a = S2(p.u + NW / 2, geo.V0 - 16), b = S2(p.u + NW / 2, geo.V0 + geo.B);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // the river unrolls from its source when the view opens
+    reveal = Math.min(1, reveal + dt / 1.3);
+    const rv = ease(reveal);
+    ctx.save();
+    ctx.beginPath();
+    if (vertical) ctx.rect(0, 0, W, H * rv + 1); else ctx.rect(0, 0, W * rv + 1, H);
+    ctx.clip();
+
+    // support arcs: quiet dotted lines, marching in the direction of the flow
     for (const b of bl) {
       const a = geo.arcs.get(b.key);
       if (!a) continue;
       const v = bands.get(b.key), act = bandActive(b, f);
       const col = tone(RESOURCES[b.res].color);
-      ctx.strokeStyle = alpha(col, (f ? (act ? 0.85 : 0.07) : 0.32) * (1 + v.flash));
-      ctx.lineWidth = Math.max(1.2, (1 + 3 * v.w) * cam.k); ctx.lineCap = 'round';
-      ctx.setLineDash(f && act ? [] : [1, 5 * Math.max(0.6, cam.k)]);
+      const on = f && act;
+      ctx.strokeStyle = alpha(col, (f ? (act ? 0.9 : 0.05) : 0.28) * (1 + v.flash));
+      ctx.lineWidth = on ? 2 : 1.3; ctx.lineCap = 'round';
+      ctx.setLineDash([1.5, 5]); ctx.lineDashOffset = -time * (on ? 16 : 7);
       ctx.beginPath();
-      for (let i = 0; i <= 32; i++) { const q = arcPoint(a, i / 32), s = S2(q.u, q.v); if (i) ctx.lineTo(s.x, s.y); else ctx.moveTo(s.x, s.y); }
-      ctx.stroke(); ctx.setLineDash([]);
+      for (let i = 0; i <= 36; i++) { const q = arcPoint(a, i / 36), s = S2(q.u, q.v); if (i) ctx.lineTo(s.x, s.y); else ctx.moveTo(s.x, s.y); }
+      ctx.stroke();
     }
-    // the river
+    ctx.setLineDash([]);
+
+    // the river: each band carries the colour of the project it leaves and blends into the one it reaches
+    ctx.globalCompositeOperation = theme === 'dark' ? 'screen' : 'multiply';
     for (const b of bl) {
       const segs = geo.bandSegs.get(b.key);
-      if (!segs) continue;
+      if (!segs?.length) continue;
       const v = bands.get(b.key), act = bandActive(b, f);
-      const col = tone(RESOURCES[b.res].color);
-      const a = (f ? (act ? pal.bandHot : pal.bandDim) : pal.band) * (1 + v.flash * 0.8);
+      const c0 = colorOf(b.from), c1 = colorOf(b.to);
+      const a = (f ? (act ? pal.bandHot : pal.bandDim) : pal.band) * (1 + v.flash * 0.6);
       segs.forEach((g, i) => {
         const A = S2(g.u0, 0), Bp = S2(g.u1, 0);
         const grad = ctx.createLinearGradient(A.x, A.y, Bp.x, Bp.y);
-        const last = i === segs.length - 1;
-        grad.addColorStop(0, alpha(col, a)); grad.addColorStop(1, alpha(b.to === SINK && last ? tone(pal.sink) : col, a));
+        grad.addColorStop(0, alpha(mix(c0, c1, i / segs.length), a));
+        grad.addColorStop(1, alpha(mix(c0, c1, (i + 1) / segs.length), a));
         ctx.fillStyle = grad; bandPath(g); ctx.fill();
       });
     }
-    // light travelling downstream (and along arcs)
+    ctx.globalCompositeOperation = 'source-over';
+    // a soft sheen gliding downstream: faster where more flows, bright after you finish a task
     for (const b of bl) {
+      const segs = geo.bandSegs.get(b.key);
       const v = bands.get(b.key);
-      const rate = b.arc ? (v.w > 0.06 ? 0.2 + 0.6 * v.w : 0) : v.w > 0.03 ? 0.25 + 1.6 * Math.min(1.2, v.w) : 0;
-      v.acc += rate * dt;
-      while (v.acc >= 1) { v.acc -= 1; if (sparks.length < 320) sparks.push({ key: b.key, res: b.res, t: 0, off: Math.random() - 0.5, vel: (b.arc ? 0.1 : 0.12) + 0.16 * b.speed, big: 1 }); }
+      if (!segs?.length || v.w < 0.04 || (f && !bandActive(b, f))) continue;
+      v.phase = (v.phase ?? Math.random() * 1.6) + dt * (0.1 + 0.16 * Math.min(1.5, b.speed)) * (1 + v.flash * 3);
+      const ph = (v.phase % 1.6) - 0.3, n = segs.length;
+      const peak = (theme === 'dark' ? 0.2 : 0.42) * (1 + v.flash);
+      segs.forEach((g, i) => {
+        const local = ph * n - i;
+        if (local < -0.25 || local > 1.25) return;
+        const A = S2(g.u0, 0), Bp = S2(g.u1, 0);
+        const grad = ctx.createLinearGradient(A.x, A.y, Bp.x, Bp.y);
+        const lo = local - 0.22, hi = local + 0.22;
+        grad.addColorStop(0, `rgba(255,255,255,${lo > 0 ? 0 : Math.max(0, peak * (1 + lo / 0.22))})`);
+        if (lo > 0 && lo < 1) grad.addColorStop(lo, 'rgba(255,255,255,0)');
+        if (local > 0 && local < 1) grad.addColorStop(local, `rgba(255,255,255,${peak})`);
+        if (hi > 0 && hi < 1) grad.addColorStop(hi, 'rgba(255,255,255,0)');
+        grad.addColorStop(1, `rgba(255,255,255,${hi < 1 ? 0 : Math.max(0, peak * (1 - (1 - local) / 0.22))})`);
+        ctx.fillStyle = grad; bandPath(g); ctx.fill();
+      });
     }
-    for (let i = sparks.length - 1; i >= 0; i--) {
-      const sp = sparks[i], b = byKey.get(sp.key);
-      if (!b) { sparks.splice(i, 1); continue; }
-      sp.t += sp.vel * dt * (1 + (bands.get(sp.key)?.flash || 0) * 2);
-      if (sp.t >= 1) { sparks.splice(i, 1); continue; }
-      if (sp.t < 0) continue;
-      const q = bandPoint(sp.key, sp.t);
-      if (!q) continue;
-      const s = S2(q.u, q.v + sp.off * q.w * 0.7);
-      const act = bandActive(b, f);
-      const col = tone(RESOURCES[sp.res].color);
-      ctx.globalAlpha = Math.min(1, sp.t * 8, (1 - sp.t) * 8) * (act ? (b.arc && !f ? 0.6 : 1) : 0.2);
-      ctx.fillStyle = theme === 'dark' ? mix(col, '#ffffff', 0.4) : mix(col, '#ffffff', 0.2);
-      ctx.beginPath(); ctx.arc(s.x, s.y, (b.arc ? 1.5 : 1.9) * sp.big * Math.sqrt(cam.k), 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1;
-    }
+    ctx.restore();
 
-    // bars
+    // bars: the project's own colour; health lives in the label, and a project that needs you glows red
     const daySnap = snap();
     const seenN = new Set();
     for (const [id, p] of geo.pos) {
@@ -420,22 +456,24 @@ export function createRenderer(canvas, hooks) {
       seenN.add(id);
       const v = nodeOf(id);
       const isSink = id === SINK;
-      const s = isSink ? null : daySnap?.projects[id] || live?.projects[id]; // colour matches the % in the label
+      const s = isSink ? null : daySnap?.projects[id] || live?.projects[id];
       if (!isSink && s) v.health = damp(v.health, s.health, 3, dt);
       v.flash = Math.max(0, v.flash - dt * 1.2);
-      const status = isSink ? 'thriving' : statusOf(v.health);
-      const col = isSink ? pal.sink : pal[status];
+      const status = isSink ? 'thriving' : statusOf(s?.health ?? v.health);
+      const col = colorOf(id);
       const act = nodeActive(id, f, bl);
       const a = S2(p.u, p.v0), b = S2(p.u + NW, p.v1);
       const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
-      let op = act ? 1 : 0.3;
-      if (status === 'dying' && act) op *= 0.65 + 0.35 * Math.sin(time * 3.2) ** 2;
-      ctx.globalAlpha = op;
+      ctx.globalAlpha = act ? 1 : 0.3;
+      ctx.save();
+      if (status === 'dying' && act) { ctx.shadowColor = alpha(pal.dying, 0.35 + 0.45 * Math.sin(time * 3) ** 2); ctx.shadowBlur = 16; }
+      else if (theme === 'light') { ctx.shadowColor = 'rgba(60,40,25,0.18)'; ctx.shadowBlur = 6; ctx.shadowOffsetY = 1; }
       ctx.fillStyle = col;
-      ctx.beginPath(); ctx.roundRect(x, y, w, h, Math.min(5, w / 2, h / 2)); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, Math.min(4, w / 2, h / 2)); ctx.fill();
+      ctx.restore();
       if (v.flash > 0) { const g = (1 - v.flash) * 10; ctx.strokeStyle = alpha(col, v.flash * 0.7); ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(x - 4 - g, y - 4 - g, w + 8 + g * 2, h + 8 + g * 2, 8); ctx.stroke(); }
       const sel = S.selection?.type === 'project' && S.selection.id === id;
-      if (sel) { ctx.strokeStyle = alpha(pal.text, 0.5); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(x - 3, y - 3, w + 6, h + 6, 7); ctx.stroke(); }
+      if (sel) { ctx.strokeStyle = alpha(pal.text, 0.55); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(x - 3.5, y - 3.5, w + 7, h + 7, 6); ctx.stroke(); }
       ctx.globalAlpha = 1;
       placeLabel(id, v, p, { x, y, w, h }, act, sel, status);
     }
@@ -466,22 +504,37 @@ export function createRenderer(canvas, hooks) {
   }
   raf = requestAnimationFrame(frame);
 
-  // stage names along the top (or the side when vertical) and faint guides
+  // stage names with a live total under each one
   function drawStages() {
     const n = geo.cols.length;
-    const hasSink = geo.cols[n - 1]?.[0] === SINK;
-    const names = geo.cols.map((c, i) => (c[0] === SINK ? 'YOU EARN' : topo.roles[i] === 0 ? 'AUDIENCE' : 'PRODUCTS'));
-    while (captions.length < n) { const el = document.createElement('div'); el.className = 'rv-stage'; overlay.prepend(el); captions.push(el); }
+    const sn = snap();
+    const sumOf = (role, k) => projects().filter((p) => roleOf(p) === role).reduce((t, p) => t + (sn?.projects[p.id]?.[k] || 0), 0);
+    const info = geo.cols.map((c, i) => {
+      if (c[0] === SINK) return ['YOU EARN', `net TZS ${fmtNum(sn?.totals?.profit || 0)} after costs`];
+      if (topo.roles[i] === 0) return ['AUDIENCE', `${fmtNum(sumOf(0, 'attention'))} views a day`];
+      const cu = sumOf(1, 'customers');
+      return ['PRODUCTS', `TZS ${fmtNum(sumOf(1, 'money'))} a day${cu >= 0.05 ? ` · ${fmtNum(cu)} customers` : ''}`];
+    });
+    while (captions.length < n) { const el = document.createElement('div'); el.className = 'rv-stage'; el.innerHTML = '<b></b><span></span>'; overlay.prepend(el); captions.push(el); }
     captions.forEach((el, i) => {
       if (i >= n || vertical) { el.hidden = true; return; }
-      const c = geo.cols[i], p = geo.pos.get(c[0]);
+      const c = geo.cols[i], p = geo.pos.get(c.find((id) => !isWay(id)));
       if (!p) { el.hidden = true; return; }
       el.hidden = false;
-      if (el.textContent !== names[i]) el.textContent = names[i];
-      const s = vertical ? S2(p.u, 0) : S2(p.u + NW / 2, geo.V0 - 40);
-      const tf = vertical ? `translate3d(${Math.round(W - 14)}px, ${Math.round(s.y)}px, 0) translate(-100%, -150%)` : `translate3d(${Math.round(s.x)}px, ${Math.round(s.y)}px, 0) translate(-50%, -50%)`;
+      const key = info[i].join('|');
+      if (el.key !== key) { el.key = key; el.firstChild.textContent = info[i][0]; el.lastChild.textContent = info[i][1]; }
+      const s = S2(p.u + NW / 2, geo.V0 - 44);
+      const tf = `translate3d(${Math.round(s.x)}px, ${Math.round(s.y)}px, 0) translate(-50%, -50%)`;
       if (el.tf !== tf) { el.tf = tf; el.style.transform = tf; }
     });
+  }
+
+  // change against today, shown while looking ahead
+  function delta(now, then) {
+    if (!S.offset || !(then > 0.5)) return '';
+    const d = (now - then) / then;
+    if (Math.abs(d) < 0.01) return '';
+    return `<span class="d ${d > 0 ? 'up' : 'down'}">${d > 0 ? '▲' : '▼'}${Math.round(Math.abs(d) * 100)}%</span>`;
   }
 
   function placeLabel(id, v, p, r, act, sel, status) {
@@ -489,40 +542,43 @@ export function createRenderer(canvas, hooks) {
     const isSink = id === SINK;
     let text;
     if (isSink) {
-      const sn = snap();
-      const total = sn?.totals?.money ?? projects().reduce((t, q) => t + (sn?.projects[q.id]?.money || 0), 0);
-      text = `sink|${fmtNum(total)}|${theme}`;
+      const sn = snap(), s0 = snap(0);
+      const total = sn?.totals?.money ?? 0;
+      text = `sink|${fmtNum(total)}|${S.offset}|${theme}`;
       if (text !== v.text) {
         v.text = text;
-        el.querySelector('.nm').textContent = 'You earn';
-        el.querySelector('.sub').innerHTML = `<b style="color:${tone(pal.sink)}">TZS ${fmtNum(total)}</b> a day`;
+        el.querySelector('.nm').textContent = S.offset ? 'Income then' : 'Income';
+        el.querySelector('.sub').innerHTML = `<b style="color:${tone(pal.sink)}">TZS ${fmtNum(total)}</b><span>a day ${delta(total, s0?.totals?.money)}</span>`;
         el.querySelector('.need').hidden = true; el.querySelector('.late').hidden = true;
       }
     } else {
-      const pr = project(id), s = snap()?.projects[id] || live?.projects[id] || { health: 0 };
+      const pr = project(id), s = snap()?.projects[id] || live?.projects[id] || { health: 0 }, s0 = snap(0)?.projects[id] || {};
       const st = statusOf(s.health);
-      const main = s.money > 0.5 ? `TZS ${fmtNum(s.money)}/day` : s.attention > 0.5 ? `${fmtNum(s.attention)} views/day` : s.customers >= 0.05 ? `${fmtNum(s.customers)} customers/day` : '';
+      const k = s0.money > 0.5 || s.money > 0.5 ? 'money' : s0.attention > 0.5 || s.attention > 0.5 ? 'attention' : s.customers >= 0.05 ? 'customers' : null;
+      const main = k === 'money' ? `TZS ${fmtNum(s.money)}/day` : k === 'attention' ? `${fmtNum(s.attention)} views/day` : k === 'customers' ? `${fmtNum(s.customers)} customers/day` : '';
       const late = S.world.tasks.filter((t) => t.projectId === id && t.status !== 'done' && t.due && t.due < S.today).length;
-      text = [pr.icon, pr.name, Math.round(s.health), st, main, late, theme].join('|');
+      text = [pr.icon, pr.name, Math.round(s.health), st, main, late, S.offset, theme].join('|');
       if (text !== v.text) {
         v.text = text;
         el.querySelector('.nm').textContent = `${pr.icon || KINDS[pr.kind]?.icon || ''} ${pr.name}`;
-        el.querySelector('.sub').innerHTML = `<b style="color:${pal[st]}">${Math.round(s.health)}%</b>${main ? `<span class="amt"> · ${main}</span>` : ''}`;
+        el.querySelector('.sub').innerHTML = `<span class="hp" style="--c:${pal[st]}">${Math.round(s.health)}%</span>${main ? `<span class="amt">${main}${k ? delta(s[k], s0[k]) : ''}</span>` : ''}`;
         el.querySelector('.late').textContent = late ? `${late} late task${late > 1 ? 's' : ''}` : ''; el.querySelector('.late').hidden = !late;
         el.querySelector('.need').hidden = st !== 'dying';
       }
     }
-    // beside the bar when the river runs sideways, above it when it runs down
+    // outside the river on the first and last stage; on a frosted plate in between
     const left = !vertical && p.col === 0 && geo.cols.length > 1;
+    const plate = !vertical && !left && !isSink;
     const tf = vertical
       ? `translate3d(${Math.round(r.x + r.w / 2)}px, ${Math.round(r.y - 6)}px, 0) translate(-50%, -100%)`
-      : left ? `translate3d(${Math.round(r.x - 10)}px, ${Math.round(r.y + r.h / 2)}px, 0) translate(-100%, -50%)`
-        : `translate3d(${Math.round(r.x + r.w + 10)}px, ${Math.round(r.y + r.h / 2)}px, 0) translate(0, -50%)`;
+      : left ? `translate3d(${Math.round(r.x - 12)}px, ${Math.round(r.y + r.h / 2)}px, 0) translate(-100%, -50%)`
+        : `translate3d(${Math.round(r.x + r.w + (plate ? 8 : 12))}px, ${Math.round(r.y + r.h / 2)}px, 0) translate(0, -50%)`;
     if (v.tf !== tf) { v.tf = tf; el.style.transform = tf; }
     el.classList.toggle('dim', !act);
     el.classList.toggle('sel', sel);
     el.classList.toggle('vert', vertical);
     el.classList.toggle('left', left);
+    el.classList.toggle('plate', plate);
     if (vertical) { const mw = `${Math.max(56, Math.round(r.w + 14))}px`; if (el.mw !== mw) { el.mw = mw; el.style.setProperty('--mw', mw); } }
     el.style.zIndex = sel ? '6' : status === 'dying' ? '3' : '1';
   }
@@ -726,7 +782,7 @@ export function createRenderer(canvas, hooks) {
   function fit({ animate = true } = {}) { const t = { x: W / 2, y: H / 2, k: 1 }; if (animate) Object.assign(goal, t, { active: true }); else Object.assign(cam, t); }
   function intro() {
     fit({ animate: false });
-    for (const v of bands.values()) v.w = 0; // the river fills up on arrival
+    reveal = 0; // the river unrolls from its source on arrival
     for (const v of nodes.values()) v.health = 0;
   }
   function focus(id) {
@@ -748,7 +804,6 @@ export function createRenderer(canvas, hooks) {
       const own = l ? l.from === p.id && (!aimed.length || aimed.includes(l.to)) && (l.resource !== 'money' || task.reward) : key === `s${p.id}` && task.reward > 0;
       if (!own) continue;
       v.flash = 1;
-      for (let i = 0; i < 8; i++) sparks.push({ key, res: l ? l.resource : 'money', t: -i * 0.05, off: Math.random() - 0.5, vel: 0.35, big: 1.6 });
     }
     const type = TASK_TYPES[task.type] || TASK_TYPES.other;
     fx.push({ id: p.id, life: 1, dur: 1.8, text: `${type.icon} Done`, color: pal.thriving, size: 14, row: 0 });
@@ -764,7 +819,8 @@ export function createRenderer(canvas, hooks) {
   const timeOfDay = () => { const h = new Date().getHours(); return h < 5 || h >= 21 ? 'night' : h < 8 ? 'dawn' : h < 17 ? 'day' : 'evening'; };
 
   return {
-    kind: 'river', autoLayout: true, fit, intro, replay, setZones: () => {}, timeOfDay, startLink, focus, zoomBy, burst, floatText, screenPos, destroy, resize,
+    kind: 'river', autoLayout: true,
+    legendNote: [['width', 'Width', 'how much flows a day'], ['colour', 'Colour', 'the project it comes from'], ['dotted', 'Dotted', 'support: speed-ups, cash put back'], ['health', 'Health', 'green good · red needs you']], fit, intro, replay, setZones: () => {}, timeOfDay, startLink, focus, zoomBy, burst, floatText, screenPos, destroy, resize,
     get camera() { return { ...cam }; },
   };
 }
