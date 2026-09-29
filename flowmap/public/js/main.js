@@ -1,6 +1,6 @@
 import { h, clear, fmtNum, fmtTZS, fmtDay, store_ls, pct } from './util.js';
 import { auth, setUnauthorizedHandler } from './api.js';
-import { S, snap, liveSnap, dayFraction, project, projects, on, loadAll, resetLocal, refreshToday, select, setTool, setOffset, setScenario, currentAlerts,
+import { S, snap, dayFraction, project, projects, on, loadAll, resetLocal, refreshToday, select, setTool, setOffset, setScenario, currentAlerts,
   HORIZON_DAYS, resetWorld, moveProject, addDays, hasSample } from './store.js';
 import { RESOURCES, KINDS } from '/shared/engine.js';
 import { createRenderer as createRenderer2d } from './renderer.js';
@@ -10,6 +10,7 @@ import { openProjectEditor, openLinkEditor, openActionDialog, openHelp, openSett
 import { toast, closeAllModals, hasModal } from './ui-common.js';
 import { sfx, sound } from './audio.js';
 import { openBrainSettings } from './brain-ui.js';
+import { initMapUi, tankAction, openContextMenu, toggleImmersive, updateToday, updateLiveBits } from './map-ui.js';
 
 const $ = (id) => document.getElementById(id);
 const boot = $('boot'), authEl = $('auth'), appEl = $('app');
@@ -46,7 +47,7 @@ async function enterApp(isNew) {
   await loadAll();
   appEl.hidden = false;
   if (!built) { built = true; await buildApp(); }
-  requestAnimationFrame(() => { renderer.resize(); renderer.fit({ animate: false }); });
+  requestAnimationFrame(() => { renderer.resize(); if (renderer.intro) renderer.intro(); else renderer.fit({ animate: false }); });
   updateAll();
   boot.classList.add('gone');
   if (isNew || !store_ls.get('flowmap.seenHelp', false)) { store_ls.set('flowmap.seenHelp', true); setTimeout(openHelp, 400); }
@@ -74,9 +75,12 @@ async function buildApp() {
     onAddAt: (x, y) => openProjectEditor(null, { x, y }),
     onLinkPicked: (from, to) => { setTool(null); openLinkEditor({ from, to }); },
     onToolHint: (t) => { hintText = t; updateTicker(); },
+    onTankAction: (action, id) => tankAction(action, id),
+    onContext: (target, x, y) => { hideTip(); openContextMenu(target, x, y); },
   });
 
   window.__flowmapRenderer = renderer; // handy in the browser console, and for automated checks
+  initMapUi({ renderer, stage: $('stage'), app: appEl });
   buildZoom();
   initPanels({ dock: $('dock'), tabs: $('tabs'), panel: $('panel') }, { renderer });
   setInterval(updateLive, 1000);
@@ -107,6 +111,8 @@ function updateAll() {
   updateTicker();
   updateBanner();
   updateEmpty();
+  updateToday();
+  updateLiveBits();
 }
 
 // ---------- top bar ----------
@@ -147,10 +153,11 @@ function updateLive() {
   line('customers', '');
   line('net', '');
   if (!S.offset) updateHud();
+  updateLiveBits();
 }
 
 function updateHud() {
-  const t = (S.offset ? snap() : liveSnap()).totals, t0 = snap(0).totals;
+  const t = snap().totals, t0 = snap(0).totals;
   const set = (key, text, now, base, invert) => {
     hudEls[key].val.textContent = text;
     const d = hudEls[key].delta;
@@ -211,7 +218,8 @@ function buildZoom() {
     h('button', { class: 'btn', title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => renderer.zoomBy(0.8) }, '－'),
     renderer.is3d ? h('button', { class: 'btn', title: 'Rotate the view', 'aria-label': 'Rotate the view', onclick: () => renderer.rotateBy(Math.PI / 4) }, '⟳') : null,
     renderer.is3d ? h('button', { class: 'btn', title: 'Switch between tilted and top-down view', 'aria-label': 'Tilt the view', onclick: () => renderer.toggleTilt() }, '◩') : null,
-    h('button', { class: 'btn', title: 'Fit everything', 'aria-label': 'Fit everything', onclick: () => renderer.fit() }, '⤢'));
+    h('button', { class: 'btn', title: 'Fit everything', 'aria-label': 'Fit everything', onclick: () => renderer.fit() }, '⤢'),
+    h('button', { class: 'btn', title: 'Full screen (F)', 'aria-label': 'Full screen', onclick: () => toggleImmersive() }, '⛶'));
 }
 
 // ---------- tooltip ----------

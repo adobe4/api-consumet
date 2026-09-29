@@ -9,7 +9,7 @@ import { RenderPass } from '/vendor/three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from '/vendor/three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from '/vendor/three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from '/vendor/three/addons/environments/RoomEnvironment.js';
-import { S, project, projects, on, liveSnap } from './store.js';
+import { S, project, projects, on, liveSnap, snap } from './store.js';
 import { RESOURCES, KINDS, TASK_TYPES } from '/shared/engine.js';
 import { clamp, lerp, fmtNum } from './util.js';
 
@@ -20,6 +20,9 @@ const statusOf = (h) => (h >= 75 ? 'thriving' : h >= 50 ? 'steady' : h >= 30 ? '
 const FORM = { youtube: [1.05, 1.9], tiktok: [0.8, 2.25], app: [0.74, 2.4], website: [1.15, 1.55], service: [0.95, 1.75], custom: [0.9, 1.8] };
 const PLINTH = 0.24;
 const damp = (a, b, rate, dt) => lerp(a, b, 1 - Math.exp(-rate * dt));
+// project colours are softened toward a warm grey in 3D so tanks are easy to look at for a long time
+const CALM_GREY = new THREE.Color('#7d736b');
+const calm = (c) => new THREE.Color(c).lerp(CALM_GREY, 0.3);
 
 export function webglAvailable() {
   try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2')); } catch { return false; }
@@ -40,14 +43,14 @@ const LIQUID_FS = /* glsl */`
   uniform vec3 uColor; uniform float uTime; uniform float uDead; uniform float uFlash; uniform float uGlow;
   varying vec3 vN; varying vec3 vView; varying float vH; varying float vAng;
   void main() {
-    vec3 col = mix(uColor * 0.12, uColor * 0.7, smoothstep(0.0, 1.0, vH));
-    float c = sin(vH * 16.0 - uTime * 0.55 + sin(vAng * 3.0 + uTime * 0.25) * 1.6) * 0.5 + 0.5;
-    col += uColor * pow(c, 7.0) * 0.3;
-    float fres = pow(1.0 - clamp(abs(dot(vN, vView)), 0.0, 1.0), 2.6);
-    col += uColor * fres * (0.3 + uGlow * 0.7);
+    vec3 col = mix(uColor * 0.14, uColor * 0.55, smoothstep(0.0, 1.0, vH));
+    float c = sin(vH * 16.0 - uTime * 0.45 + sin(vAng * 3.0 + uTime * 0.2) * 1.6) * 0.5 + 0.5;
+    col += uColor * pow(c, 8.0) * 0.12;
+    float fres = pow(1.0 - clamp(abs(dot(vN, vView)), 0.0, 1.0), 3.0);
+    col += uColor * fres * (0.12 + uGlow * 0.22);
     col = mix(col, vec3(0.16, 0.11, 0.1) * (0.5 + 0.5 * vH), uDead);
-    col += vec3(1.0, 0.95, 0.85) * uFlash * 0.7;
-    gl_FragColor = vec4(col, 0.9);
+    col += vec3(1.0, 0.95, 0.85) * uFlash * 0.35;
+    gl_FragColor = vec4(col, 0.93);
   }`;
 const SURFACE_VS = /* glsl */`
   uniform float uTime; uniform float uAmp; uniform float uSlosh;
@@ -71,10 +74,10 @@ const SURFACE_FS = /* glsl */`
     vec3 h = normalize(normalize(vec3(0.4, 1.0, 0.25)) + v);
     float spec = pow(max(dot(n, h), 0.0), 70.0);
     float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
-    vec3 col = uColor * (0.55 + 0.35 * (1.0 - r));
-    col += vec3(1.0, 0.94, 0.84) * spec * 0.9 + uColor * fres * 0.35 + uColor * smoothstep(0.84, 1.0, r) * 0.8;
+    vec3 col = uColor * (0.5 + 0.2 * (1.0 - r));
+    col += vec3(1.0, 0.94, 0.84) * spec * 0.35 + uColor * fres * 0.15 + uColor * smoothstep(0.86, 1.0, r) * 0.3;
     col = mix(col, vec3(0.2, 0.14, 0.12), uDead);
-    col += uFlash * 0.9;
+    col += uFlash * 0.4;
     gl_FragColor = vec4(col, 0.94);
   }`;
 const STREAM_VS = /* glsl */`
@@ -97,6 +100,18 @@ const STREAM_FS = /* glsl */`
     float k = uIntensity * (0.35 + 1.5 * pulse) + uFlash * (0.8 + 1.8 * pulse);
     vec3 col = uColor * (0.12 + k) + uColor * fres * 0.25;
     gl_FragColor = vec4(col * uDim, (0.35 + 0.55 * min(1.0, k)) * ends);
+  }`;
+const GAUGE_VS = /* glsl */`
+  varying vec2 vP;
+  void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const GAUGE_FS = /* glsl */`
+  uniform float uFrac; uniform vec3 uColor; uniform float uPulse;
+  varying vec2 vP;
+  void main() {
+    float a = atan(vP.x, vP.y);
+    float f = (a < 0.0 ? a + 6.2831853 : a) / 6.2831853;
+    vec3 col = f <= uFrac ? uColor * (0.8 + 0.3 * uPulse) : vec3(0.075, 0.068, 0.062);
+    gl_FragColor = vec4(col, 1.0);
   }`;
 const GROUND_VS = /* glsl */`
   varying vec3 vW;
@@ -165,7 +180,7 @@ export function createRenderer(canvas, hooks) {
   renderer.setPixelRatio(pixelRatio);
   // Neutral tone mapping keeps the project colours saturated instead of bleaching bright liquid to white
   renderer.toneMapping = THREE.NeutralToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  renderer.toneMappingExposure = 0.92;
 
   const scene = new THREE.Scene();
   const BG = new THREE.Color('#0b0a09');
@@ -182,7 +197,8 @@ export function createRenderer(canvas, hooks) {
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 400);
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.75, 0.55, 0.82);
+  // a soft glow only on the brightest things (flowing streams, a tank you just watered), never on everything
+  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.4, 0.92);
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
   let bloomOn = true;
@@ -209,7 +225,7 @@ export function createRenderer(canvas, hooks) {
   // ---------- shared geometry ----------
   const G = {
     plinth: new THREE.CylinderGeometry(1.14, 1.24, PLINTH, 56),
-    ring: new THREE.TorusGeometry(1.19, 0.03, 10, 120),
+    gauge: new THREE.RingGeometry(1.3, 1.46, 120, 1),
     glass: new THREE.CylinderGeometry(1, 1, 1, 64, 1, true),
     rim: new THREE.TorusGeometry(1.02, 0.045, 10, 80),
     liquid: new THREE.CylinderGeometry(1, 1, 1, 64, 1, true),
@@ -219,7 +235,7 @@ export function createRenderer(canvas, hooks) {
     bubble: new THREE.SphereGeometry(1, 8, 6),
     wave: new THREE.RingGeometry(0.94, 1, 96),
   };
-  const glassMat = new THREE.MeshPhysicalMaterial({ color: '#ffffff', metalness: 0, roughness: 0.06, transparent: true, opacity: 0.14, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 1.6, side: THREE.DoubleSide, depthWrite: false });
+  const glassMat = new THREE.MeshPhysicalMaterial({ color: '#ffffff', metalness: 0, roughness: 0.06, transparent: true, opacity: 0.1, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 0.9, side: THREE.DoubleSide, depthWrite: false });
   const pipeGlassMat = new THREE.MeshPhysicalMaterial({ color: '#fff4ea', metalness: 0, roughness: 0.1, transparent: true, opacity: 0.07, envMapIntensity: 0.7, depthWrite: false });
   const plinthMat = new THREE.MeshStandardMaterial({ color: '#1b1714', metalness: 0.7, roughness: 0.32 });
   const hitMat = new THREE.MeshBasicMaterial({ visible: false });
@@ -287,13 +303,15 @@ export function createRenderer(canvas, hooks) {
     const group = new THREE.Group();
     const plinth = new THREE.Mesh(G.plinth, plinthMat);
     plinth.position.y = PLINTH / 2;
-    const ringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false });
-    const ring = new THREE.Mesh(G.ring, ringMat);
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = PLINTH + 0.01;
+    // health gauge on the floor around the tank: fills clockwise from the back like a progress ring
+    const gaugeU = { uFrac: { value: 0 }, uColor: { value: new THREE.Color('#46e58a') }, uPulse: { value: 0 } };
+    const ringMat = new THREE.ShaderMaterial({ vertexShader: GAUGE_VS, fragmentShader: GAUGE_FS, uniforms: gaugeU });
+    const ring = new THREE.Mesh(G.gauge, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.015;
     const vessel = new THREE.Group(); // scaled to the tank's radius/height
     vessel.position.y = PLINTH;
-    const liquidU = { uColor: { value: color.clone() }, uTime: { value: 0 }, uDead: { value: 0 }, uFlash: { value: 0 }, uGlow: { value: 0.5 } };
+    const liquidU = { uColor: { value: calm(color) }, uTime: { value: 0 }, uDead: { value: 0 }, uFlash: { value: 0 }, uGlow: { value: 0.5 } };
     const liquid = new THREE.Mesh(G.liquid, new THREE.ShaderMaterial({ vertexShader: LIQUID_VS, fragmentShader: LIQUID_FS, uniforms: liquidU, transparent: true, depthWrite: false }));
     liquid.renderOrder = 1;
     const surfaceU = { uColor: liquidU.uColor, uTime: liquidU.uTime, uDead: liquidU.uDead, uFlash: liquidU.uFlash, uAmp: { value: 0.02 }, uSlosh: { value: 0 } };
@@ -305,13 +323,13 @@ export function createRenderer(canvas, hooks) {
     const crackMat = new THREE.MeshBasicMaterial({ color: '#ffd6c2', alphaMap: crackTexture(p.id), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
     const cracks = new THREE.Mesh(G.glass, crackMat);
     cracks.renderOrder = 4;
-    const rimMat = new THREE.MeshStandardMaterial({ color: color.clone().multiplyScalar(0.55), metalness: 0.85, roughness: 0.25, emissive: color.clone(), emissiveIntensity: 0.12 });
+    const rimMat = new THREE.MeshStandardMaterial({ color: color.clone().multiplyScalar(0.5), metalness: 0.7, roughness: 0.35, emissive: color.clone(), emissiveIntensity: 0.05 });
     const rimTop = new THREE.Mesh(G.rim, rimMat), rimBottom = new THREE.Mesh(G.rim, rimMat);
     rimTop.rotation.x = rimBottom.rotation.x = Math.PI / 2;
     const bubbles = new THREE.InstancedMesh(G.bubble, bubbleMat, 14);
     bubbles.frustumCulled = false;
     bubbles.renderOrder = 2;
-    const pool = new THREE.Mesh(G.pool, new THREE.MeshBasicMaterial({ map: softTex, color: color.clone(), transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const pool = new THREE.Mesh(G.pool, new THREE.MeshBasicMaterial({ map: softTex, color: calm(color), transparent: true, opacity: 0.1, depthWrite: false, blending: THREE.AdditiveBlending }));
     pool.rotation.x = -Math.PI / 2;
     pool.position.y = 0.012;
     const hit = new THREE.Mesh(G.hit, hitMat);
@@ -320,14 +338,24 @@ export function createRenderer(canvas, hooks) {
     group.add(pool, plinth, ring, vessel, hit);
     scene.add(group);
 
+    // label: name + health always; numbers on hover/selection; quick actions on the selected tank
     const label = document.createElement('div');
     label.className = 'tank3d';
-    label.innerHTML = '<div class="ic"></div><div class="nm"></div><div class="nums"></div><div class="st"></div>';
+    label.innerHTML = '<div class="card"><span class="ic"></span><span class="nm"></span><span class="pct"></span></div><div class="more"><div class="nums"></div><div class="st"></div></div><div class="acts"></div><button class="need" type="button"></button>';
+    const act = (name, text, title) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = text; b.title = title; b.dataset.act = name; return b; };
+    label.querySelector('.acts').append(act('water', '💧 Water', 'I did something for this project'), act('task', '＋ Task', 'Plan a task'), act('connect', '🔗 Connect', 'Draw a pipe from this project'), act('edit', '✎', 'Edit project'));
+    label.querySelector('.need').dataset.act = 'water';
+    label.addEventListener('pointerdown', (e) => e.stopPropagation());
+    label.addEventListener('click', (e) => {
+      const a = e.target.closest('[data-act]')?.dataset.act;
+      if (a) { e.stopPropagation(); hooks.onTankAction?.(a, p.id); }
+      else hooks.onSelect?.({ type: 'project', id: p.id });
+    });
     overlay.appendChild(label);
-    const s0 = live?.projects[p.id];
     const t = {
-      id: p.id, group, plinth, vessel, liquid, surface, glass, cracks, crackMat, ring, ringMat, rimTop, rimBottom, bubbles, pool, hit, label, liquidU, surfaceU, color,
-      r: 1, h: 1.8, health: s0 ? s0.health : 60, level: 0.6, size: 1, flash: 0, slosh: 0, phase: Math.random() * 6.28, smokeAcc: 0,
+      id: p.id, group, plinth, vessel, liquid, surface, glass, cracks, crackMat, ring, ringMat, gaugeU, rimTop, rimBottom, bubbles, pool, hit, label, liquidU, surfaceU, color,
+      // tanks start empty and fill up to their real level, so opening the map shows the system coming alive
+      r: 1, h: 1.8, health: 0, level: 0, size: 1, lift: 0, flash: 0, slosh: 0, phase: Math.random() * 6.28, smokeAcc: 0,
       bubbleSeeds: Array.from({ length: 14 }, (_, i) => { const r = seeded(p.id * 31 + i); return [r() * 6.28, 0.25 + r() * 0.6, r(), 0.018 + r() * 0.025]; }),
       text: '',
     };
@@ -336,7 +364,7 @@ export function createRenderer(canvas, hooks) {
   }
   function removeTank(t) {
     scene.remove(t.group);
-    t.liquid.material.dispose(); t.surface.material.dispose(); t.crackMat.alphaMap.dispose(); t.crackMat.dispose(); t.ringMat.dispose();
+    t.liquid.material.dispose(); t.surface.material.dispose(); t.crackMat.alphaMap.dispose(); t.crackMat.dispose(); t.ring.material.dispose();
     t.rimTop.material.dispose(); t.pool.material.dispose(); t.bubbles.dispose();
     t.label.remove();
     tanks.delete(t.id);
@@ -349,16 +377,21 @@ export function createRenderer(canvas, hooks) {
     const size = 0.82 + 0.36 * outputSize(s);
     t.size = damp(t.size, size, 3, dt);
     t.r = br * t.size; t.h = bh * t.size;
-    t.health = damp(t.health, s.health, 2.2, dt);
-    const status = statusOf(t.health);
+    t.health = damp(t.health, s.health, 1.6, dt);
+    // the status comes from the real number; the visual level (t.health) animates toward it
+    const status = statusOf(s.health);
     const dying = status === 'dying';
-    const dead = clamp((50 - t.health) / 50, 0, 1);
-    t.level = clamp(t.health / 100, 0.04, 0.97);
+    const dead = clamp((50 - s.health) / 50, 0, 1);
+    t.level = clamp(t.health / 100, 0.02, 0.97);
     t.flash = Math.max(0, t.flash - dt * 0.9);
     t.slosh = Math.max(0, t.slosh - dt * 0.35);
+    const sel = S.selection?.type === 'project' && S.selection.id === p.id;
+    const hov = hover?.type === 'node' && hover.id === p.id;
+    t.lift = damp(t.lift, hov || sel ? 0.12 : 0, 8, dt);
 
     const pos = worldOf(p);
-    t.group.position.set(pos.x + (dying ? Math.sin(time * 31 + t.phase) * 0.012 : 0), 0, pos.z);
+    t.group.position.set(pos.x + (dying ? Math.sin(time * 31 + t.phase) * 0.008 : 0), 0, pos.z);
+    t.vessel.position.y = PLINTH + t.lift;
     t.vessel.scale.set(t.r, 1, t.r);
     t.plinth.scale.set(t.r, 1, t.r);
     t.glass.scale.set(1, t.h, 1); t.glass.position.y = t.h / 2;
@@ -369,22 +402,22 @@ export function createRenderer(canvas, hooks) {
     t.liquid.scale.set(0.955, lh, 0.955); t.liquid.position.y = lh / 2 + 0.01;
     t.surface.scale.set(0.955, 0.955, 1); t.surface.position.y = lh + 0.01;
     t.hit.scale.set(t.r * 1.15, t.h + PLINTH + 0.3, t.r * 1.15); t.hit.position.y = (t.h + PLINTH) / 2;
-    t.pool.scale.setScalar(t.r * 5.2);
-    t.pool.material.opacity = 0.08 + 0.3 * (t.health / 100) + t.flash * 0.4;
+    t.pool.scale.setScalar(t.r * 4.2);
+    t.pool.material.opacity = 0.03 + 0.08 * (t.health / 100) + t.flash * 0.25 + (sel ? 0.06 : 0);
 
     const u = t.liquidU;
     u.uTime.value = time + t.phase * 10;
     u.uDead.value = dead * 0.85;
     u.uFlash.value = t.flash;
-    u.uGlow.value = 0.25 + 0.6 * (t.health / 100) + (s.boost > 0.3 ? 0.5 : 0);
-    t.surfaceU.uAmp.value = 0.012 + 0.02 * (t.health / 100);
+    u.uGlow.value = 0.2 + 0.5 * (t.health / 100) + (s.boost > 0.3 ? 0.3 : 0);
+    t.surfaceU.uAmp.value = 0.01 + 0.015 * (t.health / 100);
     t.surfaceU.uSlosh.value = t.slosh * 0.09;
 
-    const sel = S.selection?.type === 'project' && S.selection.id === p.id;
-    const hov = hover?.type === 'node' && hover.id === p.id;
-    const breathe = status === 'thriving' ? 0.5 + 0.5 * Math.sin(time * 1.3 + t.phase) : dying ? 0.5 + 0.5 * Math.sin(time * 5) : 0.4;
-    t.ringMat.color.set(STATUS_COLOR[status]).multiplyScalar(0.9 + 0.9 * breathe + (sel ? 1.4 : hov ? 0.7 : 0) + t.flash * 2);
-    t.ring.scale.setScalar(t.r * (sel ? 1.06 + 0.02 * Math.sin(time * 3) : 1));
+    // gauge: the fraction is the visual health; only a dying project pulses (slowly)
+    t.gaugeU.uFrac.value = t.health / 100;
+    t.gaugeU.uColor.value.set(STATUS_COLOR[status]);
+    t.gaugeU.uPulse.value = (dying ? 0.5 + 0.5 * Math.sin(time * 2.4) : 0) + (sel ? 0.4 : hov ? 0.2 : 0) + t.flash;
+    t.ring.scale.setScalar(t.r);
 
     // bubbles rise slowly through the liquid while the project is alive
     const m = new THREE.Matrix4();
@@ -470,7 +503,7 @@ export function createRenderer(canvas, hooks) {
   };
   const packetMesh = {};
   for (const [k, geo] of Object.entries(packetGeo)) {
-    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(RESOURCES[k].color).multiplyScalar(2.2), toneMapped: false }), PACKET_MAX);
+    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(RESOURCES[k].color).multiplyScalar(1.15), toneMapped: false }), PACKET_MAX);
     mesh.frustumCulled = false;
     mesh.count = 0;
     mesh.renderOrder = 2;
@@ -519,34 +552,44 @@ export function createRenderer(canvas, hooks) {
     return { x: (v3.x * 0.5 + 0.5) * W, y: (-v3.y * 0.5 + 0.5) * H, behind: v3.z > 1 };
   }
   function updateLabel(t, p, info) {
-    const { s, status, sel, hov } = info;
+    const { sel, hov } = info;
+    // numbers on labels match the side panel (the day's figures); only the liquid and ring drift in real time
+    const s = snap()?.projects[p.id] || info.s;
+    const status = statusOf(s.health);
     const kind = KINDS[p.kind] || KINDS.custom;
     const nums = [];
     if (s.money > 0.5) nums.push(`<span style="color:${RESOURCES.money.color}">TZS ${fmtNum(s.money)}</span>`);
     if (s.attention > 0.5) nums.push(`<span style="color:${RESOURCES.attention.color}">👁 ${fmtNum(s.attention)}</span>`);
     if (s.customers >= 0.05) nums.push(`<span style="color:${RESOURCES.customers.color}">👤 ${fmtNum(s.customers)}</span>`);
-    const chip = status === 'thirsty' ? '💧 ' : status === 'dying' ? '⚠️ ' : s.boost > 0.3 ? '🔥 ' : '';
-    const text = `${p.icon || kind.icon}|${p.name}|${nums.join('')}|${chip}${Math.round(t.health)}% · ${status}`;
+    const pct = Math.round(s.health);
+    const since = s.lastAction ? (s.daysSince === 0 ? 'watered today' : `${s.daysSince} day${s.daysSince === 1 ? '' : 's'} since last post`) : 'no posts yet';
+    const need = status === 'dying' ? '💧 Water now' : status === 'thirsty' ? '💧 Needs water' : '';
+    const text = `${p.icon || kind.icon}|${p.name}|${pct}|${status}|${nums.join('')}|${since}|${need}`;
     if (text !== t.text) {
       t.text = text;
-      const [ic, nm, nu, st] = t.label.children;
-      ic.textContent = p.icon || kind.icon;
-      nm.textContent = p.name;
-      nu.innerHTML = nums.join('');
-      st.textContent = `${chip}${Math.round(t.health)}% · ${status}`;
-      st.style.color = STATUS_COLOR[status];
+      const q = (c) => t.label.querySelector(c);
+      q('.ic').textContent = p.icon || kind.icon;
+      q('.nm').textContent = p.name;
+      q('.pct').textContent = `${pct}%`;
+      q('.pct').style.color = STATUS_COLOR[status];
+      q('.card').style.setProperty('--st', STATUS_COLOR[status]);
+      q('.nums').innerHTML = nums.join('');
+      q('.st').textContent = `${status === 'thriving' ? 'Thriving' : status === 'steady' ? 'Steady' : status === 'thirsty' ? 'Thirsty' : 'Dying'} · ${since}`;
+      q('.need').textContent = need;
+      q('.need').hidden = !need;
     }
     const top = t.group.position.clone();
-    top.y = PLINTH + t.h + 0.35;
+    top.y = PLINTH + t.lift + t.h + 0.3;
     const sp = toScreen(top);
     const d = camera.position.distanceTo(top);
-    const scale = clamp(19 / d, 0.62, 1.15);
-    t.label.style.transform = `translate3d(${sp.x}px, ${sp.y}px, 0) translate(-50%, -100%) scale(${scale.toFixed(3)})`;
-    t.label.style.zIndex = sel || hov ? '5' : '1';
+    const scale = clamp(21 / d, W < 520 ? 0.56 : 0.82, 1.1);
+    // whole pixels and 2-decimal scale keep the text crisp and the label still when nothing moves
+    const tf = `translate3d(${Math.round(sp.x)}px, ${Math.round(sp.y)}px, 0) translate(-50%, -100%) scale(${scale.toFixed(2)})`;
+    if (t.tf !== tf) { t.tf = tf; t.label.style.transform = tf; }
+    t.label.style.zIndex = sel ? '6' : hov ? '5' : status === 'dying' ? '3' : '1';
     t.label.hidden = sp.behind;
     t.label.classList.toggle('sel', sel);
     t.label.classList.toggle('hov', hov);
-    t.label.classList.toggle('compact', d > 34);
     t.label.classList.toggle('dim', !!S.selection && !sel);
   }
 
@@ -575,7 +618,7 @@ export function createRenderer(canvas, hooks) {
       seen.add(p.id);
       const t = tanks.get(p.id) || makeTank(p);
       const c = p.color || KINDS[p.kind]?.color || '#ffffff';
-      if (t.colorHex !== c) { t.colorHex = c; t.color.set(c); t.liquidU.uColor.value.set(c); t.pool.material.color.set(c); t.rimTop.material.color.set(c).multiplyScalar(0.55); t.rimTop.material.emissive.set(c); }
+      if (t.colorHex !== c) { t.colorHex = c; t.color.set(c); t.liquidU.uColor.value.copy(calm(c)); t.pool.material.color.copy(calm(c)); t.rimTop.material.color.set(c).multiplyScalar(0.5); t.rimTop.material.emissive.set(c); }
       updateLabel(t, p, updateTank(t, p, dt));
       cx += p.x / U; cz += p.y / U;
     }
@@ -610,11 +653,12 @@ export function createRenderer(canvas, hooks) {
         // calm, real-time pace: a packet takes roughly 6-20 seconds to cross a pipe
         const vel = (0.35 + 0.8 * p.speed) * R.speed * (1 + p.flash * 1.6);
         p.streamU.uPhase.value += dt * vel * 0.8;
-        p.streamU.uIntensity.value = 0.3 + 1.1 * p.norm;
+        p.streamU.uIntensity.value = 0.18 + 0.6 * p.norm;
         p.streamU.uFlash.value = p.flash;
         const hot = (hover?.type === 'link' && hover.id === l.id) || (S.selection?.type === 'link' && S.selection.id === l.id);
         const related = (hover?.type === 'node' && (hover.id === l.from || hover.id === l.to)) || (S.selection?.type === 'project' && (S.selection.id === l.from || S.selection.id === l.to));
-        p.streamU.uDim.value = damp(p.streamU.uDim.value, (S.selection || hover) && !hot && !related ? 0.35 : hot ? 1.5 : 1, 6, dt);
+        // pipes stay quiet in the background; the ones touching what you look at come forward
+        p.streamU.uDim.value = damp(p.streamU.uDim.value, hot ? 1.6 : related ? 1.3 : (S.selection || hover) ? 0.22 : 0.62, 6, dt);
         const rate = p.norm > 0.015 ? 0.06 + 0.55 * p.norm : 0;
         p.acc += rate * dt;
         while (p.acc >= 1) { p.acc -= 1; spawnPacket(p, { v: vel }); }
@@ -723,7 +767,13 @@ export function createRenderer(canvas, hooks) {
   let mode = null; // 'pan' | 'rotate' | 'node' | 'multi' | 'link'
   let grab = null, nodeDrag = null, press = null, multi = null;
   let lastTap = { t: 0, x: 0, y: 0 };
+  let longTimer = 0;
   const setCursor = (c) => { canvas.style.cursor = c; };
+  function openContext(hit, x, y) {
+    if (hit?.type === 'node' || hit?.type === 'link') return hooks.onContext?.({ type: hit.type, id: hit.id }, x, y);
+    const g = groundAt(x, y);
+    if (g) hooks.onContext?.({ type: 'ground', x: Math.round(g.x * U), y: Math.round(g.z * U) }, x, y);
+  }
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
@@ -732,8 +782,19 @@ export function createRenderer(canvas, hooks) {
     stopGoal();
     if (pointers.size === 2) { startMulti(); return; }
     if (pointers.size > 2) return;
-    press = { x: e.clientX, y: e.clientY, moved: false, at: performance.now() };
     const hit = pick(e.clientX, e.clientY);
+    press = { x: e.clientX, y: e.clientY, moved: false, at: performance.now(), button: e.button, hit };
+    // long-press (touch) opens the same menu as a right-click
+    if (e.pointerType !== 'mouse' && S.tool !== 'link') {
+      const pr = press;
+      clearTimeout(longTimer);
+      longTimer = setTimeout(() => {
+        if (press !== pr || pr.moved || pointers.size !== 1) return;
+        pr.longFired = true;
+        mode = null; nodeDrag = null; grab = null;
+        openContext(pr.hit, pr.x, pr.y);
+      }, 520);
+    }
     if (S.tool === 'link') {
       mode = 'link';
       if (hit?.type === 'node') {
@@ -830,8 +891,11 @@ export function createRenderer(canvas, hooks) {
       return;
     }
     if (pointers.size) return;
+    clearTimeout(longTimer);
+    if (press?.longFired) { mode = null; grab = null; nodeDrag = null; press = null; return; }
     const wasClick = press && !press.moved;
-    if (wasClick && mode === 'node') hooks.onSelect?.({ type: 'project', id: nodeDrag.id });
+    if (wasClick && mode === 'rotate' && press.button === 2) openContext(press.hit, e.clientX, e.clientY);
+    else if (wasClick && mode === 'node') hooks.onSelect?.({ type: 'project', id: nodeDrag.id });
     else if (wasClick && mode === 'pan') {
       if (press.hit?.type === 'link') hooks.onSelect?.({ type: 'link', id: press.hit.id });
       else {
@@ -903,11 +967,14 @@ export function createRenderer(canvas, hooks) {
     if (!list.length) { setGoal({ tx: 0, tz: 0, dist: 20 }); return; }
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (const p of list) { x0 = Math.min(x0, p.x / U); x1 = Math.max(x1, p.x / U); z0 = Math.min(z0, p.y / U); z1 = Math.max(z1, p.y / U); }
-    const radius = Math.hypot(x1 - x0, z1 - z0) / 2 + 1.4;
+    // the tilted camera sees depth foreshortened, so the wider side sets the frame, not the diagonal
+    const radius = Math.max(x1 - x0, z1 - z0) / 2 + 2.3;
     const fov = (camera.fov * Math.PI) / 180;
     const fitH = radius / Math.tan(fov / 2);
     const fitW = radius / (Math.tan(fov / 2) * camera.aspect);
-    const g = { tx: (x0 + x1) / 2, tz: (z0 + z1) / 2 + 0.4, dist: clamp(Math.max(fitH, fitW) * (camera.aspect < 1 ? 1.05 : 0.92), ...LIMITS.dist) };
+    // near tanks look bigger under a tilted camera, so aim a little toward the viewer
+    const toward = radius * 0.16;
+    const g = { tx: (x0 + x1) / 2 + Math.sin(cam.yaw) * toward, tz: (z0 + z1) / 2 + Math.cos(cam.yaw) * toward, dist: clamp(Math.max(fitH, fitW) * (camera.aspect < 1 ? 1.05 : 1.12), ...LIMITS.dist) };
     if (animate) setGoal(g); else { Object.assign(cam, g); Object.assign(goal, cam); applyCamera(); }
   }
   function focus(id) {
@@ -915,7 +982,17 @@ export function createRenderer(canvas, hooks) {
     if (!p) return;
     setGoal({ tx: p.x / U, tz: p.y / U, dist: Math.min(cam.dist, 16) });
   }
+  // opening shot: glide in from high and to the side while the tanks fill up
+  function intro() {
+    fit({ animate: false });
+    const end = { ...cam };
+    Object.assign(cam, { dist: end.dist * 1.7, yaw: end.yaw - 0.9, pitch: Math.min(LIMITS.pitch[1], end.pitch + 0.35) });
+    applyCamera();
+    setGoal(end);
+  }
   const zoomBy = (f) => setGoal({ dist: cam.dist / f });
+  // pick "from" for the link tool without a first tap (used by the tank menu)
+  function startLink(id) { linkFrom = id; hooks.onToolHint?.('Now tap the project it feeds'); }
   const rotateBy = (a) => setGoal({ yaw: cam.yaw + a });
   const toggleTilt = () => setGoal({ pitch: cam.pitch > 1.2 ? 0.86 : 1.45 });
 
@@ -962,5 +1039,5 @@ export function createRenderer(canvas, hooks) {
     renderer.dispose();
   }
 
-  return { fit, focus, zoomBy, rotateBy, toggleTilt, burst, floatText, screenPos, destroy, resize, is3d: true, get camera() { return { ...cam }; } };
+  return { fit, intro, startLink, focus, zoomBy, rotateBy, toggleTilt, burst, floatText, screenPos, destroy, resize, is3d: true, get camera() { return { ...cam }; } };
 }
