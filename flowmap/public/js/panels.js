@@ -4,6 +4,7 @@ import { S, snap, project, projects, nameOf, on, select as selectItem, currentAl
   setOffset, setScenario, saveLogs, spreadMonth, clearSample, hasSample, logFor, addTask, completeTask, reopenTask, updateTask, notify, addDays,
   scanProject, scanAllChannels, runBrain, dismissNote } from './store.js';
 import { PLATFORMS } from '/shared/sources.js';
+import { goalProgress, GOAL_METRICS } from '/shared/goals.js';
 import { openBrainSettings } from './brain-ui.js';
 import { KINDS, RESOURCES, TASK_TYPES, dayNum } from '/shared/engine.js';
 import { sparkline, feelPicker, field, numInput, select as selectEl } from './ui-common.js';
@@ -232,6 +233,18 @@ function projectInspector(p) {
   const att = money ? null : sparkline(logSeries(p, 'attention'), RESOURCES.attention.color);
   if (money || att) wrap.append(h('div', { class: 'card' }, h('div', { class: 'lbl' }, `Last 14 days · ${money ? 'money' : 'attention'} (from your check-ins)`), money || att));
 
+  const goal = goalProgress(p, { logs: S.world.logs, scans: S.world.scans || [], day: snap(0).projects[p.id], today: S.today });
+  if (goal) {
+    const m = GOAL_METRICS[goal.metric];
+    wrap.append(h('div', { class: 'card goal-card' },
+      h('div', { class: 'row' }, h('b', { class: 'grow' }, goal.reached ? '🏆 Goal reached' : '🎯 Goal'), h('span', { class: 'amt' }, `${Math.round(goal.frac * 100)}%`)),
+      h('div', { class: 'meter' }, h('i', { style: { width: `${Math.max(2, goal.frac * 100)}%`, background: '#e9b949' } })),
+      h('div', { class: 'hint', style: 'margin-top:6px' },
+        goal.current === null ? `Target ${fmtNum(goal.target)} ${m.short}. Add a channel link so FlowMap can read the current number.`
+          : `${fmtNum(goal.current)} of ${fmtNum(goal.target)} ${m.short}${goal.estimated ? ' (estimated from the simulation)' : ''}`
+          + (goal.by ? ` · by ${fmtDay(goal.by, false)}${goal.daysLeft !== null ? ` (${goal.daysLeft} days left)` : ''}` : '')
+          + (goal.perDayNeeded !== null && !goal.reached ? ` · needs +${fmtNum(goal.perDayNeeded)} per day` : ''))));
+  } else wrap.append(h('button', { class: 'btn sm ghost', style: 'margin-top:8px', onclick: () => openProjectEditor(p.id) }, '🎯 Set a goal'));
   wrap.append(channelsBlock(p));
   const incoming = S.world.links.filter((l) => l.to === p.id), outgoing = S.world.links.filter((l) => l.from === p.id);
   const flowRows = (links, dir) => h('div', null, links.map((l) => h('div', { class: 'flow-row', onclick: () => selectItem({ type: 'link', id: l.id }) },

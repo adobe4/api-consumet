@@ -12,6 +12,7 @@ import { RoomEnvironment } from '/vendor/three/addons/environments/RoomEnvironme
 import { S, project, projects, on, liveSnap, snap } from './store.js';
 import { RESOURCES, KINDS, TASK_TYPES } from '/shared/engine.js';
 import { clamp, lerp, fmtNum } from './util.js';
+import { goalProgress, groupOf, GOAL_METRICS } from '/shared/goals.js';
 
 const U = 100; // map coordinates (stored on projects) per world unit
 const STATUS_COLOR = { thriving: '#46e58a', steady: '#f2d15c', thirsty: '#ffb84d', dying: '#ff4d5e' };
@@ -23,6 +24,28 @@ const damp = (a, b, rate, dt) => lerp(a, b, 1 - Math.exp(-rate * dt));
 // project colours are softened toward a warm grey in 3D so tanks are easy to look at for a long time
 const CALM_GREY = new THREE.Color('#7d736b');
 const calm = (c) => new THREE.Color(c).lerp(CALM_GREY, 0.3);
+
+// Light follows the owner's clock: soft dawn, bright day, amber evening, dim warm night. Warm tones only.
+// [hour, background, sky light, sun colour, sun strength]
+const SKY = [
+  [0, '#060504', 0.42, '#ffb27a', 0.5], [5, '#0a0706', 0.48, '#ffb88f', 0.65], [7, '#150d0a', 0.66, '#ffc9a0', 1.05],
+  [10, '#131110', 0.82, '#fff0dc', 1.45], [15, '#13110e', 0.8, '#ffe9cf', 1.4], [18, '#180d07', 0.66, '#ffa968', 1.15],
+  [20, '#0d0806', 0.5, '#ff9a5c', 0.8], [22, '#070605', 0.42, '#ffb27a', 0.55], [24, '#060504', 0.42, '#ffb27a', 0.5],
+];
+export function skyAt(hour) {
+  let i = 0;
+  while (i < SKY.length - 2 && SKY[i + 1][0] <= hour) i++;
+  const [h0, bg0, sk0, sun0, st0] = SKY[i], [h1, bg1, sk1, sun1, st1] = SKY[i + 1];
+  const f = clamp((hour - h0) / (h1 - h0 || 1), 0, 1);
+  const angle = ((hour - 6) / 12) * Math.PI; // sunrise at 6, sunset at 18
+  return {
+    bg: new THREE.Color(bg0).lerp(new THREE.Color(bg1), f), sky: lerp(sk0, sk1, f),
+    sun: new THREE.Color(sun0).lerp(new THREE.Color(sun1), f), strength: lerp(st0, st1, f),
+    sunPos: new THREE.Vector3(Math.cos(angle) * 12, Math.max(3, Math.sin(angle) * 14), 5),
+    name: hour < 5 || hour >= 21 ? 'night' : hour < 8 ? 'dawn' : hour < 17 ? 'day' : 'evening',
+  };
+}
+const ZONE_TINTS = ['#ff8a5c', '#e8b86b', '#46e58a', '#d9b38c', '#ff6fae', '#ffc933'];
 
 export function webglAvailable() {
   try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2')); } catch { return false; }
@@ -117,7 +140,7 @@ const GROUND_VS = /* glsl */`
   varying vec3 vW;
   void main() { vec4 wp = modelMatrix * vec4(position, 1.0); vW = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`;
 const GROUND_FS = /* glsl */`
-  uniform vec3 uCenter; uniform float uFuture; uniform float uTime;
+  uniform vec3 uCenter; uniform float uFuture; uniform float uTime; uniform float uLight;
   varying vec3 vW;
   void main() {
     vec2 p = vW.xz;
@@ -133,7 +156,7 @@ const GROUND_FS = /* glsl */`
     vec3 lc = mix(vec3(1.0, 0.86, 0.72), vec3(1.0, 0.55, 0.25), uFuture);
     vec3 col = base + lc * (line * 0.035 + major * 0.06) * fade;
     col += vec3(1.0, 0.5, 0.2) * uFuture * 0.03 * (0.5 + 0.5 * sin(p.y * 2.0 - uTime * 2.0)) * fade;
-    gl_FragColor = vec4(col, 1.0);
+    gl_FragColor = vec4(col * uLight, 1.0);
   }`;
 
 // ---------- small textures ----------
@@ -189,10 +212,24 @@ export function createRenderer(canvas, hooks) {
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.55;
-  scene.add(new THREE.HemisphereLight('#ffe9d2', '#120d0a', 0.7));
+  const hemi = new THREE.HemisphereLight('#ffe9d2', '#120d0a', 0.7);
+  scene.add(hemi);
   const key = new THREE.DirectionalLight('#ffd9b0', 1.4);
   key.position.set(6, 12, 4);
   scene.add(key);
+  let skyNow = null, skyAtMs = 0;
+  function updateSky(force) {
+    if (!force && performance.now() - skyAtMs < 20000) return;
+    skyAtMs = performance.now();
+    const d = new Date();
+    skyNow = skyAt(d.getHours() + d.getMinutes() / 60);
+    BG.copy(skyNow.bg);
+    hemi.intensity = skyNow.sky;
+    key.color.copy(skyNow.sun);
+    key.intensity = skyNow.strength;
+    key.position.copy(skyNow.sunPos);
+    groundMat.uniforms.uLight.value = 0.75 + skyNow.sky * 0.4;
+  }
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 400);
   const composer = new EffectComposer(renderer);
@@ -204,7 +241,7 @@ export function createRenderer(canvas, hooks) {
   let bloomOn = true;
 
   // ground
-  const groundMat = new THREE.ShaderMaterial({ vertexShader: GROUND_VS, fragmentShader: GROUND_FS, uniforms: { uCenter: { value: new THREE.Vector3() }, uFuture: { value: 0 }, uTime: { value: 0 } } });
+  const groundMat = new THREE.ShaderMaterial({ vertexShader: GROUND_VS, fragmentShader: GROUND_FS, uniforms: { uCenter: { value: new THREE.Vector3() }, uFuture: { value: 0 }, uTime: { value: 0 }, uLight: { value: 1 } } });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), groundMat);
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
@@ -226,6 +263,8 @@ export function createRenderer(canvas, hooks) {
   const G = {
     plinth: new THREE.CylinderGeometry(1.14, 1.24, PLINTH, 56),
     gauge: new THREE.RingGeometry(1.3, 1.46, 120, 1),
+    goal: new THREE.RingGeometry(1.53, 1.6, 120, 1),
+    zone: new THREE.CircleGeometry(1, 64),
     glass: new THREE.CylinderGeometry(1, 1, 1, 64, 1, true),
     rim: new THREE.TorusGeometry(1.02, 0.045, 10, 80),
     liquid: new THREE.CylinderGeometry(1, 1, 1, 64, 1, true),
@@ -309,6 +348,12 @@ export function createRenderer(canvas, hooks) {
     const ring = new THREE.Mesh(G.gauge, ringMat);
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.015;
+    // goal ring just outside the health ring, in gold, only when the project has a goal
+    const goalU = { uFrac: { value: 0 }, uColor: { value: new THREE.Color('#e9b949') }, uPulse: { value: 0 } };
+    const goalRing = new THREE.Mesh(G.goal, new THREE.ShaderMaterial({ vertexShader: GAUGE_VS, fragmentShader: GAUGE_FS, uniforms: goalU }));
+    goalRing.rotation.x = -Math.PI / 2;
+    goalRing.position.y = 0.016;
+    goalRing.visible = false;
     const vessel = new THREE.Group(); // scaled to the tank's radius/height
     vessel.position.y = PLINTH;
     const liquidU = { uColor: { value: calm(color) }, uTime: { value: 0 }, uDead: { value: 0 }, uFlash: { value: 0 }, uGlow: { value: 0.5 } };
@@ -335,13 +380,13 @@ export function createRenderer(canvas, hooks) {
     const hit = new THREE.Mesh(G.hit, hitMat);
     hit.userData = { type: 'node', id: p.id };
     vessel.add(liquid, surface, glass, cracks, rimTop, rimBottom, bubbles);
-    group.add(pool, plinth, ring, vessel, hit);
+    group.add(pool, plinth, ring, goalRing, vessel, hit);
     scene.add(group);
 
     // label: name + health always; numbers on hover/selection; quick actions on the selected tank
     const label = document.createElement('div');
     label.className = 'tank3d';
-    label.innerHTML = '<div class="card"><span class="ic"></span><span class="nm"></span><span class="pct"></span></div><div class="more"><div class="nums"></div><div class="st"></div></div><div class="acts"></div><button class="need" type="button"></button>';
+    label.innerHTML = '<div class="card"><span class="ic"></span><span class="nm"></span><span class="pct"></span></div><div class="more"><div class="nums"></div><div class="st"></div><div class="goal"></div></div><div class="acts"></div><button class="need" type="button"></button>';
     const act = (name, text, title) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = text; b.title = title; b.dataset.act = name; return b; };
     label.querySelector('.acts').append(act('water', '💧 Water', 'I did something for this project'), act('task', '＋ Task', 'Plan a task'), act('connect', '🔗 Connect', 'Draw a pipe from this project'), act('edit', '✎', 'Edit project'));
     label.querySelector('.need').dataset.act = 'water';
@@ -353,6 +398,7 @@ export function createRenderer(canvas, hooks) {
     });
     overlay.appendChild(label);
     const t = {
+      goalRing, goalU, goal: null, goalKey: '',
       id: p.id, group, plinth, vessel, liquid, surface, glass, cracks, crackMat, ring, ringMat, gaugeU, rimTop, rimBottom, bubbles, pool, hit, label, liquidU, surfaceU, color,
       // tanks start empty and fill up to their real level, so opening the map shows the system coming alive
       r: 1, h: 1.8, health: 0, level: 0, size: 1, lift: 0, flash: 0, slosh: 0, phase: Math.random() * 6.28, smokeAcc: 0,
@@ -365,7 +411,7 @@ export function createRenderer(canvas, hooks) {
   function removeTank(t) {
     scene.remove(t.group);
     t.liquid.material.dispose(); t.surface.material.dispose(); t.crackMat.alphaMap.dispose(); t.crackMat.dispose(); t.ring.material.dispose();
-    t.rimTop.material.dispose(); t.pool.material.dispose(); t.bubbles.dispose();
+    t.rimTop.material.dispose(); t.pool.material.dispose(); t.bubbles.dispose(); t.goalRing.material.dispose();
     t.label.remove();
     tanks.delete(t.id);
   }
@@ -418,6 +464,19 @@ export function createRenderer(canvas, hooks) {
     t.gaugeU.uColor.value.set(STATUS_COLOR[status]);
     t.gaugeU.uPulse.value = (dying ? 0.5 + 0.5 * Math.sin(time * 2.4) : 0) + (sel ? 0.4 : hov ? 0.2 : 0) + t.flash;
     t.ring.scale.setScalar(t.r);
+
+    // goal progress is recomputed only when the data changes
+    const gk = `${S.version}:${p.cfg?.goal ? JSON.stringify(p.cfg.goal) : ''}`;
+    if (gk !== t.goalKey) {
+      t.goalKey = gk;
+      t.goal = goalProgress(p, { logs: S.world.logs, scans: S.world.scans || [], day: snap(0)?.projects[p.id], today: S.today });
+    }
+    t.goalRing.visible = !!t.goal;
+    if (t.goal) {
+      t.goalU.uFrac.value = damp(t.goalU.uFrac.value, t.goal.frac, 2, dt);
+      t.goalU.uPulse.value = t.goal.reached ? 0.3 + 0.3 * Math.sin(time * 2) : 0;
+      t.goalRing.scale.setScalar(t.r);
+    }
 
     // bubbles rise slowly through the liquid while the project is alive
     const m = new THREE.Matrix4();
@@ -545,6 +604,57 @@ export function createRenderer(canvas, hooks) {
   }
   const floaters = new Set();
 
+  // ---------- areas: a soft floor zone behind each group of tanks ----------
+  // a soft disc: even faint fill that fades out toward the edge, no visible rim
+  const ZONE_VS = 'varying vec2 vP; void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+  const ZONE_FS = 'uniform vec3 uColor; uniform float uOpacity; varying vec2 vP; void main() { float r = length(vP); float a = (1.0 - smoothstep(0.55, 1.0, r)) * uOpacity; gl_FragColor = vec4(uColor, a); }';
+  const zones = new Map(); // area name -> { mesh, label, cx, cz, r }
+  let zonesOn = true;
+  const tintFor = (name) => ZONE_TINTS[[...name].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % ZONE_TINTS.length];
+  function updateZones(list, dt) {
+    const byGroup = new Map();
+    for (const p of list) { const g = groupOf(p); (byGroup.get(g) || byGroup.set(g, []).get(g)).push(p); }
+    const show = zonesOn && byGroup.size > 1;
+    for (const [name, members] of byGroup) {
+      let z = zones.get(name);
+      if (!z) {
+        const mesh = new THREE.Mesh(G.zone, new THREE.ShaderMaterial({ vertexShader: ZONE_VS, fragmentShader: ZONE_FS, uniforms: { uColor: { value: calm(tintFor(name)) }, uOpacity: { value: 0 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.y = 0.006;
+        scene.add(mesh);
+        const label = document.createElement('div');
+        label.className = 'zone3d';
+        label.textContent = name;
+        label.style.color = tintFor(name);
+        overlay.prepend(label);
+        const c0 = members.reduce((a, p) => [a[0] + p.x / U, a[1] + p.y / U], [0, 0]);
+        z = { mesh, label, cx: c0[0] / members.length, cz: c0[1] / members.length, r: 3 };
+        zones.set(name, z);
+      }
+      z.seen = true;
+      let cx = 0, cz = 0;
+      for (const p of members) { cx += p.x / U; cz += p.y / U; }
+      cx /= members.length; cz /= members.length;
+      let r = 0;
+      for (const p of members) r = Math.max(r, Math.hypot(p.x / U - cx, p.y / U - cz) + (tanks.get(p.id)?.r || 1));
+      z.cx = damp(z.cx, cx, 4, dt); z.cz = damp(z.cz, cz, 4, dt); z.r = damp(z.r, r + 1.4, 4, dt);
+      z.mesh.position.x = z.cx; z.mesh.position.z = z.cz;
+      z.mesh.scale.setScalar(z.r);
+      const op = z.mesh.material.uniforms.uOpacity;
+      op.value = damp(op.value, show ? 0.09 : 0, 4, dt);
+      // name written on the floor at the far edge of the zone
+      const away = new THREE.Vector3(z.cx - camera.position.x, 0, z.cz - camera.position.z).normalize();
+      const sp = toScreen(new THREE.Vector3(z.cx + away.x * z.r * 0.82, 0, z.cz + away.z * z.r * 0.82));
+      z.label.hidden = !show || sp.behind;
+      const tf = `translate3d(${Math.round(sp.x)}px, ${Math.round(sp.y)}px, 0) translate(-50%, -50%)`;
+      if (z.tf !== tf) { z.tf = tf; z.label.style.transform = tf; }
+    }
+    for (const [name, z] of [...zones]) {
+      if (z.seen) { z.seen = false; continue; }
+      scene.remove(z.mesh); z.mesh.material.dispose(); z.label.remove(); zones.delete(name);
+    }
+  }
+
   // ---------- labels ----------
   const v3 = new THREE.Vector3();
   function toScreen(pos) {
@@ -564,7 +674,11 @@ export function createRenderer(canvas, hooks) {
     const pct = Math.round(s.health);
     const since = s.lastAction ? (s.daysSince === 0 ? 'watered today' : `${s.daysSince} day${s.daysSince === 1 ? '' : 's'} since last post`) : 'no posts yet';
     const need = status === 'dying' ? '💧 Water now' : status === 'thirsty' ? '💧 Needs water' : '';
-    const text = `${p.icon || kind.icon}|${p.name}|${pct}|${status}|${nums.join('')}|${since}|${need}`;
+    const g = t.goal;
+    const goalText = !g ? '' : g.current === null ? `🎯 Goal: ${fmtNum(g.target)} ${GOAL_METRICS[g.metric].short} (add a channel link to track it)`
+      : g.reached ? `🏆 Goal reached: ${fmtNum(g.current)} ${GOAL_METRICS[g.metric].short}`
+      : `🎯 ${Math.round(g.frac * 100)}% of ${fmtNum(g.target)} ${GOAL_METRICS[g.metric].short}${g.perDayNeeded !== null ? ` · need +${fmtNum(g.perDayNeeded)}/day` : ''}`;
+    const text = `${p.icon || kind.icon}|${p.name}|${pct}|${status}|${nums.join('')}|${since}|${need}|${goalText}`;
     if (text !== t.text) {
       t.text = text;
       const q = (c) => t.label.querySelector(c);
@@ -577,6 +691,8 @@ export function createRenderer(canvas, hooks) {
       q('.st').textContent = `${status === 'thriving' ? 'Thriving' : status === 'steady' ? 'Steady' : status === 'thirsty' ? 'Thirsty' : 'Dying'} · ${since}`;
       q('.need').textContent = need;
       q('.need').hidden = !need;
+      q('.goal').textContent = goalText;
+      q('.goal').hidden = !goalText;
     }
     const top = t.group.position.clone();
     top.y = PLINTH + t.lift + t.h + 0.3;
@@ -623,6 +739,8 @@ export function createRenderer(canvas, hooks) {
       cx += p.x / U; cz += p.y / U;
     }
     for (const t of [...tanks.values()]) if (!seen.has(t.id)) removeTank(t);
+    updateZones(list, dt);
+    updateSky();
     if (list.length) groundMat.uniforms.uCenter.value.set(cx / list.length, 0, cz / list.length);
     groundMat.uniforms.uTime.value = time;
     groundMat.uniforms.uFuture.value = damp(groundMat.uniforms.uFuture.value, S.offset > 0 ? 1 : 0, 3, dt);
@@ -959,6 +1077,7 @@ export function createRenderer(canvas, hooks) {
   ro.observe(canvas);
   resize();
   applyCamera();
+  updateSky(true);
   raf = requestAnimationFrame(frame);
 
   // ---------- public api ----------
@@ -991,6 +1110,18 @@ export function createRenderer(canvas, hooks) {
     setGoal(end);
   }
   const zoomBy = (f) => setGoal({ dist: cam.dist / f });
+  // Morning replay: tanks start at an earlier health and animate to today's; changed ones splash.
+  function replay(fromHealth, highlight = []) {
+    for (const [id, h] of Object.entries(fromHealth)) { const t = tanks.get(Number(id)); if (t) t.health = h; }
+    highlight.forEach((id, i) => setTimeout(() => {
+      const t = tanks.get(id);
+      if (!t) return;
+      t.flash = 0.8; t.slosh = 1;
+      spawnWave(t.group.position.x, t.group.position.z, t.r * 1.2, '#ffd08a', 2);
+    }, 600 + i * 450));
+  }
+  function setZones(on) { zonesOn = !!on; }
+  const timeOfDay = () => { updateSky(true); return skyNow?.name; };
   // pick "from" for the link tool without a first tap (used by the tank menu)
   function startLink(id) { linkFrom = id; hooks.onToolHint?.('Now tap the project it feeds'); }
   const rotateBy = (a) => setGoal({ yaw: cam.yaw + a });
@@ -1039,5 +1170,5 @@ export function createRenderer(canvas, hooks) {
     renderer.dispose();
   }
 
-  return { fit, intro, startLink, focus, zoomBy, rotateBy, toggleTilt, burst, floatText, screenPos, destroy, resize, is3d: true, get camera() { return { ...cam }; } };
+  return { fit, intro, replay, setZones, timeOfDay, startLink, focus, zoomBy, rotateBy, toggleTilt, burst, floatText, screenPos, destroy, resize, is3d: true, get camera() { return { ...cam }; } };
 }

@@ -10,7 +10,7 @@ import { openProjectEditor, openLinkEditor, openActionDialog, openHelp, openSett
 import { toast, closeAllModals, hasModal } from './ui-common.js';
 import { sfx, sound } from './audio.js';
 import { openBrainSettings } from './brain-ui.js';
-import { initMapUi, tankAction, openContextMenu, toggleImmersive, updateToday, updateLiveBits } from './map-ui.js';
+import { initMapUi, tankAction, openContextMenu, openViewMenu, toggleImmersive, updateToday, updateLiveBits, maybeMorningReplay, maybeWeekReview } from './map-ui.js';
 
 const $ = (id) => document.getElementById(id);
 const boot = $('boot'), authEl = $('auth'), appEl = $('app');
@@ -51,6 +51,7 @@ async function enterApp(isNew) {
   updateAll();
   boot.classList.add('gone');
   if (isNew || !store_ls.get('flowmap.seenHelp', false)) { store_ls.set('flowmap.seenHelp', true); setTimeout(openHelp, 400); }
+  else if (renderer.replay) { maybeMorningReplay(); maybeWeekReview(); }
   if (sound.enabled && currentAlerts().some((a) => a.level === 'critical')) setTimeout(sfx.alarm, 700);
 }
 
@@ -213,13 +214,13 @@ function buildLegend() {
   clear($('legend')).append(row('money', '· TZS'), row('attention', '· views'), row('customers', '· paying users'), row('progress', '· speed-ups'));
 }
 function buildZoom() {
-  clear($('zoom')).append(
+  clear($('zoom')).append(...[
     h('button', { class: 'btn', title: 'Zoom in', 'aria-label': 'Zoom in', onclick: () => renderer.zoomBy(1.25) }, '＋'),
     h('button', { class: 'btn', title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => renderer.zoomBy(0.8) }, '－'),
-    renderer.is3d ? h('button', { class: 'btn', title: 'Rotate the view', 'aria-label': 'Rotate the view', onclick: () => renderer.rotateBy(Math.PI / 4) }, '⟳') : null,
-    renderer.is3d ? h('button', { class: 'btn', title: 'Switch between tilted and top-down view', 'aria-label': 'Tilt the view', onclick: () => renderer.toggleTilt() }, '◩') : null,
     h('button', { class: 'btn', title: 'Fit everything', 'aria-label': 'Fit everything', onclick: () => renderer.fit() }, '⤢'),
-    h('button', { class: 'btn', title: 'Full screen (F)', 'aria-label': 'Full screen', onclick: () => toggleImmersive() }, '⛶'));
+    h('button', { class: 'btn', title: 'Full screen (F)', 'aria-label': 'Full screen', onclick: () => toggleImmersive() }, '⛶'),
+    renderer.is3d ? h('button', { class: 'btn', title: 'View: tidy up, areas, rotate, replay, week', 'aria-label': 'More view options', onclick: (e) => openViewMenu(e.currentTarget) }, '⋯') : null,
+  ].filter(Boolean));
 }
 
 // ---------- tooltip ----------

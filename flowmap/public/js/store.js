@@ -137,6 +137,10 @@ export function moveProject(id, x, y) {
   p.x = x; p.y = y;
   persistPos(id, x, y);
 }
+// several projects at once (tidy layout, undo); positions are already set locally by the caller
+export const savePositions = (list) => guard(async () => {
+  await Promise.all(list.map(({ id, x, y }) => patch(`/api/projects/${id}`, { x, y })));
+});
 export const deleteProject = (id) => guard(async () => {
   await del(`/api/projects/${id}`);
   const w = S.world;

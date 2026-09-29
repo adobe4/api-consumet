@@ -4,6 +4,7 @@
 import { simulate, alerts, suggestions, KIND_KEYS, RESOURCE_KEYS, TASK_TYPES, KINDS, addDays } from '../shared/engine.js';
 import { RES, HttpError, fromRow, toCols, readWorld, insertSql, ownedProjectIds } from './models.js';
 import { scanAll, scanProject, dayIn } from './sync.js';
+import { goalProgress, groupOf } from '../shared/goals.js';
 
 const round = (n, d = 0) => (Number.isFinite(n) ? Math.round(n * 10 ** d) / 10 ** d : null);
 const PROJECT_ARG = { type: 'string', description: 'Project id or name' };
@@ -63,6 +64,8 @@ async function overview(ctx) {
         health: round(s.health), status: s.status, needsActionEveryDays: s.cadence, daysSinceLastAction: s.lastAction ? s.daysSince : null,
         moneyPerDay: round(s.money), attentionPerDay: round(s.attention), customersPerDay: round(s.customers, 2), costPerDay: round(s.cost),
         channels: (p.sources || []).map((x) => x.url), scans: scanFor(p.id),
+        area: groupOf(p),
+        goal: (() => { const g = goalProgress(p, { logs: world.logs, scans: world.scans, day: s, today }); return g && { metric: g.metric, target: g.target, by: g.by, current: g.current === null ? null : round(g.current), progressPct: round(g.frac * 100), needPerDay: g.perDayNeeded === null ? undefined : round(g.perDayNeeded, 1) }; })() || undefined,
       };
     }),
     pipes: world.links.map((l) => ({ id: l.id, from: name(l.from), to: name(l.to), resource: l.resource, share: l.share, flowPerDay: round(now.links[l.id]?.amount, 1), monthlyCost: l.cost, delayDays: l.delay })),
@@ -118,7 +121,7 @@ export const TOOLS = [
       if (a.status === 'todo') patch.doneOn = null;
       return { updated: await updateRow(db, uid, 'tasks', a.task_id, patch) };
     } },
-  { name: 'adjust_project', description: 'Tune a project so the simulation matches reality: its run-rate settings (cfg: viewsPerDay, rpm, price, activeCustomers, newPerDay, churnPct, conversionPer1000, cadenceDays...), monthlyCost or note. Always give a reason; it is shown to the owner.',
+  { name: 'adjust_project', description: 'Tune a project so the simulation matches reality: its run-rate settings (cfg: viewsPerDay, rpm, price, activeCustomers, newPerDay, churnPct, conversionPer1000, cadenceDays...), monthlyCost or note. cfg.goal = { metric: "subscribers" | "money_month" | "customers" | "views_month", target: number, by: "YYYY-MM-DD" } sets the goal ring; cfg.group = "Channels" puts it in an area on the map. Always give a reason; it is shown to the owner.',
     input_schema: { type: 'object', properties: { project: PROJECT_ARG, cfg: { type: 'object', description: 'Only the keys to change' }, monthlyCost: { type: 'number' }, note: { type: 'string' }, reason: { type: 'string' } }, required: ['project', 'reason'] },
     run: async ({ db, uid, source }, a) => {
       const p = await findProject(db, uid, a.project);

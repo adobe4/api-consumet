@@ -4,6 +4,7 @@ import { S, snap, project, projects, nameOf, addProject, updateProject, deletePr
   addTask, updateTask, deleteTask, completeTask, notify, hasSample, clearSample, resetWorld, importWorld, exportWorld, scanProject, saveSecrets } from './store.js';
 import { KINDS, KIND_KEYS, RESOURCES, TASK_TYPES, CHANNELS, cfgOf, configBase } from '/shared/engine.js';
 import { PLATFORMS, normalizeSources } from '/shared/sources.js';
+import { GOAL_METRICS, DEFAULT_GROUP, groupOf } from '/shared/goals.js';
 import { openModal, closeAllModals, confirmDialog, field, numInput, chipGroup, feelPicker, emojiPicker, resourcePicker, select } from './ui-common.js';
 import { api, auth, patch, post } from './api.js';
 import { sfx, sound } from './audio.js';
@@ -28,7 +29,7 @@ export function openProjectEditor(id, opts = {}) {
   const kindDefaults = (k) => ({ ...KINDS[k].defaults, cadenceDays: KINDS[k].cadenceDays });
   const startKind = existing?.kind || opts.kind || 'youtube';
   const d = existing
-    ? { name: existing.name, kind: existing.kind, icon: existing.icon, color: existing.color, monthlyCost: existing.monthlyCost, note: existing.note, cfg: { ...cfgOf(existing) }, links: (existing.sources || []).map((s) => s.url).join('\n') }
+    ? { name: existing.name, kind: existing.kind, icon: existing.icon, color: existing.color, monthlyCost: existing.monthlyCost, note: existing.note, cfg: structuredClone(cfgOf(existing)), links: (existing.sources || []).map((s) => s.url).join('\n') }
     : { name: '', kind: startKind, icon: '', color: '', monthlyCost: 0, note: '', cfg: kindDefaults(startKind), links: '' };
 
   // channel links: one per line, platform detected as you type
@@ -83,6 +84,19 @@ export function openProjectEditor(id, opts = {}) {
     showPreview();
   };
 
+  // goal: what "winning" means for this project, shown as a gold ring around the tank
+  const goalHost = h('div');
+  const paintGoal = () => {
+    const g = d.cfg.goal || {};
+    clear(goalHost).append(h('div', { class: 'grid2' },
+      field('Goal', select([{ value: '', label: 'No goal' }, ...Object.entries(GOAL_METRICS).map(([value, m]) => ({ value, label: m.label }))], g.metric || '', (v) => {
+        d.cfg.goal = v ? { ...(d.cfg.goal || {}), metric: v } : undefined;
+        if (!v) delete d.cfg.goal;
+        paintGoal();
+      })),
+      g.metric ? field('Target', numInput(g.target, (v) => { d.cfg.goal.target = v ?? 0; }, { min: 0 }), g.metric === 'subscribers' ? 'Read from your channel link scans.' : g.metric === 'customers' ? 'Paying customers at the same time.' : 'Measured over the last 30 days.') : h('div')),
+    g.metric ? field('Reach it by (optional)', h('input', { id: 'p-goal-by', type: 'date', value: g.by || '', oninput: (e) => { d.cfg.goal.by = e.target.value || undefined; } }), 'With a date, FlowMap shows the pace you need per day.') : null);
+  };
   const iconHost = h('div');
   const paintIcons = () => { clear(iconHost).append(emojiPicker(ICONS, d.icon || KINDS[d.kind].icon, (e) => { d.icon = e; })); };
   const colorHost = h('div');
@@ -95,7 +109,11 @@ export function openProjectEditor(id, opts = {}) {
   const kindHost = h('div');
   const paintKind = () => clear(kindHost).append(chipGroup(KIND_KEYS.map((k) => ({ value: k, label: `${KINDS[k].icon} ${KINDS[k].label}` })), d.kind, (k) => {
     d.kind = k;
-    d.cfg = existing ? { ...kindDefaults(k), ...d.cfg } : kindDefaults(k);
+    const keep = { goal: d.cfg.goal, group: d.cfg.group };
+    d.cfg = existing ? { ...kindDefaults(k), ...d.cfg } : { ...kindDefaults(k), ...keep };
+    if (!d.cfg.goal) delete d.cfg.goal;
+    const gi = document.getElementById('p-group');
+    if (gi) gi.placeholder = DEFAULT_GROUP[k] || 'Other';
     if (!existing && !d.icon) d.icon = '';
     renderCfg(); paintIcons();
   }));
@@ -117,9 +135,15 @@ export function openProjectEditor(id, opts = {}) {
     h('div', { class: 'grid2' },
       field('Needs a post / action every (days)', numInput(d.cfg.cadenceDays, (v) => { d.cfg.cadenceDays = Math.max(1, v ?? 1); }, { min: 1, max: 90 }), 'Miss this rhythm and the project starts to dry out.'),
       field('Monthly cost (TZS)', numInput(d.monthlyCost, (v) => { d.monthlyCost = v ?? 0; }, { min: 0 }), 'Tools, servers, subscriptions, ad budget.')),
+    h('div', { class: 'sec' }, 'Goal & area'),
+    goalHost,
+    field('Area on the map', h('div', null,
+      h('input', { id: 'p-group', type: 'text', maxLength: 30, list: 'p-groups', value: d.cfg.group || '', placeholder: DEFAULT_GROUP[d.kind] || 'Other', oninput: (e) => { d.cfg.group = e.target.value.trim(); } }),
+      h('datalist', { id: 'p-groups' }, [...new Set(projects().map(groupOf))].map((g) => h('option', { value: g })))),
+    'Projects in the same area are grouped on the map. Leave empty to group by type.'),
     field('Notes', h('textarea', { maxLength: 600, oninput: (e) => { d.note = e.target.value; } }, d.note || '')),
   );
-  paintKind(); paintIcons(); paintColors(); renderCfg(); paintLinks();
+  paintKind(); paintIcons(); paintColors(); renderCfg(); paintLinks(); paintGoal();
 
   const actions = [];
   if (existing) actions.push({ label: 'Delete', kind: 'danger', onClick: async () => {
@@ -312,6 +336,9 @@ export function openHelp() {
       ex('🟢', 'Read a tank at a glance', 'The ring on the floor around each tank is its health: it fills like a progress ring and turns green, yellow, orange or red. Hover or tap a tank for its numbers.'),
       ex('🖐️', 'Moving around', 'Drag to move the map. Pinch or use the mouse wheel to zoom. On a trackpad or phone, two fingers moving together also move the map. Twist two fingers, right-drag, or use ⟳ to rotate; ◩ switches to a top-down view; ⛶ (or the F key) goes full screen.'),
       ex('👆', 'Do things right on the map', 'Right-click (or press and hold on a phone) a tank, a pipe or empty ground for a menu: water a project, plan a task, draw a pipe, scan channels or add a project exactly there. A selected tank shows quick buttons too.'),
+      ex('🎯', 'Goals', 'Give a project a goal (followers, money per month, customers or views per month) in its settings. A gold ring around the tank fills as you get closer, and with a deadline FlowMap shows the pace you need per day.'),
+      ex('▦', 'Areas and tidy up', 'Tanks are grouped into areas (Channels, Apps & sites, Sales, or your own names) with a soft zone on the floor. ⋯ → Tidy up arranges everything so pipes cross as little as possible; you can undo it.'),
+      ex('☀️', 'Mornings and weeks', 'On your first visit each day the map replays what changed since yesterday. On Sundays you get a week in review with a score for how well you kept every project watered. Light on the map follows your time of day.'),
       ex('✅', 'Today card', 'Bottom-left: today\'s and overdue tasks with checkboxes, how many you finished, and your streak of days with real work. Tick a task and its tank splashes.'),
       ex('🔗', 'Channel links scan themselves', 'Add your YouTube, TikTok, website or Play Store links to a project. FlowMap reads them every morning: new uploads count as posts and view growth becomes attention, so you log less by hand.'),
       ex('🧠', 'An AI brain', 'Connect Claude, ChatGPT or another AI agent, or give FlowMap your own AI key. The brain reads the whole system, fixes numbers that look wrong, writes notes and gives you concrete tasks. Set it up with the 🧠 button.'),
