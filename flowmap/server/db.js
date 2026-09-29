@@ -160,16 +160,20 @@ export async function openDb({ url, authToken, dataDir } = {}) {
   const { createClient } = url.startsWith('file:') ? await import('@libsql/client') : await import('@libsql/client/web');
   const client = createClient({ url, authToken });
   const db = new Db(client);
-  const { user_version: v } = await db.get('PRAGMA user_version');
+  // Turso does not allow setting PRAGMA user_version, so the schema version lives in a table
+  await client.execute('CREATE TABLE IF NOT EXISTS flowmap_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  const v = Number((await db.get("SELECT value FROM flowmap_meta WHERE key = 'schema'"))?.value || 0);
   if (v < VERSION) {
     await client.executeMultiple(SCHEMA);
     for (const [table, col, def] of ADDED) {
-      const cols = await db.all(`PRAGMA table_info(${table})`);
-      if (!cols.some((c) => c.name === col)) await client.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      // already there on databases created with the current schema
+      await client.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`).catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
     }
-    await client.execute(`PRAGMA user_version = ${VERSION}`);
+    await db.run("INSERT OR REPLACE INTO flowmap_meta (key, value) VALUES ('schema', ?)", String(VERSION));
   }
-  if (url.startsWith('file:')) await client.execute('PRAGMA journal_mode = WAL').catch(() => {});
-  await client.execute('PRAGMA foreign_keys = ON');
+  if (url.startsWith('file:')) {
+    await client.execute('PRAGMA journal_mode = WAL').catch(() => {});
+    await client.execute('PRAGMA foreign_keys = ON').catch(() => {});
+  }
   return db;
 }
