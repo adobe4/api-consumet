@@ -183,12 +183,21 @@ function updateTicker() {
   clear(host);
   if (hintText) host.append(h('div', { class: 'tool-hint' }, hintText, ' ', h('button', { class: 'btn sm', style: 'margin-left:8px', onclick: () => setTool(null) }, 'Cancel')));
   const a = currentAlerts().find((x) => x.level === 'critical') || currentAlerts().find((x) => x.level === 'warn' && x.projectId);
-  if (a && !hintText) {
+  // minimized alerts stay small for the rest of the day; a different alert still shows in full
+  const min = store_ls.get('flowmap.tickerMin', null);
+  const minimized = a && min && min.id === a.id && min.day === S.today;
+  const setMin = (on) => { store_ls.set('flowmap.tickerMin', on ? { id: a.id, day: S.today } : null); updateTicker(); };
+  if (a && !hintText && minimized) {
+    const others = currentAlerts().filter((x) => x.level === 'critical' || x.level === 'warn').length;
+    host.append(h('button', { type: 'button', class: `ticker-pill${a.level === 'warn' ? ' warn' : ''}`, title: 'Show the alert', onclick: () => setMin(false) },
+      a.level === 'critical' ? '🚨 ' : '⚠️ ', a.title, others > 1 ? h('span', { class: 'n' }, `+${others - 1}`) : null));
+  } else if (a && !hintText) {
     host.append(h('div', { class: `ticker${a.level === 'warn' ? ' warn' : ''}`, role: 'alert' },
       h('span', { style: 'font-size:22px' }, a.level === 'critical' ? '🚨' : '⚠️'),
       h('div', { class: 'txt' }, h('b', null, a.title), h('span', null, a.detail)),
       a.action?.type === 'water' ? h('button', { class: 'btn sm primary', onclick: () => openActionDialog({ projectId: a.projectId }) }, '💧 Water') : null,
-      a.projectId ? h('button', { class: 'btn sm', onclick: () => { select({ type: 'project', id: a.projectId }); } }, 'Show') : null));
+      a.projectId ? h('button', { class: 'btn sm', onclick: () => { select({ type: 'project', id: a.projectId }); } }, 'Show') : null,
+      h('button', { type: 'button', class: 'ticker-x', title: 'Minimize', 'aria-label': 'Minimize this alert', onclick: () => setMin(true) }, '✕')));
   }
 }
 function updateBanner() {
