@@ -334,13 +334,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 
 /* area names written on the floor */
 .zone3d { position: absolute; left: 0; top: 0; font-size: 11px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.55; white-space: nowrap; pointer-events: none; text-shadow: 0 1px 3px #000; }
-/* garden: a little wooden sign on a stake names each bed */
-.garden-sign { position: absolute; left: 0; top: 0; padding: 3px 10px 4px; border-radius: 5px; background: linear-gradient(#b98553, #9c6c40); color: #fff7e8; font-size: 10.5px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; pointer-events: none; box-shadow: 0 3px 8px rgba(40, 24, 10, 0.3), inset 0 1px 0 rgba(255, 235, 200, 0.35); will-change: transform; }
-.garden-sign { transform-origin: 50% 50%; }
-.tank3d.compact:not(.sel):not(.hov) .nm { display: none; }
-.tank3d.compact:not(.sel):not(.hov) .card { padding-right: 8px; gap: 5px; }
-.garden-sign::after { content: ''; position: absolute; left: 50%; top: 100%; width: 3px; height: 12px; margin-left: -1.5px; background: #86573a; border-radius: 0 0 2px 2px; }
-:root[data-theme="dark"] .garden-sign { background: linear-gradient(#7a5534, #664528); color: #ffe9c8; opacity: 0.9; }
 
 /* "since yesterday" replay card */
 .replay-card { position: absolute; top: 76px; right: 12px; z-index: 7; width: min(330px, calc(100% - 24px)); padding: 12px; border-radius: 16px; background: rgba(var(--paper), 0.96); border: 1px solid var(--line-strong); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5); display: grid; gap: 8px; animation: rise 0.25s; }
@@ -493,3 +486,42 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   .future-banner { top: 56px; }
 }
 @media (prefers-reduced-motion: reduce) { .ticker, .boot-orb { animation: none; } }
+
+/* ---------- Studio map style: rings, ribbons and crisp type ---------- */
+.studio-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; --halo: 246, 243, 238; --st-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, system-ui, sans-serif; }
+:root:not([data-theme="light"]) .studio-labels { --halo: 15, 15, 14; }
+.st-node { position: absolute; left: 0; top: 0; width: 0; height: 0; will-change: transform; transition: opacity 0.3s; font-family: var(--st-font); }
+.st-node.dim { opacity: 0.35; }
+.st-node .under { position: absolute; left: 0; top: calc(var(--r, 40px) + 12px); transform: translateX(-50%); display: grid; justify-items: center; gap: 1px; white-space: nowrap; text-align: center; pointer-events: auto; cursor: pointer;
+  text-shadow: 0 0 2px rgb(var(--halo)), 0 0 4px rgb(var(--halo)), 0 0 8px rgb(var(--halo)); }
+.st-node .nm { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; color: var(--strong); line-height: 1.3; }
+.st-node .sub { font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; line-height: 1.35; }
+.st-node .sub .pct { font-weight: 700; margin-right: 6px; }
+.st-node .sub .num:empty { display: none; }
+.st-node .need { margin-top: 5px; padding: 3px 10px; border: 0; border-radius: 999px; background: #f0392b; color: #fff; font: 600 11px var(--st-font); cursor: pointer; text-shadow: none; box-shadow: 0 4px 12px rgba(240, 57, 43, 0.3); }
+.st-node.compact:not(.sel):not(.hov) .sub { display: none; }
+.st-node.sel .under .need { display: none; }
+.st-node .pop { display: none; position: absolute; left: 0; bottom: calc(var(--r, 40px) + 14px); transform: translateX(-50%); width: max-content; min-width: 268px; max-width: 320px; padding: 14px; gap: 12px;
+  border-radius: 20px; background: rgba(var(--paper), 0.9); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); border: 1px solid var(--line);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 16px 44px rgba(40, 25, 10, 0.2); pointer-events: auto; text-align: left; transform-origin: 50% 100%; animation: st-pop 0.28s cubic-bezier(0.2, 0.9, 0.25, 1.15); }
+.st-node.sel .pop { display: grid; }
+@keyframes st-pop { from { opacity: 0; transform: translateX(-50%) translateY(6px) scale(0.94); } }
+.st-node .ph { display: flex; align-items: center; gap: 11px; }
+.st-node .ic { width: 38px; height: 38px; flex: none; display: grid; place-items: center; font-size: 20px; border-radius: 11px; background: rgba(var(--ink), 0.06); }
+.st-node .pn { font-size: 15px; font-weight: 700; letter-spacing: -0.015em; color: var(--strong); }
+.st-node .ps { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.st-node .ps::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--st); margin-right: 6px; vertical-align: 1px; }
+.st-node .pnums { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 10px 12px; }
+.st-node .pnums div { display: grid; gap: 1px; }
+.st-node .pnums b { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.st-node .pnums small { font-size: 10.5px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+.st-node .pgoal { font-size: 12px; font-weight: 600; color: var(--gold); }
+.st-node .acts { display: grid; grid-template-columns: 1.35fr 1fr 1.1fr 0.9fr; gap: 6px; }
+.st-node .acts button { border: 0; border-radius: 11px; padding: 8px 4px; font: 600 12px var(--st-font); white-space: nowrap; background: rgba(var(--ink), 0.07); color: var(--text); cursor: pointer; transition: background 0.15s, transform 0.1s; }
+.st-node .acts button:hover { background: rgba(var(--ink), 0.12); }
+.st-node .acts button:active { transform: scale(0.96); }
+.st-node .acts button:first-child { background: #1d1b19; color: #fff; }
+:root:not([data-theme="light"]) .st-node .acts button:first-child { background: #f5f2ed; color: #1d1b19; }
+.st-node button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.st-pipe { position: absolute; left: 0; top: 0; padding: 4px 10px; border-radius: 999px; font: 600 11.5px var(--st-font, system-ui); color: var(--strong); background: rgba(var(--paper), 0.92); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); border: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.st-pipe::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: 0; }

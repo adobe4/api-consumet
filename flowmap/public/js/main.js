@@ -38,10 +38,10 @@ async function logout() {
 }
 setUnauthorizedHandler(() => { closeAllModals(); logout(); });
 
-// The garden is plain Canvas 2D. The glass tanks need WebGL 2; older devices get the flat map.
+// Studio is plain Canvas 2D. The glass tanks need WebGL 2; older devices get the flat map.
 async function makeRenderer(canvas, hooks) {
-  if (getMapStyle() === 'garden') {
-    try { return (await import('./garden.js')).createRenderer(canvas, hooks); } catch (e) { console.warn('Garden unavailable', e); }
+  if (getMapStyle() === 'studio') {
+    try { return (await import('./studio.js')).createRenderer(canvas, hooks); } catch (e) { console.warn('Studio view unavailable', e); }
   }
   try {
     const m = await import('./renderer3d.js');
@@ -134,7 +134,7 @@ async function switchMapStyle() {
     requestAnimationFrame(() => { renderer.resize(); if (renderer.intro) renderer.intro(); else renderer.fit({ animate: false }); });
     const s = S.selection;
     if (s?.type === 'project') setTimeout(() => renderer.focus(s.id), 900);
-    toast(renderer.kind === 'garden' ? '🌱 Garden view' : renderer.is3d ? '🫧 Glass tanks view' : 'Flat map view', 'info');
+    toast(renderer.kind === 'studio' ? '◎ Studio view' : renderer.is3d ? '🫧 Glass tanks view' : 'Flat map view', 'info');
   } finally { switching = false; }
 }
 
@@ -254,7 +254,6 @@ function updateEmpty() {
 const LEGEND_TEXT = { money: '· TZS', attention: '· views', customers: '· paying users', progress: '· speed-ups' };
 function buildLegend() {
   const row = (k, name) => h('div', null, h('i', { class: 'dot', style: { background: RESOURCES[k].color, color: RESOURCES[k].color } }), h('b', null, name || RESOURCES[k].label), ` ${LEGEND_TEXT[k]}`);
-  // the garden names its own messengers (bees carry views, butterflies carry customers…)
   const rows = renderer?.legend ? renderer.legend.map(([k, name]) => row(k, name)) : ['money', 'attention', 'customers', 'progress'].map((k) => row(k));
   clear($('legend')).append(...rows);
 }
