@@ -38,10 +38,10 @@ async function logout() {
 }
 setUnauthorizedHandler(() => { closeAllModals(); logout(); });
 
-// Studio is plain Canvas 2D. The glass tanks need WebGL 2; older devices get the flat map.
+// The River is plain Canvas 2D. The glass tanks need WebGL 2; older devices get the flat map.
 async function makeRenderer(canvas, hooks) {
-  if (getMapStyle() === 'studio') {
-    try { return (await import('./studio.js')).createRenderer(canvas, hooks); } catch (e) { console.warn('Studio view unavailable', e); }
+  if (getMapStyle() === 'river') {
+    try { return (await import('./river.js')).createRenderer(canvas, hooks); } catch (e) { console.warn('River view unavailable', e); }
   }
   try {
     const m = await import('./renderer3d.js');
@@ -134,7 +134,7 @@ async function switchMapStyle() {
     requestAnimationFrame(() => { renderer.resize(); if (renderer.intro) renderer.intro(); else renderer.fit({ animate: false }); });
     const s = S.selection;
     if (s?.type === 'project') setTimeout(() => renderer.focus(s.id), 900);
-    toast(renderer.kind === 'studio' ? '◎ Studio view' : renderer.is3d ? '🫧 Glass tanks view' : 'Flat map view', 'info');
+    toast(renderer.kind === 'river' ? '〰️ River view' : renderer.is3d ? '🫧 Glass tanks view' : 'Flat map view', 'info');
   } finally { switching = false; }
 }
 

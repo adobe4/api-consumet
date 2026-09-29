@@ -70,11 +70,11 @@ export function openViewMenu(anchor) {
   const zonesOn = store_ls.get('flowmap.zones', true);
   const rd = ctx.renderer;
   showMenu('View', [
-    getMapStyle() === 'studio'
+    getMapStyle() === 'river'
       ? item('🫧', 'Switch to glass tanks', () => setMapStyle('tanks'))
-      : item('◎', 'Switch to Studio (flat)', () => setMapStyle('studio')),
-    item('✨', 'Tidy up the layout', () => tidy(), 'primary'),
-    item('▦', zonesOn ? 'Hide areas' : 'Show areas', () => setZones(!zonesOn)),
+      : item('〰️', 'Switch to the River', () => setMapStyle('river')),
+    rd.autoLayout ? null : item('✨', 'Tidy up the layout', () => tidy(), 'primary'),
+    rd.autoLayout ? null : item('▦', zonesOn ? 'Hide areas' : 'Show areas', () => setZones(!zonesOn)),
     window.flowmapTheme ? (window.flowmapTheme.current === 'light'
       ? item('🌙', 'Dark mode', () => window.flowmapTheme.set('dark'))
       : item('☀️', 'Light mode', () => window.flowmapTheme.set('light'))) : null,
