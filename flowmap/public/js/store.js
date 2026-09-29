@@ -1,6 +1,6 @@
 // Application state, the simulation cache and every mutation (optimistic, then synced to the server).
 import { simulate, alerts, suggestions, localToday, addDays } from '/shared/engine.js';
-import { get, post, patch, del } from './api.js';
+import { api, get, post, patch, del } from './api.js';
 import { debounce } from './util.js';
 
 const HORIZON = 120;
@@ -31,6 +31,35 @@ export function recompute() {
 }
 
 export const snap = (offset = S.offset) => S.sim.days[Math.min(Math.max(0, offset), HORIZON)];
+
+// How far through today we are (0 at midnight, 1 at the next midnight), in the viewer's own clock.
+export function dayFraction(now = new Date()) {
+  const m = new Date(now);
+  m.setHours(0, 0, 0, 0);
+  return Math.min(1, Math.max(0, (now - m) / 86400000));
+}
+// The map runs on the real clock: through the day, today's state slides toward tomorrow's, so a project you
+// leave alone visibly drains a little by evening. In the future view, days are shown as simulated.
+let liveCache = { key: '', at: 0, value: null };
+export function liveSnap() {
+  if (S.offset > 0) return snap();
+  const now = Date.now();
+  const key = `${S.version}:${S.scenario}`;
+  if (liveCache.key === key && now - liveCache.at < 2000) return liveCache.value;
+  // drift toward "nothing else happens today", never toward tasks that are only planned
+  memo.idle ||= simulate(S.world, { today: S.today, horizon: 1, scenario: 'stop' });
+  const a = S.sim.days[0], b = memo.idle.days[1] || a, f = dayFraction();
+  const mix = (x, y, keys) => { const o = { ...x }; for (const k of keys) if (typeof x[k] === 'number' && typeof y?.[k] === 'number') o[k] = x[k] + (y[k] - x[k]) * f; return o; };
+  const PK = ['health', 'money', 'attention', 'customers', 'flow', 'boost', 'cost', 'profit'];
+  const value = {
+    ...a,
+    projects: Object.fromEntries(Object.entries(a.projects).map(([id, p]) => [id, mix(p, b.projects[id], PK)])),
+    links: Object.fromEntries(Object.entries(a.links).map(([id, l]) => [id, mix(l, b.links[id], ['amount', 'boost', 'norm', 'speed'])])),
+    totals: mix(a.totals, b.totals, ['money', 'cost', 'attention', 'customers', 'health', 'profit']),
+  };
+  liveCache = { key, at: now, value };
+  return value;
+}
 export const HORIZON_DAYS = HORIZON;
 export const project = (id) => S.world.projects.find((p) => p.id === id);
 export const nameOf = (id) => project(id)?.name || 'Unknown';
@@ -48,10 +77,15 @@ export function scenarios() {
     [sc, sc === S.scenario ? S.sim : simulate(S.world, { today: S.today, horizon: HORIZON, scenario: sc })])));
 }
 
+const pickWorld = (w) => ({ projects: w.projects, links: w.links, tasks: w.tasks, logs: w.logs, notes: w.notes || [], scans: w.scans || [] });
+
 export async function loadAll() {
   const w = await get('/api/world');
   S.user = w.user;
-  S.world = { projects: w.projects, links: w.links, tasks: w.tasks, logs: w.logs };
+  S.world = pickWorld(w);
+  // keep the server's idea of "today" (used by scans and the daily AI) in the owner's time zone
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (tz && S.user.settings?.tz !== tz) patch('/api/me', { settings: { tz } }).then((r) => { S.user = r.user; }).catch(() => {});
   S.today = localToday();
   S.selection = null;
   S.offset = 0;
@@ -60,7 +94,7 @@ export async function loadAll() {
 }
 export function resetLocal() {
   S.user = null;
-  S.world = { projects: [], links: [], tasks: [], logs: [] };
+  S.world = { projects: [], links: [], tasks: [], logs: [], notes: [], scans: [] };
   S.sim = null;
   S.selection = null;
 }
@@ -180,12 +214,12 @@ export const spreadMonth = (body) => guard(async () => {
 
 export const clearSample = () => guard(async () => {
   const w = await post('/api/world/clear-sample');
-  S.world = { projects: w.projects, links: w.links, tasks: w.tasks, logs: w.logs };
+  S.world = pickWorld(w);
   changed();
 });
 export const resetWorld = (template) => guard(async () => {
   const w = await post('/api/world/reset', { template, today: S.today });
-  S.world = { projects: w.projects, links: w.links, tasks: w.tasks, logs: w.logs };
+  S.world = pickWorld(w);
   S.selection = null;
   changed();
   emit('selection');
@@ -193,7 +227,7 @@ export const resetWorld = (template) => guard(async () => {
 });
 export const importWorld = (world) => guard(async () => {
   const w = await post('/api/world/import', { world, replace: true });
-  S.world = { projects: w.projects, links: w.links, tasks: w.tasks, logs: w.logs };
+  S.world = pickWorld(w);
   S.selection = null;
   changed();
   emit('selection');
@@ -201,6 +235,43 @@ export const importWorld = (world) => guard(async () => {
   return true;
 });
 export const exportWorld = () => get('/api/world/export');
+
+// ---------- channels, AI brain, agents ----------
+const absorbWorld = (w) => { S.world = { ...pickWorld(w) }; changed(); };
+export const scanProject = (id) => guard(async () => {
+  const r = await post(`/api/projects/${id}/scan`);
+  absorbWorld(r.world);
+  return r.results;
+});
+export const scanAllChannels = () => guard(async () => {
+  const r = await post('/api/scan');
+  absorbWorld(r.world);
+  return r.results;
+});
+// no guard: the caller shows the provider's error next to the button
+export async function runBrain() {
+  const r = await post('/api/brain/run');
+  absorbWorld(r.world);
+  return r;
+}
+export const dismissNote = (id) => guard(async () => {
+  S.world.notes = S.world.notes.filter((n) => n.id !== id);
+  emit('world');
+  await del(`/api/notes/${id}`);
+});
+export async function saveSettings(settings) {
+  const r = await patch('/api/me', { settings });
+  S.user = r.user;
+  return r.user;
+}
+export async function saveSecrets(secrets) {
+  const r = await api('PUT', '/api/me/secrets', secrets);
+  S.user = r.user;
+  return r.user;
+}
+export const listAgentKeys = () => get('/api/agent-keys');
+export const createAgentKey = (name) => post('/api/agent-keys', { name });
+export const deleteAgentKey = (id) => del(`/api/agent-keys/${id}`);
 
 export const hasSample = () => S.world.tasks.some((t) => t.sample) || S.world.logs.some((l) => l.sample);
 export const logFor = (projectId, day) => S.world.logs.find((l) => l.projectId === projectId && l.day === day);

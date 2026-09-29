@@ -126,7 +126,8 @@ export function buildContext(world, { today, scenario = 'planned' }) {
       actions.get(t.projectId).push(dn);
       pushPulse(t, dn, false);
     } else if (t.status !== 'done' && scenario !== 'stop' && t.due) {
-      const dn = Math.max(dayNum(t.due), todayN);
+      // today shows only what really happened; an unfinished task (even one due today) counts from tomorrow
+      const dn = Math.max(dayNum(t.due), todayN + 1);
       actions.get(t.projectId).push(dn);
       pushPulse({ ...t, quality: t.quality || 3 }, dn, true);
     }

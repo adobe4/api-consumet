@@ -1,7 +1,10 @@
 // The side dock: Focus (inspector), Tasks, Check-in, Forecast and Alerts.
 import { h, clear, fmtNum, fmtTZS, fmtDay, relDay, pct, store_ls } from './util.js';
 import { S, snap, project, projects, nameOf, on, select as selectItem, currentAlerts, currentSuggestions, scenarios, HORIZON_DAYS,
-  setOffset, setScenario, saveLogs, spreadMonth, clearSample, hasSample, logFor, addTask, completeTask, reopenTask, updateTask, notify, addDays } from './store.js';
+  setOffset, setScenario, saveLogs, spreadMonth, clearSample, hasSample, logFor, addTask, completeTask, reopenTask, updateTask, notify, addDays,
+  scanProject, scanAllChannels, runBrain, dismissNote } from './store.js';
+import { PLATFORMS } from '/shared/sources.js';
+import { openBrainSettings } from './brain-ui.js';
 import { KINDS, RESOURCES, TASK_TYPES, dayNum } from '/shared/engine.js';
 import { sparkline, feelPicker, field, numInput, select as selectEl } from './ui-common.js';
 import { lineChart } from './charts.js';
@@ -113,6 +116,7 @@ function overview() {
         h('button', { class: 'btn sm', onclick: () => openTaskEditor({ projectId: p.id, type: s.type, title: s.title }) }, '＋ Add as task'),
         h('button', { class: 'btn sm ghost', onclick: () => { selectItem({ type: 'project', id: p.id }); ctrl.renderer?.focus(p.id); } }, 'Open'))));
   }
+  wrap.append(brainFeed());
   wrap.append(h('div', { class: 'h', style: 'margin-top:16px' }, 'Health map'));
   const list = [...projects()].sort((a, b) => sn.projects[a.id].health - sn.projects[b.id].health);
   for (const p of list) {
@@ -124,6 +128,73 @@ function overview() {
   }
   wrap.append(h('div', { class: 'card', style: 'margin-top:14px;color:var(--muted);font-size:12.5px;line-height:1.5' },
     '👆 Click a project to inspect it. Drag to rearrange. Double-click empty space to add a project. Click a pipe to edit what flows through it.'));
+  return wrap;
+}
+
+// ---------- brain feed ----------
+const WHO = { ai: ['🧠', 'AI brain'], scan: ['📡', 'Channel scan'], you: ['🙂', 'You'] };
+const whoOf = (source) => WHO[source] || (source?.startsWith('agent:') ? ['🤖', source.slice(6)] : ['🧠', source || 'AI']);
+const ago = (iso) => {
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+};
+function noteItem(n, withProject = true) {
+  const [icon, who] = whoOf(n.source);
+  const p = n.projectId ? project(n.projectId) : null;
+  return h('div', { class: `note ${n.kind}` },
+    h('span', { class: 'who', title: who }, icon),
+    h('div', null, n.text, h('span', { class: 'meta' }, `${who} · ${ago(n.at)}${withProject && p ? ` · ${p.name}` : ''}`)),
+    h('button', { class: 'x', title: 'Dismiss', 'aria-label': 'Dismiss note', onclick: () => dismissNote(n.id) }, '✕'));
+}
+function brainFeed() {
+  const notes = (S.world.notes || []).slice(0, 8);
+  const hasAi = S.user?.hasAiKey;
+  const busy = h('span', { class: 'hint' });
+  const run = async (btn, fn, label) => {
+    btn.disabled = true; busy.textContent = label;
+    try { await fn(); } catch (e) { notify(e.message, 'error'); }
+    btn.disabled = false; busy.textContent = '';
+  };
+  const hasChannels = projects().some((p) => (p.sources || []).length);
+  return h('div', null,
+    h('div', { class: 'h', style: 'margin-top:16px' }, '🧠 Brain', h('span', { class: 'spacer' }),
+      h('button', { class: 'btn sm ghost', onclick: () => openBrainSettings() }, 'Set up')),
+    h('div', { class: 'row wrap', style: 'margin-bottom:10px' },
+      hasAi ? h('button', { class: 'btn sm primary', onclick: (e) => run(e.currentTarget, async () => { const r = await runBrain(); notify(`Brain: ${r.actions.length} action${r.actions.length === 1 ? '' : 's'}`, 'good'); }, 'Thinking… (up to a minute)') }, '▶ Review my system') : null,
+      hasChannels ? h('button', { class: 'btn sm', onclick: (e) => run(e.currentTarget, async () => { const r = await scanAllChannels(); if (r) notify(`Scanned ${r.length} channel link${r.length === 1 ? '' : 's'}`, 'good'); }, 'Scanning channels…') }, '📡 Scan channels') : null,
+      busy),
+    notes.length ? h('div', { class: 'feed' }, notes.map((n) => noteItem(n)))
+      : h('div', { class: 'card', style: 'color:var(--muted);font-size:12.5px;line-height:1.5' },
+        hasAi || hasChannels ? 'Nothing new yet. Scans and AI reviews will show up here.' : 'Add channel links to your projects so FlowMap can read your real numbers, and connect an AI to get daily tasks. ', !hasAi ? h('button', { class: 'btn sm', onclick: () => openBrainSettings() }, 'Connect an AI') : null));
+}
+
+function channelsBlock(p) {
+  const sources = p.sources || [];
+  const wrap = h('div');
+  wrap.append(h('div', { class: 'h', style: 'margin-top:14px' }, '📡 Channels', h('span', { class: 'spacer' }),
+    sources.length ? h('button', { class: 'btn sm', onclick: async (e) => { e.currentTarget.disabled = true; e.currentTarget.textContent = 'Scanning…'; await scanProject(p.id); } }, 'Scan now') : null,
+    h('button', { class: 'btn sm ghost', onclick: () => openProjectEditor(p.id) }, sources.length ? 'Edit links' : '＋ Add links')));
+  if (!sources.length) { wrap.append(h('div', { class: 'hint' }, 'Add this project\'s YouTube, TikTok or website link and FlowMap reads its posts and views for you.')); return wrap; }
+  for (const src of sources) {
+    const sc = (S.world.scans || []).find((x) => x.projectId === p.id && x.url === src.url);
+    const d = sc?.data || {};
+    const bits = [];
+    if (d.subscribers) bits.push(`${fmtNum(d.subscribers)} subscribers`);
+    if (d.followers) bits.push(`${fmtNum(d.followers)} followers`);
+    if (d.likes) bits.push(`${fmtNum(d.likes)} likes`);
+    if (d.videoCount) bits.push(`${fmtNum(d.videoCount)} videos`);
+    if (d.recent && src.platform !== 'website') bits.push(`${d.recent.filter((v) => Date.now() - Date.parse(v.publishedAt) < 7 * 864e5).length} uploads in 7 days`);
+    if (src.platform === 'website' && sc?.ok) bits.push(`up · ${d.ms} ms`, d.feed ? `${(d.recent || []).length} posts in feed` : 'no RSS feed found');
+    if (d.rating) bits.push(`${d.rating}★`, `${d.installs} installs`);
+    const latest = d.recent?.[0];
+    wrap.append(h('div', { class: 'channel' },
+      h('div', null, `${PLATFORMS[src.platform]?.icon || '🔗'} `, h('a', { href: src.url, target: '_blank', rel: 'noopener noreferrer' }, src.url.replace(/^https?:\/\/(www\.)?/, ''))),
+      sc ? (sc.ok ? h('div', { class: 'stats' }, bits.join(' · ') || 'Read OK') : h('div', { class: 'err' }, sc.error)) : h('div', { class: 'stats' }, 'Not scanned yet'),
+      latest?.title && src.platform === 'youtube' ? h('div', { class: 'stats' }, `Latest: "${latest.title}" · ${fmtNum(latest.views)} views`) : null,
+      sc ? h('div', { class: 'hint' }, `Scanned ${ago(sc.at)}`) : null));
+  }
+  const notes = (S.world.notes || []).filter((n) => n.projectId === p.id && n.source !== 'scan').slice(0, 3);
+  if (notes.length) wrap.append(h('div', { class: 'feed', style: 'margin-top:8px' }, notes.map((n) => noteItem(n, false))));
   return wrap;
 }
 
@@ -161,6 +232,7 @@ function projectInspector(p) {
   const att = money ? null : sparkline(logSeries(p, 'attention'), RESOURCES.attention.color);
   if (money || att) wrap.append(h('div', { class: 'card' }, h('div', { class: 'lbl' }, `Last 14 days · ${money ? 'money' : 'attention'} (from your check-ins)`), money || att));
 
+  wrap.append(channelsBlock(p));
   const incoming = S.world.links.filter((l) => l.to === p.id), outgoing = S.world.links.filter((l) => l.from === p.id);
   const flowRows = (links, dir) => h('div', null, links.map((l) => h('div', { class: 'flow-row', onclick: () => selectItem({ type: 'link', id: l.id }) },
     dot(resColor(l.resource)), h('span', null, dir === 'in' ? `from ${nameOf(l.from)}` : `to ${nameOf(l.to)}`),
@@ -217,7 +289,7 @@ function taskRow(t) {
   return h('div', { class: `item${done ? ' done' : ''}` },
     h('button', { class: `check${done ? ' on' : ''}`, title: done ? 'Reopen' : 'Mark done', onclick: () => (done ? reopenTask(t.id) : openActionDialog({ taskId: t.id })) }, done ? '✓' : ''),
     h('div', { class: 't', onclick: () => openTaskEditor({ id: t.id }), style: 'cursor:pointer' },
-      h('b', null, `${type.icon} ${t.title}`),
+      h('b', null, `${type.icon} ${t.title}`, t.source && t.source !== 'you' ? h('span', { class: 'src-badge', title: t.note || '' }, `${whoOf(t.source)[0]} ${whoOf(t.source)[1]}`) : null),
       h('small', { class: late ? 'late' : '' }, dot(colorOf(p)), ' ', p.name, ' · ', when, t.reward ? ` · 🪙 ${fmtNum(t.reward)}` : '', t.cost ? ` · −${fmtNum(t.cost)}` : '')),
   );
 }

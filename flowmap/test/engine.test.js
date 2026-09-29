@@ -79,3 +79,12 @@ test('links to unknown projects are ignored and empty worlds work', () => {
   const c = buildContext({ projects: [], links: [], tasks: [], logs: [] }, { today: TODAY });
   assert.equal(c.links.length, 0);
 });
+
+test('an unfinished task changes the forecast, never today', () => {
+  const w = world();
+  const before = simulate(w, { today: TODAY, horizon: 3 });
+  w.tasks.push({ id: 'plan', projectId: 'blonxin', title: 'Post a video', type: 'video', status: 'todo', due: TODAY, targets: [] });
+  const after = simulate(w, { today: TODAY, horizon: 3 });
+  assert.equal(after.days[0].projects.blonxin.health, before.days[0].projects.blonxin.health);
+  assert.ok(after.days[2].projects.blonxin.health > before.days[2].projects.blonxin.health + 5);
+});

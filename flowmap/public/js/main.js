@@ -1,14 +1,15 @@
 import { h, clear, fmtNum, fmtTZS, fmtDay, store_ls, pct } from './util.js';
 import { auth, setUnauthorizedHandler } from './api.js';
-import { S, snap, project, projects, on, loadAll, resetLocal, refreshToday, select, setTool, setOffset, setScenario, currentAlerts,
+import { S, snap, liveSnap, dayFraction, project, projects, on, loadAll, resetLocal, refreshToday, select, setTool, setOffset, setScenario, currentAlerts,
   HORIZON_DAYS, resetWorld, moveProject, addDays, hasSample } from './store.js';
 import { RESOURCES, KINDS } from '/shared/engine.js';
-import { createRenderer } from './renderer.js';
+import { createRenderer as createRenderer2d } from './renderer.js';
 import { showAuth, brand } from './auth-ui.js';
 import { initPanels, openTab } from './panels.js';
 import { openProjectEditor, openLinkEditor, openActionDialog, openHelp, openSettings, dialogHooks } from './dialogs.js';
 import { toast, closeAllModals, hasModal } from './ui-common.js';
 import { sfx, sound } from './audio.js';
+import { openBrainSettings } from './brain-ui.js';
 
 const $ = (id) => document.getElementById(id);
 const boot = $('boot'), authEl = $('auth'), appEl = $('app');
@@ -32,10 +33,19 @@ async function logout() {
 }
 setUnauthorizedHandler(() => { closeAllModals(); logout(); });
 
+// The 3D world needs WebGL 2; older devices get the flat map.
+async function makeRenderer(canvas, hooks) {
+  try {
+    const m = await import('./renderer3d.js');
+    if (m.webglAvailable()) return m.createRenderer(canvas, hooks);
+  } catch (e) { console.warn('3D map unavailable, using the flat map', e); }
+  return createRenderer2d(canvas, hooks);
+}
+
 async function enterApp(isNew) {
   await loadAll();
   appEl.hidden = false;
-  if (!built) { built = true; buildApp(); }
+  if (!built) { built = true; await buildApp(); }
   requestAnimationFrame(() => { renderer.resize(); renderer.fit({ animate: false }); });
   updateAll();
   boot.classList.add('gone');
@@ -52,13 +62,12 @@ async function start() {
 }
 
 // ======================= app shell =======================
-function buildApp() {
+async function buildApp() {
   buildTopbar();
   buildLegend();
-  buildZoom();
   buildTimeline();
 
-  renderer = createRenderer($('map'), {
+  renderer = await makeRenderer($('map'), {
     onSelect: (sel) => { select(sel); if (sel?.type === 'project') hideTip(); },
     onMoved: (id, x, y) => moveProject(id, x, y),
     onHover: showTip,
@@ -67,7 +76,10 @@ function buildApp() {
     onToolHint: (t) => { hintText = t; updateTicker(); },
   });
 
+  window.__flowmapRenderer = renderer; // handy in the browser console, and for automated checks
+  buildZoom();
   initPanels({ dock: $('dock'), tabs: $('tabs'), panel: $('panel') }, { renderer });
+  setInterval(updateLive, 1000);
 
   on('sim', updateAll);
   on('offset', updateAll);
@@ -101,9 +113,9 @@ function updateAll() {
 const hudEls = {};
 function buildTopbar() {
   const stat = (key, cls, label) => {
-    const val = h('b', null, '–'), delta = h('span', { class: 'delta' });
-    hudEls[key] = { val, delta };
-    return h('div', { class: `stat ${cls}` }, h('small', null, label), h('div', { class: 'row', style: 'gap:6px' }, val, delta));
+    const val = h('b', null, '–'), delta = h('span', { class: 'delta' }), sofar = h('span', { class: 'sofar' });
+    hudEls[key] = { val, delta, sofar };
+    return h('div', { class: `stat ${cls}` }, h('small', null, label), h('div', { class: 'row', style: 'gap:6px' }, val, delta), sofar);
   };
   const meterFill = h('i');
   hudEls.meter = meterFill; hudEls.healthVal = h('b', null, '–');
@@ -118,14 +130,27 @@ function buildTopbar() {
       h('button', { class: 'btn primary', onclick: () => openProjectEditor(null) }, '＋', h('span', { class: 'lbl-txt' }, 'Project')),
       linkBtn,
       h('button', { class: 'btn', onclick: () => openTab('checkin') }, '📝', h('span', { class: 'lbl-txt' }, 'Check-in')),
+      h('button', { class: 'btn', title: 'AI brain: connect an AI that gives you tasks', onclick: () => openBrainSettings() }, '🧠', h('span', { class: 'lbl-txt' }, 'Brain')),
       soundBtn,
       h('button', { class: 'btn icon', title: 'How it works', onclick: openHelp }, '❓'),
       h('button', { class: 'btn icon', title: 'Settings & data', onclick: openSettings }, '⚙️')));
 }
 function updateTopbarTool() { $('tool-link')?.classList.toggle('on', S.tool === 'link'); }
 
+// Real-time line under the money and attention stats: how much of today's flow has already come in.
+function updateLive() {
+  if (!S.sim || !hudEls.money) return;
+  const f = dayFraction(), t = snap(0).totals;
+  const line = (key, text) => { hudEls[key].sofar.textContent = S.offset ? '' : text; };
+  line('money', `≈ TZS ${fmtNum(t.money * f)} so far today`);
+  line('attention', `≈ ${fmtNum(t.attention * f)} so far today`);
+  line('customers', '');
+  line('net', '');
+  if (!S.offset) updateHud();
+}
+
 function updateHud() {
-  const t = snap().totals, t0 = snap(0).totals;
+  const t = (S.offset ? snap() : liveSnap()).totals, t0 = snap(0).totals;
   const set = (key, text, now, base, invert) => {
     hudEls[key].val.textContent = text;
     const d = hudEls[key].delta;
@@ -182,9 +207,11 @@ function buildLegend() {
 }
 function buildZoom() {
   clear($('zoom')).append(
-    h('button', { class: 'btn', title: 'Zoom in', onclick: () => renderer.zoomBy(1.25) }, '＋'),
-    h('button', { class: 'btn', title: 'Zoom out', onclick: () => renderer.zoomBy(0.8) }, '－'),
-    h('button', { class: 'btn', title: 'Fit everything', onclick: () => renderer.fit() }, '⤢'));
+    h('button', { class: 'btn', title: 'Zoom in', 'aria-label': 'Zoom in', onclick: () => renderer.zoomBy(1.25) }, '＋'),
+    h('button', { class: 'btn', title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => renderer.zoomBy(0.8) }, '－'),
+    renderer.is3d ? h('button', { class: 'btn', title: 'Rotate the view', 'aria-label': 'Rotate the view', onclick: () => renderer.rotateBy(Math.PI / 4) }, '⟳') : null,
+    renderer.is3d ? h('button', { class: 'btn', title: 'Switch between tilted and top-down view', 'aria-label': 'Tilt the view', onclick: () => renderer.toggleTilt() }, '◩') : null,
+    h('button', { class: 'btn', title: 'Fit everything', 'aria-label': 'Fit everything', onclick: () => renderer.fit() }, '⤢'));
 }
 
 // ---------- tooltip ----------
@@ -224,7 +251,7 @@ function buildTimeline() {
     if (playTimer) { stopPlay(); return; }
     if (S.offset >= 90) setOffset(0);
     tl.play.textContent = '⏸';
-    playTimer = setInterval(() => { if (S.offset >= 90) { stopPlay(); return; } setOffset(S.offset + 1); }, 130);
+    playTimer = setInterval(() => { if (S.offset >= 90) { stopPlay(); return; } setOffset(S.offset + 1); }, 700);
   } }, '▶');
   tl.seg = h('div', { class: 'seg' }, Object.entries(SCEN).map(([k, label]) => h('button', { dataset: { k }, title: k === 'planned' ? 'Only the tasks on your list happen' : k === 'keep' ? 'You keep posting at each project\'s rhythm' : 'Nothing more happens', onclick: () => setScenario(k) }, label)));
   tl.when = h('div', { class: 'when' });

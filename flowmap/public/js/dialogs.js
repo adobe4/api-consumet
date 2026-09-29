@@ -1,8 +1,9 @@
 // Modal dialogs: project / pipe / task editors, the "water it" dialog, help and settings.
 import { h, clear, fmtNum, fmtFull, download, fmtDay } from './util.js';
 import { S, snap, project, projects, nameOf, addProject, updateProject, deleteProject, addLink, updateLink, deleteLink,
-  addTask, updateTask, deleteTask, completeTask, notify, hasSample, clearSample, resetWorld, importWorld, exportWorld } from './store.js';
+  addTask, updateTask, deleteTask, completeTask, notify, hasSample, clearSample, resetWorld, importWorld, exportWorld, scanProject, saveSecrets } from './store.js';
 import { KINDS, KIND_KEYS, RESOURCES, TASK_TYPES, CHANNELS, cfgOf, configBase } from '/shared/engine.js';
+import { PLATFORMS, normalizeSources } from '/shared/sources.js';
 import { openModal, closeAllModals, confirmDialog, field, numInput, chipGroup, feelPicker, emojiPicker, resourcePicker, select } from './ui-common.js';
 import { api, auth, patch, post } from './api.js';
 import { sfx, sound } from './audio.js';
@@ -27,8 +28,24 @@ export function openProjectEditor(id, opts = {}) {
   const kindDefaults = (k) => ({ ...KINDS[k].defaults, cadenceDays: KINDS[k].cadenceDays });
   const startKind = existing?.kind || opts.kind || 'youtube';
   const d = existing
-    ? { name: existing.name, kind: existing.kind, icon: existing.icon, color: existing.color, monthlyCost: existing.monthlyCost, note: existing.note, cfg: { ...cfgOf(existing) } }
-    : { name: '', kind: startKind, icon: '', color: '', monthlyCost: 0, note: '', cfg: kindDefaults(startKind) };
+    ? { name: existing.name, kind: existing.kind, icon: existing.icon, color: existing.color, monthlyCost: existing.monthlyCost, note: existing.note, cfg: { ...cfgOf(existing) }, links: (existing.sources || []).map((s) => s.url).join('\n') }
+    : { name: '', kind: startKind, icon: '', color: '', monthlyCost: 0, note: '', cfg: kindDefaults(startKind), links: '' };
+
+  // channel links: one per line, platform detected as you type
+  const linkPreview = h('div', { class: 'chips' });
+  const readLinks = () => {
+    const out = [], bad = [];
+    for (const line of d.links.split(/\s*\n\s*|\s+/).filter(Boolean)) {
+      try { out.push(...normalizeSources([line])); } catch { bad.push(line); }
+    }
+    return { out, bad };
+  };
+  const paintLinks = () => {
+    const { out, bad } = readLinks();
+    clear(linkPreview).append(
+      ...out.map((s) => h('span', { class: 'chip on', title: PLATFORMS[s.platform].scan }, `${PLATFORMS[s.platform].icon} ${PLATFORMS[s.platform].label}`)),
+      ...bad.map((b) => h('span', { class: 'chip bad' }, `⚠️ "${b.slice(0, 30)}" is not a link`)));
+  };
 
   const cfgHost = h('div');
   const preview = h('div', { class: 'banner' });
@@ -86,6 +103,11 @@ export function openProjectEditor(id, opts = {}) {
   const body = h('div', null,
     field('Name', h('input', { type: 'text', value: d.name, maxLength: 80, placeholder: 'e.g. Vinei TV, my new app…', oninput: (e) => { d.name = e.target.value; } })),
     h('div', { class: 'field' }, h('label', null, 'What kind of project is it?'), kindHost, h('div', { class: 'hint' }, 'Each type earns and feeds the system in its own way.')),
+    h('div', { class: 'field' },
+      h('label', { for: 'p-links' }, 'Channel links'),
+      h('textarea', { id: 'p-links', rows: 2, placeholder: 'youtube.com/@yourchannel\ntiktok.com/@you\nyourshop.co.tz', oninput: (e) => { d.links = e.target.value; paintLinks(); } }, d.links),
+      linkPreview,
+      h('div', { class: 'hint' }, 'One per line. FlowMap scans them every day: YouTube uploads and TikTok videos count as posts, and view growth becomes attention. Websites are checked for uptime and new posts.')),
     h('div', { class: 'sec' }, 'Look'),
     h('div', { class: 'field' }, h('label', null, 'Icon'), iconHost),
     h('div', { class: 'field' }, h('label', null, 'Color'), colorHost),
@@ -97,7 +119,7 @@ export function openProjectEditor(id, opts = {}) {
       field('Monthly cost (TZS)', numInput(d.monthlyCost, (v) => { d.monthlyCost = v ?? 0; }, { min: 0 }), 'Tools, servers, subscriptions, ad budget.')),
     field('Notes', h('textarea', { maxLength: 600, oninput: (e) => { d.note = e.target.value; } }, d.note || '')),
   );
-  paintKind(); paintIcons(); paintColors(); renderCfg();
+  paintKind(); paintIcons(); paintColors(); renderCfg(); paintLinks();
 
   const actions = [];
   if (existing) actions.push({ label: 'Delete', kind: 'danger', onClick: async () => {
@@ -107,12 +129,21 @@ export function openProjectEditor(id, opts = {}) {
   } });
   actions.push({ label: 'Cancel' }, { label: existing ? 'Save changes' : 'Add to map', kind: 'primary', onClick: async () => {
     if (!d.name.trim()) { notify('Give the project a name first', 'error'); return false; }
-    const data = { name: d.name.trim(), kind: d.kind, icon: d.icon || '', color: d.color || '', monthlyCost: d.monthlyCost || 0, note: d.note || '', cfg: d.cfg };
+    const { out: sources, bad } = readLinks();
+    if (bad.length) { notify(`Fix or remove "${bad[0]}": it is not a web link`, 'error'); return false; }
+    const before = JSON.stringify((existing?.sources || []).map((s) => s.url));
+    const data = { name: d.name.trim(), kind: d.kind, icon: d.icon || '', color: d.color || '', monthlyCost: d.monthlyCost || 0, note: d.note || '', cfg: d.cfg, sources };
+    let saved = existing;
     if (existing) await updateProject(existing.id, data);
     else {
       const pos = opts.x !== undefined ? { x: opts.x, y: opts.y } : freeSpot();
-      const p = await addProject({ ...data, ...pos });
-      if (p) { sfx.pop(); notify(`${p.name} added. Now connect it: pick "Connect" and tap two projects.`, 'good'); }
+      saved = await addProject({ ...data, ...pos });
+      if (saved) { sfx.pop(); notify(`${saved.name} added. Now connect it: pick "Connect" and tap two projects.`, 'good'); }
+    }
+    // new links get their first scan right away
+    if (saved && sources.length && JSON.stringify(sources.map((s) => s.url)) !== before) {
+      notify(`Scanning ${sources.length} channel link${sources.length > 1 ? 's' : ''}…`);
+      scanProject(saved.id).then((r) => { if (r) notify(r.every((x) => x.ok) ? 'Channels scanned' : `Scan: ${r.find((x) => !x.ok).error}`, r.every((x) => x.ok) ? 'good' : 'error'); });
     }
     return true;
   } });
@@ -275,8 +306,12 @@ export function openHelp() {
   return openModal({
     title: 'How your living map works', wide: true,
     body: h('div', { class: 'explain' },
-      ex('🫧', 'Every project is a tank', 'The liquid level is its health. Post, promote or improve it and it fills. Ignore it and the liquid drops, cracks appear and the flow slows. Below 30% it is dying.'),
-      ex('🪙', 'Four kinds of water flow through the pipes', 'Gold = money (TZS), blue = attention (views), green = customers, purple = progress (tools and content that speed another project up). Thicker and faster = more flow.'),
+      ex('🫧', 'Every project is a tank', 'The liquid level is its health. Post, promote or improve it and it fills. Ignore it and the liquid drops, cracks appear, smoke rises and the flow slows. Below 30% it is dying.'),
+      ex('🕰️', 'It runs on the real clock', 'Through the day each tank slowly drifts toward where it will be tomorrow if you do nothing, so neglect shows by evening. The top bar counts what has come in so far today.'),
+      ex('🪙', 'Four kinds of flow move through the pipes', 'Gold coins = money (TZS), orange orbs = attention (views), green = customers, pink sparks = progress (tools and content that speed another project up). Brighter and busier = more flow.'),
+      ex('🖐️', 'Moving around', 'Drag to move the map. Pinch or use the mouse wheel to zoom. On a trackpad or phone, two fingers moving together also move the map. Twist two fingers, right-drag, or use ⟳ to rotate; ◩ switches to a top-down view.'),
+      ex('🔗', 'Channel links scan themselves', 'Add your YouTube, TikTok, website or Play Store links to a project. FlowMap reads them every morning: new uploads count as posts and view growth becomes attention, so you log less by hand.'),
+      ex('🧠', 'An AI brain', 'Connect Claude, ChatGPT or another AI agent, or give FlowMap your own AI key. The brain reads the whole system, fixes numbers that look wrong, writes notes and gives you concrete tasks. Set it up with the 🧠 button.'),
       ex('🎬', 'Every project earns in its own way', 'Channels earn from ad revenue, TikTok makes attention, apps and websites earn from paying customers in TZS. No visitor counts needed for apps.'),
       ex('💧', 'Water it when you act', 'After posting a video or promo, tap “Water”. Tell it how you feel about it and which projects you pushed. The pipes you aimed at surge, then fade over days.'),
       ex('⏩', 'Scrub the timeline', 'Drag the bar at the bottom to see the future. Compare “planned tasks only”, “keep my pace” and “stop posting” to see what happens if you slack.'),
@@ -322,6 +357,14 @@ export function openSettings() {
       } }, 'Save account'),
       soundBtn,
       h('button', { class: 'btn', onclick: () => { closeAllModals(); dialogHooks.logout(); } }, 'Sign out')),
+    h('div', { class: 'sec' }, 'Channel scanning'),
+    field('YouTube API key (optional)', h('div', { class: 'row' },
+      h('input', { id: 's-ytkey', type: 'password', autocomplete: 'off', class: 'grow', placeholder: user.hasYoutubeKey ? 'Saved. Type a new key to replace it' : 'Paste a key from Google Cloud Console' }),
+      h('button', { class: 'btn', onclick: async () => {
+        const v = document.getElementById('s-ytkey').value.trim();
+        try { await saveSecrets({ youtubeKey: v }); notify(v ? 'YouTube key saved' : 'YouTube key removed', 'good'); document.getElementById('s-ytkey').value = ''; } catch (e) { notify(e.message, 'error'); }
+      } }, 'Save')),
+    'Without a key FlowMap reads your public channel page, which gives approximate numbers. A free YouTube Data API key gives exact views and upload times. Leave empty and save to remove it.'),
     h('div', { class: 'sec' }, 'Your data (stored in the cloud database)'),
     h('div', { class: 'row wrap' },
       h('button', { class: 'btn', onclick: async () => { try { download(`flowmap-${S.today}.json`, JSON.stringify(await exportWorld(), null, 2)); } catch (e) { notify(e.message, 'error'); } } }, '⬇ Export backup'),

@@ -30,7 +30,7 @@ export function showAuth(root, onDone) {
     btn.disabled = true;
     try {
       const body = mode === 'register'
-        ? { name: state.name, email: state.email, password: state.password, template: state.template, today: localToday() }
+        ? { name: state.name, email: state.email, password: state.password, template: state.template, today: localToday(), tz: Intl.DateTimeFormat().resolvedOptions().timeZone }
         : { email: state.email, password: state.password };
       const r = await post(mode === 'register' ? '/api/auth/register' : '/api/auth/login', body);
       auth.token = r.token;

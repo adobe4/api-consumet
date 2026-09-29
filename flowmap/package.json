@@ -11,10 +11,11 @@
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "dev": "node --watch --disable-warning=ExperimentalWarning server/index.js",
     "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\"",
+    "build": "node scripts/build.mjs",
     "build:demo": "node demo/build.mjs"
   },
   "dependencies": {
-    "@libsql/client": "^0.15.15",
-    "three": "^0.180.0"
+    "@libsql/client": "0.15.15",
+    "three": "0.180.0"
   }
 }
