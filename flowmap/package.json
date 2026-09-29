@@ -1,0 +1,13 @@
+{
+  "name": "flowmap",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A living map of your success system: projects, animated flows, health, tasks and forecasts.",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node --watch --disable-warning=ExperimentalWarning server/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\""
+  }
+}
