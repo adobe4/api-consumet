@@ -7,6 +7,7 @@ const TOKEN_DAYS = 30;
 
 export function loadSecret(dir) {
   if (process.env.FLOWMAP_SECRET && process.env.FLOWMAP_SECRET.length >= 16) return process.env.FLOWMAP_SECRET;
+  if (!dir) throw new Error('Set FLOWMAP_SECRET (16+ random characters) in the environment');
   const file = path.join(dir, 'secret.key');
   try {
     return fs.readFileSync(file, 'utf8').trim();
@@ -55,6 +56,31 @@ export function verifyToken(secret, token) {
     return null;
   }
 }
+
+// Secrets a user stores with us (their AI key) are encrypted with a key derived from the server secret.
+const encKey = (secret) => crypto.createHash('sha256').update(`flowmap-secrets:${secret}`).digest();
+export function encryptJson(secret, obj) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', encKey(secret), iv);
+  const data = Buffer.concat([c.update(JSON.stringify(obj), 'utf8'), c.final()]);
+  return `g1.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${data.toString('base64url')}`;
+}
+export function decryptJson(secret, s) {
+  const [v, iv, tag, data] = String(s || '').split('.');
+  if (v !== 'g1') return {};
+  try {
+    const d = crypto.createDecipheriv('aes-256-gcm', encKey(secret), Buffer.from(iv, 'base64url'));
+    d.setAuthTag(Buffer.from(tag, 'base64url'));
+    return JSON.parse(Buffer.concat([d.update(Buffer.from(data, 'base64url')), d.final()]).toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
+// Keys for AI agents: shown once, stored only as a hash.
+export const AGENT_PREFIX = 'fm_';
+export const newAgentKey = () => AGENT_PREFIX + crypto.randomBytes(24).toString('base64url');
+export const hashAgentKey = (key) => crypto.createHash('sha256').update(key).digest('hex');
 
 // Tiny in-memory throttle for login / register attempts.
 export function makeLimiter(max, windowMs) {

@@ -131,4 +131,82 @@ test('static files, traversal guard and security headers', async () => {
   const trav = await fetch(BASE + '/..%2f..%2fserver%2fauth.js');
   assert.notEqual(trav.status, 200);
   assert.equal((await fetch(BASE + '/server/auth.js')).status, 404); // server code is never served
+  const three = await fetch(BASE + '/vendor/three/addons/postprocessing/UnrealBloomPass.js');
+  assert.equal(three.status, 200);
+  assert.doesNotMatch(await three.text(), /from\s+'three'/); // bare imports rewritten for the browser
+});
+
+test('channel links are validated and deleting a project removes its tasks, logs and notes', async () => {
+  const a = (await call('POST', '/api/auth/login', { email: 'a@example.com', password: 'supersecret1' })).body.token;
+  const p = await call('POST', '/api/projects', { name: 'Shorts', kind: 'youtube', createdOn: '2026-09-29', sources: ['youtube.com/@someone', 'https://www.tiktok.com/@someone', 'youtube.com/@someone'] }, a);
+  assert.equal(p.status, 200);
+  assert.deepEqual(p.body.sources.map((s) => s.platform), ['youtube', 'tiktok']); // normalised, platform detected, duplicate dropped
+  assert.equal((await call('PATCH', `/api/projects/${p.body.id}`, { sources: ['not a link'] }, a)).status, 400);
+  await call('POST', '/api/tasks', { projectId: p.body.id, title: 'Post a short' }, a);
+  await call('POST', '/api/logs', { projectId: p.body.id, day: '2026-09-29', posts: 1 }, a);
+  await call('POST', '/api/notes', { projectId: p.body.id, text: 'Hello' }, a);
+  assert.equal((await call('DELETE', `/api/projects/${p.body.id}`, null, a)).status, 200);
+  const w = (await call('GET', '/api/world', null, a)).body;
+  assert.ok(!w.tasks.some((t) => t.projectId === p.body.id));
+  assert.ok(!w.logs.some((l) => l.projectId === p.body.id));
+  assert.ok(!w.notes.some((n) => n.projectId === p.body.id));
+});
+
+test('AI agents: keys, MCP tools and limits on what a key may do', async () => {
+  const a = (await call('POST', '/api/auth/login', { email: 'a@example.com', password: 'supersecret1' })).body.token;
+  const created = await call('POST', '/api/agent-keys', { name: 'Claude' }, a);
+  assert.equal(created.status, 200);
+  const key = created.body.key;
+  assert.match(key, /^fm_/);
+  assert.ok(!JSON.stringify((await call('GET', '/api/agent-keys', null, a)).body).includes(key)); // shown once only
+
+  // the key works on the REST API, but cannot manage the account
+  assert.equal((await call('GET', '/api/world', null, key)).status, 200);
+  assert.equal((await call('POST', '/api/agent-keys', { name: 'x' }, key)).status, 403);
+  assert.equal((await call('PATCH', '/api/me', { name: 'x' }, key)).status, 403);
+
+  const rpc = async (body, path = `/api/mcp/${key}`) => {
+    const r = await fetch(BASE + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify(body) });
+    return { status: r.status, body: r.status === 202 ? null : await r.json() };
+  };
+  const init = await rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
+  assert.equal(init.body.result.serverInfo.name, 'flowmap');
+  assert.equal((await rpc({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202);
+  const list = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+  assert.ok(list.body.result.tools.some((t) => t.name === 'create_task'));
+
+  const ov = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_overview', arguments: {} } });
+  const overview = JSON.parse(ov.body.result.content[0].text);
+  assert.ok(overview.projects.length >= 8);
+  assert.ok(overview.alerts.length);
+
+  const made = await rpc({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'create_task', arguments: { project: 'vinei', title: 'Film a DigitalSoko walkthrough', targets: ['DigitalSoko'], type: 'video' } } });
+  const task = JSON.parse(made.body.result.content[0].text).created;
+  assert.equal(task.source, 'agent:Claude');
+  assert.equal(task.targets.length, 1);
+
+  const adj = await rpc({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'adjust_project', arguments: { project: 'Vinei TV', cfg: { rpm: 650 }, reason: 'Studio shows a lower RPM' } } });
+  assert.equal(JSON.parse(adj.body.result.content[0].text).updated.cfg.rpm, 650);
+  const bad = await rpc({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'create_task', arguments: { project: 'Nope', title: 'x' } } });
+  assert.equal(bad.body.result.isError, true);
+
+  assert.equal((await rpc({ jsonrpc: '2.0', id: 7, method: 'tools/list' }, '/api/mcp/fm_wrong')).status, 401);
+  const w = (await call('GET', '/api/world', null, a)).body;
+  assert.ok(w.notes.some((n) => n.source === 'agent:Claude' && n.kind === 'adjustment'));
+
+  // removing the key cuts the agent off
+  assert.equal((await call('DELETE', `/api/agent-keys/${created.body.item.id}`, null, a)).status, 200);
+  assert.equal((await call('GET', '/api/world', null, key)).status, 401);
+});
+
+test('AI settings keep keys write-only; the daily job needs the cron secret', async () => {
+  const a = (await call('POST', '/api/auth/login', { email: 'a@example.com', password: 'supersecret1' })).body.token;
+  const s = await call('PUT', '/api/me/secrets', { aiKey: 'sk-test-123' }, a);
+  assert.equal(s.body.user.hasAiKey, true);
+  assert.ok(!JSON.stringify((await call('GET', '/api/me', null, a)).body).includes('sk-test-123'));
+  assert.equal((await call('GET', '/api/cron/daily')).status, 401);
+  await call('PATCH', '/api/me', { settings: { aiProvider: 'compatible' } }, a);
+  const run = await call('POST', '/api/brain/run', {}, a); // no model chosen: fails before any network call
+  assert.equal(run.status, 400);
+  assert.match(run.body.error, /model/);
 });

@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+// Database access through libSQL: a local SQLite file in development, Turso (free hosted SQLite) in production.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL DEFAULT '',
   pass TEXT NOT NULL,
   settings TEXT NOT NULL DEFAULT '{}',
+  secrets TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS projects (
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS projects (
   y REAL NOT NULL DEFAULT 0,
   monthly_cost REAL NOT NULL DEFAULT 0,
   cfg TEXT NOT NULL DEFAULT '{}',
+  sources TEXT NOT NULL DEFAULT '[]',
   note TEXT NOT NULL DEFAULT '',
   created_on TEXT NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0
@@ -55,6 +57,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   cost REAL NOT NULL DEFAULT 0,
   reward REAL NOT NULL DEFAULT 0,
   note TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',
   sample INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -74,30 +77,99 @@ CREATE TABLE IF NOT EXISTS logs (
   UNIQUE(project_id, day)
 );
 CREATE INDEX IF NOT EXISTS idx_logs_user_day ON logs(user_id, day);
+CREATE TABLE IF NOT EXISTS scans (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  at TEXT NOT NULL,
+  ok INTEGER NOT NULL DEFAULT 1,
+  data TEXT NOT NULL DEFAULT '{}',
+  error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_scans_project ON scans(project_id, at);
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  at TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'insight',
+  text TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id, at);
+CREATE TABLE IF NOT EXISTS agent_keys (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  hash TEXT NOT NULL UNIQUE,
+  prefix TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT
+);
 `;
 
-export function openDb(dir) {
-  fs.mkdirSync(dir, { recursive: true });
-  const db = new DatabaseSync(path.join(dir, 'flowmap.db'));
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
-  db.exec(SCHEMA);
-  return db;
+// columns added after the first release, for databases created before them
+const ADDED = [['users', 'secrets', "TEXT NOT NULL DEFAULT ''"], ['projects', 'sources', "TEXT NOT NULL DEFAULT '[]'"], ['tasks', 'source', "TEXT NOT NULL DEFAULT ''"]];
+const VERSION = 2;
+
+const toArgs = (args) => args.map((a) => (a === undefined ? null : typeof a === 'boolean' ? Number(a) : a));
+const plain = (row) => (row ? Object.fromEntries(Object.entries(row)) : undefined);
+
+// get / all / run / tx over either the client or an open transaction
+class Q {
+  constructor(exec) { this.exec = exec; }
+  async get(sql, ...args) { return plain((await this.exec(sql, args)).rows[0]); }
+  async all(sql, ...args) { return (await this.exec(sql, args)).rows.map(plain); }
+  async run(sql, ...args) {
+    const r = await this.exec(sql, args);
+    return { changes: r.rowsAffected, lastInsertRowid: r.lastInsertRowid === undefined ? 0 : Number(r.lastInsertRowid) };
+  }
 }
 
-// Re-entrant transaction: the outermost call BEGINs, nested calls use savepoints.
-let depth = 0;
-export function tx(db, fn) {
-  const name = `sp${depth}`;
-  db.exec(depth === 0 ? 'BEGIN' : `SAVEPOINT ${name}`);
-  depth++;
-  try {
-    const out = fn();
-    depth--;
-    db.exec(depth === 0 ? 'COMMIT' : `RELEASE ${name}`);
-    return out;
-  } catch (e) {
-    depth--;
-    db.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${name}; RELEASE ${name}`);
-    throw e;
+class Tx extends Q {
+  constructor(t) { super((sql, args) => t.execute({ sql, args: toArgs(args) })); this.t = t; this.depth = 0; }
+  // nested tx() calls inside a transaction become savepoints
+  async tx(fn) {
+    const name = `sp${this.depth++}`;
+    await this.t.execute(`SAVEPOINT ${name}`);
+    try { const out = await fn(this); await this.t.execute(`RELEASE ${name}`); return out; }
+    catch (e) { await this.t.execute(`ROLLBACK TO ${name}`); await this.t.execute(`RELEASE ${name}`); throw e; }
+    finally { this.depth--; }
   }
+}
+
+export class Db extends Q {
+  constructor(client) { super((sql, args) => client.execute({ sql, args: toArgs(args) })); this.client = client; }
+  async tx(fn) {
+    const t = await this.client.transaction('write');
+    try { const out = await fn(new Tx(t)); await t.commit(); return out; }
+    catch (e) { await t.rollback().catch(() => {}); throw e; }
+    finally { t.close(); }
+  }
+  close() { this.client.close(); }
+}
+
+export async function openDb({ url, authToken, dataDir } = {}) {
+  if (!url) {
+    fs.mkdirSync(dataDir, { recursive: true });
+    url = 'file:' + path.join(dataDir, 'flowmap.db');
+  }
+  // the web client talks to Turso over HTTP and needs no native module (lighter serverless bundle)
+  const { createClient } = url.startsWith('file:') ? await import('@libsql/client') : await import('@libsql/client/web');
+  const client = createClient({ url, authToken });
+  const db = new Db(client);
+  const { user_version: v } = await db.get('PRAGMA user_version');
+  if (v < VERSION) {
+    await client.executeMultiple(SCHEMA);
+    for (const [table, col, def] of ADDED) {
+      const cols = await db.all(`PRAGMA table_info(${table})`);
+      if (!cols.some((c) => c.name === col)) await client.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+    }
+    await client.execute(`PRAGMA user_version = ${VERSION}`);
+  }
+  if (url.startsWith('file:')) await client.execute('PRAGMA journal_mode = WAL').catch(() => {});
+  await client.execute('PRAGMA foreign_keys = ON');
+  return db;
 }

@@ -1,6 +1,6 @@
 // Field definitions, validation and (de)serialisation for every stored resource.
 import { KIND_KEYS, RESOURCE_KEYS, TASK_TYPES, CHANNELS } from '../shared/engine.js';
-import { tx } from './db.js';
+import { normalizeSources } from '../shared/sources.js';
 
 export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -31,6 +31,10 @@ const T = {
     if (!Array.isArray(v) || v.length > 50 || !v.every((x) => Number.isInteger(x))) throw bad(f, 'must be a list of ids');
     return JSON.stringify(v);
   },
+  sources: (v, f) => {
+    if (!Array.isArray(v) || v.length > 10) throw bad(f, 'must be a list of at most 10 links');
+    try { return JSON.stringify(normalizeSources(v)); } catch (e) { throw bad(f, e.message); }
+  },
 };
 
 // api name -> [column, validator, required-on-create, default]
@@ -46,6 +50,7 @@ export const RES = {
       y: ['y', T.num(-1e5, 1e5), false, 0],
       monthlyCost: ['monthly_cost', T.num(0, 1e10), false, 0],
       cfg: ['cfg', T.obj, false, {}],
+      sources: ['sources', T.sources, false, []],
       note: ['note', T.str(600), false, ''],
       createdOn: ['created_on', T.day, true],
       archived: ['archived', T.bool, false, 0],
@@ -79,6 +84,7 @@ export const RES = {
       cost: ['cost', T.num(0, 1e10), false, 0],
       reward: ['reward', T.num(0, 1e10), false, 0],
       note: ['note', T.str(400), false, ''],
+      source: ['source', T.str(60), false, ''],
       sample: ['sample', T.bool, false, 0],
     },
   },
@@ -98,14 +104,14 @@ export const RES = {
   },
 };
 
-const JSON_COLS = new Set(['cfg', 'targets']);
+const JSON_COLS = new Set(['cfg', 'targets', 'sources']);
 const BOOL_COLS = new Set(['archived', 'sample']);
 
 export function fromRow(res, row) {
   const out = { id: row.id };
   for (const [api, [col]] of Object.entries(RES[res].fields)) {
     let v = row[col];
-    if (JSON_COLS.has(col)) { try { v = JSON.parse(v); } catch { v = col === 'cfg' ? {} : []; } }
+    if (JSON_COLS.has(col)) { try { v = JSON.parse(v ?? ''); } catch { v = col === 'cfg' ? {} : []; } }
     else if (BOOL_COLS.has(col)) v = !!v;
     out[api] = v;
   }
@@ -129,50 +135,77 @@ export function toCols(res, body, { create }) {
   return cols;
 }
 
-export function ownedProjectIds(db, uid) {
-  return new Set(db.prepare('SELECT id FROM projects WHERE user_id = ?').all(uid).map((r) => r.id));
+export async function ownedProjectIds(q, uid) {
+  return new Set((await q.all('SELECT id FROM projects WHERE user_id = ?', uid)).map((r) => r.id));
 }
 
-export function readWorld(db, uid, { logDays = 400 } = {}) {
-  const list = (res, sql, ...args) => db.prepare(sql).all(uid, ...args).map((r) => fromRow(res, r));
+export const insertSql = (table, names, verb = 'INSERT') => `${verb} INTO ${table} (user_id, ${names.join(', ')}) VALUES (?, ${names.map(() => '?').join(', ')})`;
+
+// Foreign keys are not reliable over Turso's HTTP connections, so dependants are removed explicitly.
+export async function deleteProjects(q, uid, ids) {
+  if (!ids.length) return;
+  const list = ids.map(() => '?').join(', ');
+  await q.run(`DELETE FROM links WHERE user_id = ? AND (from_id IN (${list}) OR to_id IN (${list}))`, uid, ...ids, ...ids);
+  for (const t of ['tasks', 'logs', 'scans', 'notes']) await q.run(`DELETE FROM ${t} WHERE user_id = ? AND project_id IN (${list})`, uid, ...ids);
+  await q.run(`DELETE FROM projects WHERE user_id = ? AND id IN (${list})`, uid, ...ids);
+}
+export async function deleteUser(q, uid) {
+  for (const t of ['links', 'tasks', 'logs', 'scans', 'notes', 'agent_keys', 'projects']) await q.run(`DELETE FROM ${t} WHERE user_id = ?`, uid);
+  await q.run('DELETE FROM users WHERE id = ?', uid);
+}
+
+export const noteOut = (r) => ({ id: r.id, projectId: r.project_id ?? null, at: r.at, source: r.source, kind: r.kind, text: r.text });
+export const scanOut = (r) => {
+  let data = {};
+  try { data = JSON.parse(r.data); } catch { /* keep {} */ }
+  return { id: r.id, projectId: r.project_id, url: r.url, platform: r.platform, at: r.at, ok: !!r.ok, data, error: r.error };
+};
+
+export async function readWorld(q, uid, { logDays = 400 } = {}) {
+  const list = async (res, sql, ...args) => (await q.all(sql, uid, ...args)).map((r) => fromRow(res, r));
   const since = new Date(Date.now() - logDays * 86400000).toISOString().slice(0, 10);
+  const noteSince = new Date(Date.now() - 60 * 86400000).toISOString();
+  // latest scan per project + link
+  const scans = await q.all(`SELECT s.* FROM scans s JOIN (SELECT project_id, url, MAX(id) AS id FROM scans WHERE user_id = ? GROUP BY project_id, url) m ON m.id = s.id`, uid);
   return {
-    projects: list('projects', 'SELECT * FROM projects WHERE user_id = ? ORDER BY id'),
-    links: list('links', 'SELECT * FROM links WHERE user_id = ? ORDER BY id'),
-    tasks: list('tasks', 'SELECT * FROM tasks WHERE user_id = ? ORDER BY id'),
-    logs: list('logs', 'SELECT * FROM logs WHERE user_id = ? AND day >= ? ORDER BY day', since),
+    projects: await list('projects', 'SELECT * FROM projects WHERE user_id = ? ORDER BY id'),
+    links: await list('links', 'SELECT * FROM links WHERE user_id = ? ORDER BY id'),
+    tasks: await list('tasks', 'SELECT * FROM tasks WHERE user_id = ? ORDER BY id'),
+    logs: await list('logs', 'SELECT * FROM logs WHERE user_id = ? AND day >= ? ORDER BY day', since),
+    notes: (await q.all('SELECT * FROM notes WHERE user_id = ? AND at >= ? ORDER BY id DESC LIMIT 200', uid, noteSince)).map(noteOut),
+    scans: scans.map(scanOut),
   };
 }
 
 const LIMITS = { projects: 200, links: 2000, tasks: 6000, logs: 40000 };
 
 // Replace (or add to) a user's world with data whose ids are arbitrary keys.
-export function loadWorld(db, uid, data, { replace }) {
+export async function loadWorld(db, uid, data, { replace }) {
   for (const k of Object.keys(LIMITS)) {
     if (data[k] !== undefined && (!Array.isArray(data[k]) || data[k].length > LIMITS[k])) throw new HttpError(400, `${k}: expected a list of at most ${LIMITS[k]}`);
   }
-  return tx(db, () => {
-    if (replace) db.prepare('DELETE FROM projects WHERE user_id = ?').run(uid);
+  // validate everything before touching the database
+  const projects = (data.projects || []).map((p) => [p.id, toCols('projects', { ...p, id: undefined }, { create: true })]);
+  const known = new Set(projects.map(([k]) => k));
+  const check = (k) => { if (!known.has(k)) throw new HttpError(400, `unknown project reference ${JSON.stringify(k)}`); return k; };
+  const links = (data.links || []).map((l) => [check(l.from), check(l.to), l]);
+  const tasks = (data.tasks || []).map((t) => [check(t.projectId), t]);
+  const logs = (data.logs || []).map((l) => [check(l.projectId), l]);
+
+  return db.tx(async (q) => {
+    if (replace) await deleteProjects(q, uid, [...(await ownedProjectIds(q, uid))]);
     const map = new Map();
-    const insert = (res, cols) => {
+    for (const [key, cols] of projects) {
       const names = Object.keys(cols);
-      const sql = `INSERT INTO ${RES[res].table} (user_id, ${names.join(', ')}) VALUES (?, ${names.map(() => '?').join(', ')})`;
-      return Number(db.prepare(sql).run(uid, ...names.map((n) => cols[n])).lastInsertRowid);
-    };
-    for (const p of data.projects || []) {
-      map.set(p.id, insert('projects', toCols('projects', { ...p, id: undefined }, { create: true })));
+      map.set(key, (await q.run(insertSql('projects', names), uid, ...names.map((n) => cols[n]))).lastInsertRowid);
     }
-    const mapId = (k) => { if (!map.has(k)) throw new HttpError(400, `unknown project reference ${JSON.stringify(k)}`); return map.get(k); };
-    for (const l of data.links || []) insert('links', toCols('links', { ...l, from: mapId(l.from), to: mapId(l.to) }, { create: true }));
-    for (const t of data.tasks || []) {
+    const put = (res, cols, verb) => { const names = Object.keys(cols); return q.run(insertSql(RES[res].table, names, verb), uid, ...names.map((n) => cols[n])); };
+    for (const [from, to, l] of links) await put('links', toCols('links', { ...l, from: map.get(from), to: map.get(to) }, { create: true }));
+    for (const [pid, t] of tasks) {
       const targets = (t.targets || []).filter((x) => map.has(x)).map((x) => map.get(x));
-      insert('tasks', toCols('tasks', { ...t, projectId: mapId(t.projectId), targets }, { create: true }));
+      await put('tasks', toCols('tasks', { ...t, projectId: map.get(pid), targets }, { create: true }));
     }
-    for (const l of data.logs || []) {
-      const cols = toCols('logs', { ...l, projectId: mapId(l.projectId) }, { create: true });
-      const names = Object.keys(cols);
-      db.prepare(`INSERT OR REPLACE INTO logs (user_id, ${names.join(', ')}) VALUES (?, ${names.map(() => '?').join(', ')})`).run(uid, ...names.map((n) => cols[n]));
-    }
+    for (const [pid, l] of logs) await put('logs', toCols('logs', { ...l, projectId: map.get(pid) }, { create: true }), 'INSERT OR REPLACE');
     return { projects: map.size };
   });
 }
