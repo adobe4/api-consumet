@@ -9,7 +9,7 @@ import { sfx, sound } from './audio.js';
 
 export const dialogHooks = { logout() {} };
 
-const ICONS = ['▶️', '📺', '🎬', '🎓', '🎵', '⚽', '🗣️', '🛒', '💬', '📱', '🌐', '💰', '🚀', '🎮', '📰', '🧠', '🎯', '📦', '🛠️', '🔥', '🤝', '🏆'];
+const ICONS = ['▶️', '📺', '🎬', '🎓', '🎵', '⚽', '🎙️', '🛒', '💬', '📱', '🌐', '💰', '🚀', '🎮', '📰', '🧠', '🎯', '📦', '🛠️', '🔥', '🤝', '🏆'];
 const COLORS = ['#ff4d5e', '#ff8a5c', '#ffa94d', '#ffc933', '#46e58a', '#b8e04a', '#ff8a3d', '#e8b86b', '#d9b38c', '#ff5fa2', '#ff6fae'];
 export const HEAL_TYPES = {
   youtube: ['video', 'tutorial', 'promo', 'ad'],
@@ -279,7 +279,7 @@ export function openHelp() {
       ex('🪙', 'Four kinds of water flow through the pipes', 'Gold = money (TZS), blue = attention (views), green = customers, purple = progress (tools and content that speed another project up). Thicker and faster = more flow.'),
       ex('🎬', 'Every project earns in its own way', 'Channels earn from ad revenue, TikTok makes attention, apps and websites earn from paying customers in TZS. No visitor counts needed for apps.'),
       ex('💧', 'Water it when you act', 'After posting a video or promo, tap “Water”. Tell it how you feel about it and which projects you pushed. The pipes you aimed at surge, then fade over days.'),
-      ex('🔮', 'Scrub the timeline', 'Drag the bar at the bottom to see the future. Compare “planned tasks only”, “keep my pace” and “stop posting” to see what happens if you slack.'),
+      ex('⏩', 'Scrub the timeline', 'Drag the bar at the bottom to see the future. Compare “planned tasks only”, “keep my pace” and “stop posting” to see what happens if you slack.'),
       ex('✍️', 'Make it yours', 'Double-click empty space to add a project. Use Connect to draw a pipe between two projects. Click a pipe to change how much flows, what it costs and how long it takes. Add tasks such as a sponsored ad for this week.'),
       ex('📝', 'Daily check-in keeps it honest', 'Log what each project made today, or set a whole month at once. The simulation adapts to your real numbers.'),
     ),

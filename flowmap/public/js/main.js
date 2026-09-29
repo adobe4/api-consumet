@@ -161,7 +161,7 @@ function updateTicker() {
 function updateBanner() {
   const b = $('future-banner');
   b.hidden = S.offset === 0;
-  if (S.offset) b.textContent = `🔮 FUTURE VIEW · ${fmtDay(snap().day)} · ${SCEN[S.scenario]}`;
+  if (S.offset) b.textContent = `⏩ FUTURE VIEW · ${fmtDay(snap().day)} · ${SCEN[S.scenario]}`;
 }
 function updateEmpty() {
   const e = $('empty');

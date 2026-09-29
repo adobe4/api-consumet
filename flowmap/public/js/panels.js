@@ -8,7 +8,7 @@ import { lineChart } from './charts.js';
 import { openProjectEditor, openLinkEditor, openActionDialog, openTaskEditor, HEAL_TYPES } from './dialogs.js';
 import { sfx } from './audio.js';
 
-const TABS = [['focus', '🎯 Focus'], ['tasks', '✅ Tasks'], ['checkin', '📝 Check-in'], ['forecast', '🔮 Forecast'], ['alerts', '🚨 Alerts']];
+const TABS = [['focus', '🎯 Focus'], ['tasks', '✅ Tasks'], ['checkin', '📝 Check-in'], ['forecast', '📈 Forecast'], ['alerts', '🚨 Alerts']];
 const SCEN = { planned: 'Planned tasks only', keep: 'Keep my pace', stop: 'Stop posting' };
 const SCEN_COLOR = { planned: '#ffc933', keep: '#46e58a', stop: '#ff4d5e' };
 const METRICS = { money: ['Money/day', '#ffc933'], profit: ['Net/day', '#c0f06a'], attention: ['Attention/day', '#ff8a3d'], customers: ['Customers/day', '#46e58a'], health: ['Health', '#ff5fa2'] };

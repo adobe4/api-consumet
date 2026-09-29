@@ -27,7 +27,7 @@ export function buildTemplate(name, today) {
     { id: 'mikeka', name: 'AI Mikeka', kind: 'app', icon: '⚽', color: '#e8b86b', x: 600, y: -220, monthlyCost: 40000, createdOn: created,
       note: 'AI bet analysis app. Users pay in TZS.',
       cfg: { price: 10000, billing: 'monthly', activeCustomers: 25, newPerDay: 0.8, churnPct: 20, conversionPer1000: 0.8, cadenceDays: 7 } },
-    { id: 'domo', name: 'Domosauti', kind: 'website', icon: '🗣️', color: '#e07a5f', x: 240, y: 20, monthlyCost: 90000, createdOn: created,
+    { id: 'domo', name: 'Domosauti', kind: 'website', icon: '🎙️', color: '#e07a5f', x: 240, y: 20, monthlyCost: 90000, createdOn: created,
       note: 'Swahili text-to-speech AI. Speeds up Vinei TV by cloning your voice and makes content for new channels.',
       cfg: { price: 15000, billing: 'monthly', activeCustomers: 18, newPerDay: 0.6, churnPct: 15, conversionPer1000: 1.2, cadenceDays: 7 } },
     { id: 'soko', name: 'DigitalSoko', kind: 'website', icon: '🛒', color: '#ffa94d', x: 600, y: 260, monthlyCost: 20000, createdOn: created,
