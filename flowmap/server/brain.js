@@ -228,11 +228,83 @@ export async function handleMcp(ctx, msg) {
 }
 
 // ---------- built-in AI ----------
+// the first models listed for NVIDIA are strong chat models that can call tools (the brain needs tools)
+export const NVIDIA_MODELS = ['moonshotai/kimi-k2.6', 'moonshotai/kimi-k3', 'deepseek-ai/deepseek-v4.1-flash', 'z-ai/glm-5.3', 'z-ai/glm-5.3-flash', 'nvidia/nemotron-3-super-120b-a12b', 'nvidia/nemotron-3-ultra-550b-a55b', 'mistralai/mistral-large-2-instruct', 'openai/gpt-oss-20b', 'google/gemma-4-31b-it'];
 export const AI_PROVIDERS = {
   anthropic: { label: 'Anthropic (Claude)', model: 'claude-sonnet-5-5' },
   openai: { label: 'OpenAI', model: '', baseUrl: 'https://api.openai.com/v1' },
+  nvidia: { label: 'NVIDIA (free models)', model: NVIDIA_MODELS[0], baseUrl: 'https://integrate.api.nvidia.com/v1', models: NVIDIA_MODELS },
   compatible: { label: 'Other (OpenAI-compatible: OpenRouter, Groq, Gemini, DeepSeek...)', model: '', baseUrl: '' },
 };
+const PROVIDER_IDS = Object.keys(AI_PROVIDERS);
+
+// ---------- saved AI keys ----------
+// secrets.aiKeys = [{ id, label, provider, model, baseUrl, key }]; the older single key (secrets.aiKey + settings) still counts.
+export function aiKeyList(settings = {}, secrets = {}) {
+  const list = Array.isArray(secrets.aiKeys) ? secrets.aiKeys.filter((k) => k && k.key) : [];
+  if (secrets.aiKey && !list.some((k) => k.id === 'main')) list.unshift({ id: 'main', label: 'My key', provider: settings.aiProvider || 'anthropic', model: settings.aiModel || '', baseUrl: settings.aiBaseUrl || '', key: secrets.aiKey });
+  return list;
+}
+export const cfgOfKey = (k) => ({ id: k.id, label: k.label, provider: PROVIDER_IDS.includes(k.provider) ? k.provider : 'compatible', model: k.model || AI_PROVIDERS[k.provider]?.model || '', baseUrl: k.baseUrl || AI_PROVIDERS[k.provider]?.baseUrl || '', apiKey: k.key });
+// the key in use first, then the others: if one fails or hits its limit the next one takes over
+export function aiChain(settings = {}, secrets = {}) {
+  const list = aiKeyList(settings, secrets).map(cfgOfKey);
+  const i = list.findIndex((k) => k.id === settings.aiActive);
+  if (i > 0) list.unshift(...list.splice(i, 1));
+  return list;
+}
+export const publicKey = (k) => ({ id: k.id, label: k.label, provider: k.provider, model: k.model || AI_PROVIDERS[k.provider]?.model || '', baseUrl: k.baseUrl || '', tail: String(k.key || '').slice(-4), test: k.test || null });
+
+// what went wrong, in plain words
+const plainError = (status, msg) => ({
+  401: 'This key was rejected. Check it is copied completely and still active.',
+  403: 'This key was rejected or has no access to this model.',
+  404: 'This model is not available for this key. Pick another model.',
+  429: 'This key reached its limit right now (free keys allow a few requests per minute). Try again shortly.',
+}[status] || (status >= 500 ? 'The provider is busy or down right now. Try again soon.' : msg || `HTTP ${status}`));
+// a small, real request: does the key work, and can this model call tools?
+export async function testAi(cfg) {
+  const t0 = Date.now();
+  const tool = { name: 'report_status', description: 'Report that the connection works.', input_schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] } };
+  const ask = 'This is a connection test. Call the report_status tool with ok set to true.';
+  try {
+    if (!cfg.apiKey) throw new Error('No key');
+    if (cfg.provider !== 'anthropic' && !cfg.model) throw new Error('Choose a model');
+    let tools = false, reply = '';
+    if (cfg.provider === 'anthropic') {
+      const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: cfg.model || AI_PROVIDERS.anthropic.model, max_tokens: 200, messages: [{ role: 'user', content: ask }], tools: [tool] }), signal: AbortSignal.timeout(30000) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(plainError(r.status, j.error?.message));
+      tools = (j.content || []).some((c) => c.type === 'tool_use');
+      reply = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join(' ');
+    } else {
+      const base = (cfg.baseUrl || AI_PROVIDERS.openai.baseUrl).replace(/\/+$/, '');
+      const r = await fetch(`${base}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify({ model: cfg.model, max_tokens: 300, messages: [{ role: 'user', content: ask }], tools: [{ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.input_schema } }] }), signal: AbortSignal.timeout(45000) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(plainError(r.status, j.error?.message || j.detail || j.title));
+      const m = j.choices?.[0]?.message || {};
+      tools = !!(m.tool_calls && m.tool_calls.length);
+      reply = m.content || '';
+    }
+    return { ok: true, tools, ms: Date.now() - t0, at: new Date().toISOString(), note: tools ? 'Works, and it can use the brain\'s tools' : 'The key works, but this model did not use tools. Pick another model for the brain.', reply: String(reply).slice(0, 200) };
+  } catch (e) {
+    const msg = e.name === 'TimeoutError' ? 'No answer in time (the model may be busy; try again or pick another)' : String(e.message || e).slice(0, 300);
+    return { ok: false, tools: false, ms: Date.now() - t0, at: new Date().toISOString(), note: msg };
+  }
+}
+// run with the first key; if it fails before doing anything, try the next one
+export async function withFallback(chain, run) {
+  const list = Array.isArray(chain) ? chain : [chain];
+  if (!list.length || !list[0]?.apiKey) throw new HttpError(400, 'Add an AI key in the 🧠 Brain settings first');
+  const errors = [];
+  for (const cfg of list) {
+    try { const out = await run(cfg); return { ...out, usedKey: cfg.label || cfg.id }; }
+    catch (e) { errors.push(`${cfg.label || cfg.provider}: ${e.message}`); if (e.status === 400 && /Choose a model/.test(e.message) && list.length === 1) throw e; }
+  }
+  throw new HttpError(502, list.length > 1 ? `All ${list.length} AI keys failed. ${errors.join(' · ')}` : errors[0].replace(/^[^:]+: /, ''));
+}
 
 const SYSTEM = `You are the brain of a creator's "living success system" (FlowMap). Projects are tanks; pipes carry money (TZS), attention (views), customers and progress between them. Health drops when a project misses its posting rhythm.
 Each run: read the overview, then act like a neuron in the system:
@@ -273,7 +345,8 @@ async function openaiTurn(cfg, system, messages, tools = CORE_TOOLS) {
   return { calls, text: m.content || '', answer: (results) => results.forEach((x) => messages.push({ role: 'tool', tool_call_id: x.id, content: x.content })) };
 }
 
-export async function runBrain(ctx, ai, { trigger = 'manual', budgetMs = 50000 } = {}) {
+export async function runBrain(ctx, chain, opts = {}) { return withFallback(chain, (ai) => brainOnce(ctx, ai, opts)); }
+async function brainOnce(ctx, ai, { trigger = 'manual', budgetMs = 50000 } = {}) {
   if (!ai?.apiKey) throw new HttpError(400, 'Add an AI key in Settings → AI brain first');
   if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in Settings → AI brain');
   const start = Date.now();
@@ -312,7 +385,8 @@ Read the request, look at the system overview if it helps (get_overview), then c
 Write in the language the owner used. Be concrete and specific to their projects when relevant. Finish with one sentence saying what you built.`;
 const BOARD_AI_TOOLS = [TOOL_BY_NAME.get('get_overview'), TOOL_BY_NAME.get('create_board'), TOOL_BY_NAME.get('list_boards')];
 
-export async function runBoardAI(ctx, ai, request) {
+export async function runBoardAI(ctx, chain, request) { return withFallback(chain, (ai) => boardOnce(ctx, ai, request)); }
+async function boardOnce(ctx, ai, request) {
   if (!ai?.apiKey) throw new HttpError(400, 'Add an AI key in the 🧠 Brain settings first, or connect your own AI agent over MCP');
   if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in the 🧠 Brain settings');
   const bctx = { ...ctx, source: 'ai' };

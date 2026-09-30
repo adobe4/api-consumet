@@ -1,10 +1,11 @@
 // FlowMap JSON API. Runs inside the local Node server (server/index.js) and as a Vercel function (api/index.js).
+import crypto from 'node:crypto';
 import { hashPassword, verifyPassword, signToken, verifyToken, makeLimiter, encryptJson, decryptJson, newAgentKey, hashAgentKey, AGENT_PREFIX } from './auth.js';
 import { RES, HttpError, fromRow, toCols, readWorld, loadWorld, ownedProjectIds, deleteProjects, deleteUser, insertSql, noteOut } from './models.js';
 import { simulate, alerts, suggestions } from '../shared/engine.js';
 import { buildTemplate, TEMPLATES } from '../shared/templates.js';
 import { scanProject, scanAll, dayIn } from './sync.js';
-import { handleMcp, runBrain, runBoardAI, AI_PROVIDERS } from './brain.js';
+import { handleMcp, runBrain, runBoardAI, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey } from './brain.js';
 import { listBoards, getBoard, boardOut, createBoard, saveBoard, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, sharedFile } from './boards.js';
 import { generateBoard } from '../shared/board.js';
 
@@ -20,7 +21,8 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
   const settingsOf = (u) => safeJson(u.settings);
   const publicUser = (u) => {
     const s = secretsOf(u);
-    return { id: u.id, email: u.email, name: u.name, settings: settingsOf(u), hasAiKey: !!s.aiKey, hasYoutubeKey: !!s.youtubeKey };
+    const keys = aiKeyList(settingsOf(u), s);
+    return { id: u.id, email: u.email, name: u.name, settings: settingsOf(u), hasAiKey: keys.length > 0, aiKeys: keys.map(publicKey), hasYoutubeKey: !!s.youtubeKey };
   };
   const todayOf = (u, q) => (DAY.test(q || '') ? q : dayIn(settingsOf(u).tz));
   const ctxFor = (u, source = 'you') => ({ db, uid: u.id, tz: settingsOf(u).tz, settings: settingsOf(u), youtubeKey: secretsOf(u).youtubeKey || youtubeKey, source });
@@ -146,6 +148,78 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     await db.run('UPDATE users SET secrets = ? WHERE id = ?', enc, user.id);
     return { user: publicUser({ ...user, secrets: enc }) };
   }, { agents: false });
+  // ---------- saved AI keys (write-only: the key itself never comes back) ----------
+  const saveKeys = async (user, sec, keys) => {
+    sec.aiKeys = keys; // the older single key moves into the list the first time the list changes
+    delete sec.aiKey;
+    const enc = encryptJson(secret, sec);
+    await db.run('UPDATE users SET secrets = ? WHERE id = ?', enc, user.id);
+    return publicUser({ ...user, secrets: enc });
+  };
+  const cleanKey = (b, prev = {}) => {
+    const provider = Object.keys(AI_PROVIDERS).includes(b.provider) ? b.provider : prev.provider || 'nvidia';
+    const out = {
+      ...prev,
+      label: String(b.label ?? prev.label ?? '').trim().slice(0, 40) || AI_PROVIDERS[provider].label.split(' (')[0],
+      provider, model: String(b.model ?? prev.model ?? '').trim().slice(0, 120), baseUrl: String(b.baseUrl ?? prev.baseUrl ?? '').trim().slice(0, 300),
+    };
+    if (out.baseUrl && !/^https:\/\//.test(out.baseUrl)) throw new HttpError(400, 'The base URL must start with https://');
+    return out;
+  };
+  // add one key, or several at once (keys: [..] one per line in the app)
+  route('POST', '/api/me/ai-keys', async ({ user, body }) => {
+    const sec = secretsOf(user);
+    const keys = aiKeyList(settingsOf(user), sec);
+    const raw = (Array.isArray(body.keys) ? body.keys : [body.key]).map((k) => String(k || '').trim()).filter(Boolean);
+    const fresh = [...new Set(raw)].filter((k) => !keys.some((x) => x.key === k));
+    if (!fresh.length) throw new HttpError(400, raw.length ? 'These keys are already saved' : 'Paste a key');
+    if (keys.length + fresh.length > 20) throw new HttpError(400, 'You can save up to 20 AI keys');
+    if (fresh.some((k) => k.length > 400 || /\s/.test(k))) throw new HttpError(400, 'A key looks wrong (too long or has spaces)');
+    const base = cleanKey(body);
+    const added = fresh.map((key, i) => ({ ...base, id: crypto.randomBytes(6).toString('hex'), label: fresh.length > 1 ? `${base.label} ${keys.length + i + 1}` : base.label, key }));
+    const all = [...keys, ...added];
+    const out = await saveKeys(user, sec, all);
+    return { user: out, added: added.map((k) => k.id) };
+  }, { agents: false });
+  route('PATCH', '/api/me/ai-keys/:id', async ({ user, params, body }) => {
+    const sec = secretsOf(user);
+    const keys = aiKeyList(settingsOf(user), sec);
+    const i = keys.findIndex((k) => k.id === params.id);
+    if (i < 0) throw new HttpError(404, 'No such key');
+    keys[i] = cleanKey(body, keys[i]);
+    return { user: await saveKeys(user, sec, keys) };
+  }, { agents: false });
+  route('DELETE', '/api/me/ai-keys/:id', async ({ user, params }) => {
+    const sec = secretsOf(user);
+    const keys = aiKeyList(settingsOf(user), sec).filter((k) => k.id !== params.id);
+    return { user: await saveKeys(user, sec, keys) };
+  }, { agents: false });
+  // a real, tiny request with the saved key; the result is kept so the list can show it
+  route('POST', '/api/me/ai-keys/:id/test', async ({ user, params }) => {
+    if (!brainLimit(`aitest:${user.id}`)) throw new HttpError(429, 'Too many tests this hour. Try again later.');
+    const sec = secretsOf(user);
+    const keys = aiKeyList(settingsOf(user), sec);
+    const k = keys.find((x) => x.id === params.id);
+    if (!k) throw new HttpError(404, 'No such key');
+    const result = await testAi(cfgOfKey(k));
+    k.test = { ok: result.ok, tools: result.tools, note: result.note, ms: result.ms, at: result.at };
+    return { result, user: await saveKeys(user, sec, keys) };
+  }, { agents: false });
+  // NVIDIA's own model list (public), so the app can offer every model without typing
+  let nvidiaCache = null;
+  route('GET', '/api/ai-models/nvidia', async () => {
+    if (nvidiaCache && Date.now() - nvidiaCache.at < 3600000) return nvidiaCache.data;
+    const skip = /embed|guard|reward|safety|rerank|vl\b|vila|vision|fuyu|coder|code|kosmos|paligemma|neva|clip|parse|ocr|retriev|deplot|detector|calibration|cosmos|translate|asr|tts|diffusion|med|fin-/i;
+    let ids = [];
+    try {
+      const r = await fetch('https://integrate.api.nvidia.com/v1/models', { signal: AbortSignal.timeout(15000) });
+      ids = ((await r.json()).data || []).map((m) => m.id).filter((id) => !skip.test(id)).sort();
+    } catch { /* offline: the recommended list still works */ }
+    const recommended = AI_PROVIDERS.nvidia.models;
+    const data = { recommended, all: [...new Set([...recommended, ...ids])] };
+    nvidiaCache = { at: Date.now(), data };
+    return data;
+  }, { auth: false });
   route('POST', '/api/me/password', async ({ user, body }) => {
     if (!verifyPassword(String(body.current || ''), user.pass)) throw new HttpError(403, 'Current password is wrong');
     const next = String(body.next || '');
@@ -222,11 +296,11 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
   route('POST', '/api/brain/run', async ({ user, req }) => {
     if (!brainLimit(`brain:${user.id}`)) throw new HttpError(429, 'The brain already ran many times this hour. Try again later.');
     const s = settingsOf(user);
-    const out = await runBrain(ctxFor(user), { provider: s.aiProvider || 'anthropic', model: s.aiModel, baseUrl: s.aiBaseUrl, apiKey: secretsOf(user).aiKey }, { trigger: 'manual' });
+    const out = await runBrain(ctxFor(user), aiChain(s, secretsOf(user)), { trigger: 'manual' });
     return { ...out, world: await readWorld(db, user.id) };
   }, { agents: false });
   // ---------- boards ----------
-  const aiOf = (user) => { const s = settingsOf(user); return { provider: s.aiProvider || 'anthropic', model: s.aiModel, baseUrl: s.aiBaseUrl, apiKey: secretsOf(user).aiKey }; };
+  const aiOf = (user) => aiChain(settingsOf(user), secretsOf(user));
   route('GET', '/api/boards', async ({ user }) => listBoards(db, user.id));
   route('POST', '/api/boards', async ({ user, body }) => {
     let data = body.data;
@@ -277,9 +351,9 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
       if (Date.now() - started > 240000) { report.push({ user: user.id, skipped: 'time limit' }); continue; }
       const item = { user: user.id };
       try { item.scans = (await scanAll(db, user.id, ctxFor(user))).length; } catch (e) { item.scanError = e.message; }
-      const s = settingsOf(user), key = secretsOf(user).aiKey;
-      if (s.aiDaily && key) {
-        try { item.brain = (await runBrain(ctxFor(user), { provider: s.aiProvider || 'anthropic', model: s.aiModel, baseUrl: s.aiBaseUrl, apiKey: key }, { trigger: 'daily', budgetMs: 40000 })).actions.length; }
+      const s = settingsOf(user), chain = aiChain(s, secretsOf(user));
+      if (s.aiDaily && chain.length) {
+        try { item.brain = (await runBrain(ctxFor(user), chain, { trigger: 'daily', budgetMs: 40000 })).actions.length; }
         catch (e) { item.brainError = e.message; }
       }
       report.push(item);

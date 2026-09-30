@@ -1,0 +1,109 @@
+import test, { before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { testAi, withFallback, aiChain, aiKeyList } from '../server/brain.js';
+
+// a stand-in for an OpenAI-compatible AI server (like NVIDIA's): key "good" works and calls tools,
+// key "notools" works but only chats, anything else is rejected
+let mock, mockUrl;
+before(async () => {
+  mock = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const key = String(req.headers.authorization || '').replace('Bearer ', '');
+      const j = JSON.parse(body || '{}');
+      res.setHeader('content-type', 'application/json');
+      if (key === 'limited') { res.statusCode = 429; return res.end(JSON.stringify({ error: { message: 'Rate limit reached' } })); }
+      if (key !== 'good' && key !== 'notools') { res.statusCode = 401; return res.end(JSON.stringify({ error: { message: 'Invalid API key' } })); }
+      const msg = key === 'good' && j.tools?.length
+        ? { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: j.tools[0].function.name, arguments: '{"ok":true}' } }] }
+        : { role: 'assistant', content: 'OK' };
+      res.end(JSON.stringify({ choices: [{ message: msg }] }));
+    });
+  });
+  await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+  mockUrl = `http://127.0.0.1:${mock.address().port}/v1`;
+});
+after(() => mock.close());
+
+test('testAi tells a working key, a key whose model cannot use tools, and a bad key apart', async () => {
+  const cfg = (apiKey) => ({ provider: 'nvidia', model: 'moonshotai/kimi-k2.6', baseUrl: mockUrl, apiKey });
+  const good = await testAi(cfg('good'));
+  assert.equal(good.ok, true); assert.equal(good.tools, true);
+  const chat = await testAi(cfg('notools'));
+  assert.equal(chat.ok, true); assert.equal(chat.tools, false); assert.match(chat.note, /another model/);
+  const bad = await testAi(cfg('nope'));
+  assert.equal(bad.ok, false); assert.match(bad.note, /rejected/);
+  const lim = await testAi(cfg('limited'));
+  assert.equal(lim.ok, false); assert.match(lim.note, /limit/);
+});
+
+test('when the key in use fails or hits its limit, the next saved key takes over', async () => {
+  const secrets = { aiKeys: [
+    { id: 'a', label: 'NVIDIA 1', provider: 'nvidia', model: 'm', baseUrl: mockUrl, key: 'limited' },
+    { id: 'b', label: 'NVIDIA 2', provider: 'nvidia', model: 'm', baseUrl: mockUrl, key: 'nope' },
+    { id: 'c', label: 'NVIDIA 3', provider: 'nvidia', model: 'm', baseUrl: mockUrl, key: 'good' },
+  ] };
+  // the chosen key goes first
+  assert.deepEqual(aiChain({ aiActive: 'b' }, secrets).map((k) => k.id), ['b', 'a', 'c']);
+  const used = [];
+  const out = await withFallback(aiChain({ aiActive: 'a' }, secrets), async (cfg) => {
+    used.push(cfg.id);
+    const t = await testAi(cfg);
+    if (!t.ok) throw new Error(t.note);
+    return { ok: true };
+  });
+  assert.deepEqual(used, ['a', 'b', 'c']);
+  assert.equal(out.usedKey, 'NVIDIA 3');
+  // all failing: one clear message naming each key
+  await assert.rejects(withFallback(aiChain({}, { aiKeys: secrets.aiKeys.slice(0, 2) }), async (cfg) => { const t = await testAi(cfg); if (!t.ok) throw new Error(t.note); }), /All 2 AI keys failed/);
+  // the older single key still counts as a saved key
+  assert.equal(aiKeyList({ aiProvider: 'anthropic' }, { aiKey: 'sk-old' })[0].id, 'main');
+});
+
+// the API: add several keys at once, keys never come back, change a model, test, remove
+const PORT = 19000 + Math.floor(Math.random() * 800);
+const BASE = `http://127.0.0.1:${PORT}`;
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowmap-keys-'));
+let proc;
+const call = async (method, url, body, token) => {
+  const r = await fetch(BASE + url, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  return { status: r.status, body: await r.json().catch(() => null) };
+};
+before(async () => {
+  proc = spawn('node', ['--disable-warning=ExperimentalWarning', 'server/index.js'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dir }, stdio: 'pipe' });
+  for (let i = 0; i < 50; i++) { try { if ((await fetch(BASE + '/api/health')).ok) return; } catch {} await new Promise((r) => setTimeout(r, 100)); }
+  throw new Error('server did not start');
+});
+after(() => { proc.kill(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+test('saved AI keys over the API: bulk add, write-only, edit, test, remove', async () => {
+  const t = (await call('POST', '/api/auth/register', { email: 'k@example.com', password: 'supersecret1', name: 'K' })).body.token;
+  const keys = ['nvapi-AAAA1111', 'nvapi-BBBB2222', 'nvapi-CCCC3333'];
+  const r = await call('POST', '/api/me/ai-keys', { provider: 'nvidia', model: 'moonshotai/kimi-k2.6', label: 'NVIDIA', keys: [...keys, keys[0]] }, t);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.added.length, 3, 'duplicates are dropped');
+  const me = await call('GET', '/api/me', null, t);
+  const list = me.body.user.aiKeys;
+  assert.deepEqual(list.map((k) => k.tail), ['1111', '2222', '3333']);
+  assert.deepEqual(list.map((k) => k.label), ['NVIDIA 1', 'NVIDIA 2', 'NVIDIA 3']);
+  assert.ok(!JSON.stringify(me.body).includes('nvapi-'), 'keys are never sent back');
+  assert.equal((await call('POST', '/api/me/ai-keys', { provider: 'nvidia', keys: [keys[1]] }, t)).status, 400, 'already saved');
+  assert.equal((await call('POST', '/api/me/ai-keys', { provider: 'compatible', baseUrl: 'http://evil.local', keys: ['x1'] }, t)).status, 400, 'https only');
+  const ed = await call('PATCH', `/api/me/ai-keys/${list[1].id}`, { model: 'z-ai/glm-5.3' }, t);
+  assert.equal(ed.body.user.aiKeys[1].model, 'z-ai/glm-5.3');
+  // a real call to NVIDIA with a made-up key: it must come back as a clear failure, never as "works"
+  const tr = await call('POST', `/api/me/ai-keys/${list[0].id}/test`, {}, t);
+  assert.equal(tr.status, 200);
+  assert.equal(tr.body.result.ok, false);
+  assert.equal(tr.body.user.aiKeys[0].test.ok, false);
+  const del = await call('DELETE', `/api/me/ai-keys/${list[2].id}`, null, t);
+  assert.equal(del.body.user.aiKeys.length, 2);
+  const models = await call('GET', '/api/ai-models/nvidia');
+  assert.ok(models.body.recommended.includes('moonshotai/kimi-k2.6'));
+});

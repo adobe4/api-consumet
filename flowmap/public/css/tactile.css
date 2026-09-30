@@ -63,6 +63,7 @@ img { -webkit-user-drag: none; }
 /* ---------- fields ---------- */
 input[type=text], input[type=email], input[type=password], input[type=number], input[type=date], input[type=url], input[type=search], select, textarea {
   -webkit-appearance: none; appearance: none; border: 0; border-radius: 12px; background: var(--bg); box-shadow: var(--sunk-sm); color: var(--text); padding: 10px 12px; }
+input::placeholder, textarea::placeholder { color: var(--faint); opacity: 1; }
 select { background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 30px; }
 input:focus, select:focus, textarea:focus { box-shadow: var(--sunk-sm), 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
 select option { background: var(--panel-solid); }
@@ -222,3 +223,16 @@ h1 .lic, h2 .lic, h3 .lic, .modal-h .lic { color: var(--accent); }
   #toasts { bottom: calc(120px + env(safe-area-inset-bottom)); }
 }
 @media (max-width: 760px) { .app.immersive .stage-top { top: calc(80px + env(safe-area-inset-top, 0px)); } }
+
+/* ---------- saved AI keys ---------- */
+.keyrow.active { box-shadow: var(--raised-sm), 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.keyrow select { max-width: 280px; padding: 6px 30px 6px 10px; font-size: 12.5px; }
+.kchip { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; background: var(--bg); box-shadow: var(--sunk-sm); color: var(--muted); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.kchip.good { color: var(--good); }
+.kchip.warn { color: var(--warn); }
+.kchip.bad { color: var(--bad); }
+details.addkey { margin-top: 8px; padding: 10px 12px; border-radius: 14px; background: var(--bg); box-shadow: var(--sunk-sm); }
+details.addkey summary { cursor: pointer; font-weight: 750; color: var(--accent); list-style: none; }
+details.addkey[open] summary { margin-bottom: 10px; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+@media (max-width: 760px) { .keyrow { flex-wrap: wrap; } .keyrow select { max-width: 100%; } }

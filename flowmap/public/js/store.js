@@ -279,6 +279,13 @@ export async function saveSecrets(secrets) {
   S.user = r.user;
   return r.user;
 }
+// saved AI keys: the server keeps them encrypted and only ever returns the last 4 characters
+const withUser = (r) => { S.user = r.user; return r; };
+export const addAiKeys = (data) => api('POST', '/api/me/ai-keys', data).then(withUser);
+export const updateAiKey = (id, data) => api('PATCH', `/api/me/ai-keys/${id}`, data).then(withUser);
+export const removeAiKey = (id) => api('DELETE', `/api/me/ai-keys/${id}`).then(withUser);
+export const testAiKey = (id) => api('POST', `/api/me/ai-keys/${id}/test`, {}).then(withUser);
+export const nvidiaModels = () => get('/api/ai-models/nvidia');
 export const listAgentKeys = () => get('/api/agent-keys');
 export const createAgentKey = (name) => post('/api/agent-keys', { name });
 export const deleteAgentKey = (id) => del(`/api/agent-keys/${id}`);

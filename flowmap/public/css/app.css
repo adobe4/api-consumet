@@ -69,7 +69,9 @@
   --field: transparent; /* outlined fields on paper; an opaque light fill can render greyed in some Chrome builds */
 }
 /* numbers coloured inline from JS (resource colours) are made for dark; darken them on light paper */
-:root[data-theme="light"] :is(.panel, .tip, .modal, .today, .replay-card, .mini-hud, .topbar) [style*="color:"]:not(.dot):not(i) { filter: brightness(0.68) saturate(1.35); }
+/* bright colours set inline (numbers, labels) read too pale on the light floor: darken them. Text elements only:
+   the hidden inner parts of text fields also carry inline styles, and matching them dimmed every field in dialogs. */
+:root[data-theme="light"] :is(.panel, .tip, .modal, .today, .replay-card, .mini-hud, .topbar) :is(b, strong, span, small, em, td, th, button, .ico)[style*="color:"]:not(.dot) { filter: brightness(0.68) saturate(1.35); }
 /* labels floating over the 3D map stay dark glass in both themes, like map markers */
 .labels3d { --ink: 255, 255, 255; --paper: 22, 20, 18; --text: #f5f1ea; --strong: #fff; --muted: #b3aaa1; --line: rgba(255, 255, 255, 0.14); --line-strong: rgba(255, 255, 255, 0.28); color: var(--text); }
 :root[data-theme="light"] .zone3d { text-shadow: none; opacity: 0.7; filter: brightness(0.6); }
