@@ -1,6 +1,6 @@
 import { h, clear, fmtNum, fmtTZS, fmtDay, store_ls, pct, setText } from './util.js';
 import { auth, setUnauthorizedHandler } from './api.js';
-import { S, snap, dayFraction, project, projects, on, loadAll, resetLocal, refreshToday, select, setTool, setOffset, setScenario, currentAlerts,
+import { S, snap, dayFraction, project, projects, on, loadAll, resetLocal, refreshToday, select, setTool, setOffset, currentAlerts,
   HORIZON_DAYS, resetWorld, moveProject, addDays, hasSample } from './store.js';
 import { RESOURCES, KINDS } from '/shared/engine.js';
 import { createRenderer as createRenderer2d } from './renderer.js';
@@ -23,7 +23,6 @@ const panelCtrl = { renderer: null };
 let hintText = '';
 let playTimer = null;
 
-const SCEN = { planned: 'Planned tasks', keep: 'Keep my pace', stop: 'Stop posting' };
 
 on('toast', ({ message, kind }) => toast(message, kind));
 dialogHooks.logout = () => logout();
@@ -108,11 +107,12 @@ async function buildApp() {
   window.addEventListener('flowmap-theme', () => { renderPanels(); updateAll(); }); // charts and inline colours redraw
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !hasModal()) {
-      if (S.tool) setTool(null); else if (S.selection) select(null); else $('dock').classList.remove('open');
+      if (S.tool) setTool(null); else if (S.selection) select(null); else setSheet('peek');
     }
   });
-  $('sheet-toggle').addEventListener('click', () => $('dock').classList.toggle('open'));
-  $('stage').addEventListener('pointerdown', () => { if (window.innerWidth <= 760) $('dock').classList.remove('open'); });
+  $('sheet-toggle').addEventListener('click', () => setSheet(sheetState() === 'peek' ? 'half' : 'peek'));
+  initSheet();
+  $('stage').addEventListener('pointerdown', () => { if (phone() && sheetState() !== 'peek') setSheet('peek'); });
   window.addEventListener('resize', () => renderer.resize());
 }
 
@@ -235,7 +235,7 @@ function updateTicker() {
   const host = $('stage-top');
   clear(host);
   // the future-view label sits in the same stack as alerts, so the two never cover each other
-  if (S.offset) host.append(h('div', { class: 'future-banner inline' }, `⏩ FUTURE VIEW · ${fmtDay(snap().day)} · ${SCEN[S.scenario]}`));
+  if (S.offset) host.append(h('div', { class: 'future-banner inline' }, `⏩ FUTURE VIEW · ${fmtDay(snap().day)}`));
   if (hintText) host.append(h('div', { class: 'tool-hint' }, hintText, ' ', h('button', { class: 'btn sm', style: 'margin-left:8px', onclick: () => setTool(null) }, 'Cancel')));
   const a = currentAlerts().find((x) => x.level === 'critical') || currentAlerts().find((x) => x.level === 'warn' && x.projectId);
   // minimized alerts stay small for the rest of the day; a different alert still shows in full
@@ -321,23 +321,67 @@ function showTip(info, x, y) {
 // ---------- timeline ----------
 const tl = {};
 function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; if (tl.play) setText(tl.play, '▶'); } }
+// ---------- the panel on a phone: a bottom sheet (peek bar with the tabs, half, or full) ----------
+const sheetState = () => $('dock').dataset.sheet || 'peek';
+const phone = () => window.matchMedia('(max-width: 760px)').matches;
+function setSheet(state) {
+  const dock = $('dock');
+  dock.dataset.sheet = state;
+  dock.classList.toggle('open', state !== 'peek');
+}
+function initSheet() {
+  const dock = $('dock');
+  // the sheet sits right on top of the timeline, whatever its height
+  const tlEl = $('timeline');
+  new ResizeObserver(() => document.documentElement.style.setProperty('--tl-h', `${tlEl.offsetHeight}px`)).observe(tlEl);
+  const grab = h('div', { class: 'sheet-grab', role: 'button', 'aria-label': 'Drag or tap to open the panel', tabindex: 0 }, h('i'));
+  dock.prepend(grab);
+  setSheet('peek');
+  // tapping a tab while the sheet is down opens it
+  $('tabs').addEventListener('click', () => { if (phone() && sheetState() === 'peek') setSheet('half'); });
+  grab.addEventListener('click', () => { if (!dragged) setSheet(sheetState() === 'peek' ? 'half' : sheetState() === 'half' ? 'full' : 'peek'); });
+  grab.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); grab.click(); } });
+  let start = null, dragged = false;
+  const down = (e) => {
+    if (!phone() || (e.target.closest('button, input, a') && e.currentTarget !== grab)) return;
+    start = { y: e.clientY, t: dock.getBoundingClientRect().top, id: e.pointerId }; dragged = false;
+    if (e.currentTarget === grab) grab.setPointerCapture?.(e.pointerId); // a fast flick leaves the handle at once
+  };
+  const move = (e) => {
+    if (!start || e.pointerId !== start.id) return;
+    const dy = e.clientY - start.y;
+    if (!dragged && Math.abs(dy) < 6) return;
+    if (!dragged) { dragged = true; dock.classList.add('dragging'); dock.setPointerCapture?.(e.pointerId); }
+    const top = Math.max(window.innerHeight * 0.06, start.t + dy);
+    dock.style.transform = `translateY(${top - (window.innerHeight - dock.offsetHeight)}px)`;
+  };
+  const up = (e) => {
+    if (!start) return;
+    const was = dragged;
+    start = null;
+    if (!was) return;
+    dock.classList.remove('dragging');
+    const top = dock.getBoundingClientRect().top / window.innerHeight;
+    dock.style.transform = '';
+    setSheet(top < 0.3 ? 'full' : top < 0.72 ? 'half' : 'peek');
+    setTimeout(() => { dragged = false; }, 0);
+    e.preventDefault?.();
+  };
+  for (const el of [grab, $('tabs')]) el.addEventListener('pointerdown', down);
+  dock.addEventListener('pointermove', move);
+  dock.addEventListener('pointerup', up); dock.addEventListener('pointercancel', up);
+}
+
 function buildTimeline() {
   tl.range = h('input', { type: 'range', min: 0, max: 90, value: 0, 'aria-label': 'Time travel', oninput: (e) => { stopPlay(); setOffset(Number(e.target.value)); } });
-  tl.play = h('button', { class: 'btn icon', title: 'Play the future', onclick: () => {
-    if (playTimer) { stopPlay(); return; }
-    if (S.offset >= 90) setOffset(0);
-    setText(tl.play, '⏸');
-    playTimer = setInterval(() => { if (S.offset >= 90) { stopPlay(); return; } setOffset(S.offset + 1); }, 700);
-  } }, '▶');
-  tl.seg = h('div', { class: 'seg' }, Object.entries(SCEN).map(([k, label]) => h('button', { dataset: { k }, title: k === 'planned' ? 'Only the tasks on your list happen' : k === 'keep' ? 'You keep posting at each project\'s rhythm' : 'Nothing more happens', onclick: () => setScenario(k) }, label)));
   tl.when = h('div', { class: 'when' });
   tl.jump = h('div', { class: 'row', style: 'gap:4px' }, [['Today', 0], ['+7d', 7], ['+30d', 30], ['+90d', 90]].map(([t, n]) => h('button', { class: 'btn sm ghost', onclick: () => { stopPlay(); setOffset(n); } }, t)));
-  clear($('timeline')).append(tl.play, tl.seg, h('div', { class: 'track' }, tl.range, h('div', { class: 'ticks' }, h('span', null, 'Today'), h('span', null, '+30d'), h('span', null, '+60d'), h('span', null, '+90d'))), tl.jump, tl.when);
+  // one slim row: slide into the future, jump, and see the day (the forecast panel compares scenarios)
+  clear($('timeline')).append(h('div', { class: 'track' }, tl.range, h('div', { class: 'ticks' }, h('span', null, 'Today'), h('span', null, '+30d'), h('span', null, '+60d'), h('span', null, '+90d'))), tl.jump, tl.when);
 }
 function updateTimeline() {
   if (!tl.range) return;
   tl.range.value = S.offset;
-  for (const b of tl.seg.children) b.classList.toggle('on', b.dataset.k === S.scenario);
   const d = snap();
   clear(tl.when).append(h('b', null, S.offset === 0 ? 'Today' : `+${S.offset} days`), h('small', null, fmtDay(d.day)));
   $('timeline').classList.toggle('future', S.offset > 0);

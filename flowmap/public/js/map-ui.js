@@ -359,7 +359,7 @@ function streakDays() {
 
 export function updateToday() {
   if (!todayEl || !S.sim) return;
-  const collapsed = store_ls.get('flowmap.todayCollapsed', window.innerWidth <= 760);
+  const collapsed = store_ls.get('flowmap.todayCollapsed', true); // a small pill until opened
   const due = S.world.tasks.filter((t) => t.status !== 'done' && t.due && t.due <= S.today && project(t.projectId))
     .sort((a, b) => a.due.localeCompare(b.due));
   const doneToday = S.world.tasks.filter((t) => t.status === 'done' && t.doneOn === S.today).length;

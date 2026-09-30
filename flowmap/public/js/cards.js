@@ -407,10 +407,13 @@ export function createRenderer(canvas, hooks) {
     const phone = sf.size.W < 760;
     const ins = { top: phone ? 80 : 64, bottom: 20, left: 8, right: phone ? 64 : 72 };
     const mid = root.top + root.height / 2;
-    for (const e of stage.querySelectorAll('.stage-top > *, .future-banner, .today, .legend')) {
-      if (e.hidden || e.offsetParent === null) continue;
+    const dock = document.querySelector('.dock');
+    const over = [...stage.querySelectorAll('.stage-top > *, .future-banner, .today, .legend')];
+    if (dock && getComputedStyle(dock).position === 'fixed') over.push(dock); // the phone's bottom sheet
+    for (const e of over) {
+      if (e.hidden || (e.offsetParent === null && getComputedStyle(e).position !== 'fixed')) continue;
       const r = e.getBoundingClientRect();
-      if (!r.width || !r.height || r.bottom < root.top || r.top > root.bottom) continue;
+      if (!r.width || !r.height || r.bottom < root.top || r.top > root.bottom || r.right < root.left || r.left > root.right) continue;
       // a panel over the top or bottom part of the map: keep the system above or below it
       if (r.top + r.height / 2 < mid) ins.top = Math.max(ins.top, r.bottom - root.top + 10);
       else ins.bottom = Math.max(ins.bottom, root.bottom - r.top + 10);

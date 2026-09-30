@@ -56,6 +56,7 @@ export function openTab(name) {
   store_ls.set('flowmap.tab', name);
   render();
   els.dock.classList.add('open');
+  if (els.dock.dataset.sheet === 'peek') els.dock.dataset.sheet = 'half'; // phone: raise the bottom sheet
 }
 
 function refresh() {

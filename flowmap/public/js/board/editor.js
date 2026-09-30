@@ -19,7 +19,7 @@ const ICON_STICKERS = ['arrow-right', 'arrow-left', 'arrow-up', 'arrow-down', 'a
 const STICKERS = ['👉', '👈', '👆', '👇', '➡️', '⬅️', '⬆️', '⬇️', '↗️', '✅', '❌', '⭐', '🔥', '🚀', '💡', '🎯', '💰', '📈', '📉', '❤️', '👏', '🎉', '😂', '🤯', '😮', '⚠️', '❓', '❗', '💯', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '🎬', '📌', '🧠', '⏰'];
 const DEF_FINISH = { note: 'tinted', card: 'soft', shape: 'solid', frame: 'raised', flip: 'soft', image: 'soft', video: 'soft', file: 'soft', link: 'soft', project: 'soft', checklist: 'soft', prompt: 'soft', text: 'none', sticker: 'none', ink: 'none', hide: 'none' };
 const TOOLS = [
-  ['select', '↖', 'Select & move (V)', 'v'], ['hand', '✋', 'Move the board (H or hold Space)', 'h'],
+  ['select', '↖', 'Select & move (V)', 'v'], ['multi', 'i:square-dashed-mouse-pointer', 'Select several (M): tap items to add or remove them, drag a box around them', 'm'], ['hand', '✋', 'Move the board (H or hold Space)', 'h'],
   ['note', '🗒️', 'Sticky note (N)', 'n'], ['card', '▭', 'Card (C)', 'c'], ['text', 'i:type', 'Text (T)', 't'], ['shape', '◆', 'Shapes (S)', 's'],
   ['frame', '▦', 'Frame / slide (F)', 'f'], ['flip', '🂠', 'Flip card', ''], ['checklist', '☑', 'Checklist', ''], ['prompt', '✦', 'Prompt with copy button (P)', 'p'],
   ['hide', '🙈', 'Hide: a blur or cover you tap away to reveal (R)', 'r'],
@@ -342,15 +342,19 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (['note', 'card', 'text', 'shape', 'frame', 'flip', 'checklist', 'prompt', 'sticker', 'link', 'hide'].includes(tool)) { startCreate(e, w); return 'handled'; }
     const itId = hitItem(e);
     const lkId = e.target.closest?.('[data-link]')?.dataset.link;
+    const multi = tool === 'multi';
     if (itId) {
       if (e.shiftKey || e.ctrlKey || e.metaKey) { toggleSel(itId); return 'handled'; }
+      // select several: a tap adds or removes; dragging moves everything selected
+      if (multi) { const had = sel.has(itId); if (!had) select([itId], { add: true }); startMove(e, w, had ? itId : null); return 'handled'; }
       if (!sel.has(itId)) select([itId]);
       startMove(e, w);
       return 'handled';
     }
-    if (lkId) { select([lkId], { add: e.shiftKey }); return 'handled'; }
-    if (e.pointerType !== 'mouse') { if (!e.shiftKey) select([]); return 'pan'; }
-    startMarquee(e, w);
+    if (lkId) { select([lkId], { add: e.shiftKey || multi }); return 'handled'; }
+    // on touch an empty-space drag moves the board, unless you are selecting several
+    if (e.pointerType !== 'mouse' && !multi) { if (!e.shiftKey) select([]); return 'pan'; }
+    startMarquee(e, w, multi);
     return 'handled';
   }
   const hitItem = (e) => { const el = hitAt(e).closest?.('.bi, .ink-path'); return el?.dataset.id || null; };
@@ -457,7 +461,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   const snapOn = () => data.settings.snap !== false;
   const snap = (v) => (snapOn() ? Math.round(v / 11) * 11 : v);
 
-  function startMove(e, w) {
+  function startMove(e, w, tapToDrop = null) {
     const ids = [...sel].map(byId).filter((i) => i && !i.locked);
     if (!ids.length) return;
     // frames carry what sits inside them
@@ -475,11 +479,11 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (snapOn()) { const m = moving.find((m) => m.it === lead) || moving[0]; dx = snap(m.x + dx) - m.x; dy = snap(m.y + dy) - m.y; }
       for (const m of moving) { m.it.x = m.x + dx; m.it.y = m.y + dy; const el = els.get(m.it.id); if (el) { el.style.left = `${m.it.x}px`; el.style.top = `${m.it.y}px`; } if (m.it.type === 'ink') renderInk(m.it); }
       renderLinks(); updateSel();
-    }, () => { root.classList.remove('dragging'); const moved = drag?.moved; drag = null; if (moved) commit(); else before = null; updateSel(); });
+    }, () => { root.classList.remove('dragging'); const moved = drag?.moved; drag = null; if (moved) commit(); else { before = null; if (tapToDrop) sel.delete(tapToDrop); } updateSel(); });
   }
-  function startMarquee(e, w) {
+  function startMarquee(e, w, add = false) {
     const start = sf.local(e);
-    if (!e.shiftKey) select([]);
+    if (!e.shiftKey && !add) select([]);
     const base = new Set(sel);
     drag = { kind: 'marquee' };
     track(e, (ev) => {

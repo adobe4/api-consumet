@@ -178,3 +178,47 @@ input[type=range] { accent-color: var(--accent); }
 .chip .lic { width: 14px; height: 14px; }
 .toast .lic { width: 16px; height: 16px; color: var(--accent); }
 h1 .lic, h2 .lic, h3 .lic, .modal-h .lic { color: var(--accent); }
+
+/* ---------- slim timeline: slide into the future ---------- */
+.timeline { gap: 14px; padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); }
+.timeline .when { min-width: 96px; }
+.timeline .when b { font-size: 13px; }
+.timeline .when small { font-size: 11px; }
+
+/* ---------- Today: a small pill that opens into the list ---------- */
+.today.collapsed { width: auto; max-width: calc(100% - 90px); }
+.today.collapsed .today-head { padding: 6px 12px 6px 7px; gap: 8px; }
+.today.collapsed .today-head .ring { width: 30px; height: 30px; }
+.today.collapsed .today-head .ring span { width: 23px; height: 23px; font-size: 9.5px; }
+.today.collapsed .today-head small { display: none; }
+
+@media (max-width: 760px) {
+  /* the timeline is one thin row */
+  .timeline { position: relative; z-index: 35; flex-wrap: nowrap; gap: 10px; padding: 6px 12px calc(6px + env(safe-area-inset-bottom)); } /* above the lowered sheet */
+  .timeline .track { order: 0; flex: 1 1 auto; min-width: 0; }
+  .timeline .ticks, .timeline .row { display: none; }
+  .timeline .when { min-width: 0; text-align: right; line-height: 1.15; }
+  .timeline .when small { font-size: 10px; }
+  /* Today lives in full screen only on a phone */
+  .today { display: none; }
+  .app.immersive:not(.clean) .today { display: block; top: auto; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+
+  /* the panel is a bottom sheet: a peek bar with the tabs, half open, or full */
+  .sheet-toggle { display: none !important; }
+  .dock { --peek: 66px; position: fixed; left: 0; right: 0; bottom: var(--tl-h, 52px); top: auto; width: 100%; height: calc(100dvh - var(--tl-h, 52px) - 6dvh); border: 0; border-radius: 22px 22px 0 0; background: var(--bg); box-shadow: 0 -10px 30px -12px var(--sh-d), 0 -1px 0 var(--edge); z-index: 30; transform: translateY(calc(100% - var(--peek))); transition: transform 0.32s var(--smooth); display: flex; flex-direction: column; }
+  .dock[data-sheet="half"] { transform: translateY(45%); }
+  .dock[data-sheet="full"] { transform: none; }
+  .dock.dragging { transition: none; }
+  .dock .sheet-grab { flex: none; display: grid; place-items: center; height: 18px; cursor: grab; touch-action: none; }
+  .dock .sheet-grab i { width: 42px; height: 5px; border-radius: 99px; background: var(--line-strong); box-shadow: var(--sunk-sm); }
+  .dock .tabs { flex: none; padding: 0 10px 8px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
+  .dock .tabs::-webkit-scrollbar { display: none; }
+  .dock[data-sheet="peek"] .panel { visibility: hidden; }
+  .dock .panel { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .zoom { bottom: calc(var(--tl-h, 52px) + 78px); gap: 6px; }
+  .zoom .btn { width: 40px; height: 40px; min-width: 40px; padding: 0; justify-content: center; border-radius: 13px; }
+  .zoom .btn .lic { width: 17px; height: 17px; }
+  .app.immersive .zoom { bottom: calc(12px + env(safe-area-inset-bottom)); }
+  #toasts { bottom: calc(120px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 760px) { .app.immersive .stage-top { top: calc(80px + env(safe-area-inset-top, 0px)); } }
