@@ -99,6 +99,38 @@ CREATE TABLE IF NOT EXISTS notes (
   text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id, at);
+CREATE TABLE IF NOT EXISTS boards (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  icon TEXT NOT NULL DEFAULT '',
+  data TEXT NOT NULL DEFAULT '{}',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_boards_user ON boards(user_id);
+CREATE TABLE IF NOT EXISTS board_files (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  board_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_board_files_board ON board_files(board_id);
+CREATE TABLE IF NOT EXISTS board_viewers (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  board_id INTEGER NOT NULL,
+  hash TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL DEFAULT '',
+  first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+  last_seen TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_board_viewers_board ON board_viewers(board_id);
 CREATE TABLE IF NOT EXISTS agent_keys (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -111,8 +143,9 @@ CREATE TABLE IF NOT EXISTS agent_keys (
 `;
 
 // columns added after the first release, for databases created before them
-const ADDED = [['users', 'secrets', "TEXT NOT NULL DEFAULT ''"], ['projects', 'sources', "TEXT NOT NULL DEFAULT '[]'"], ['tasks', 'source', "TEXT NOT NULL DEFAULT ''"]];
-const VERSION = 2;
+const ADDED = [['users', 'secrets', "TEXT NOT NULL DEFAULT ''"], ['projects', 'sources', "TEXT NOT NULL DEFAULT '[]'"], ['tasks', 'source', "TEXT NOT NULL DEFAULT ''"], ['links', 'look', "TEXT NOT NULL DEFAULT '{}'"],
+  ['boards', 'share_token', 'TEXT'], ['boards', 'share_mode', "TEXT NOT NULL DEFAULT 'off'"], ['boards', 'share_pass', "TEXT NOT NULL DEFAULT ''"], ['boards', 'share_seats', 'INTEGER NOT NULL DEFAULT 0']];
+const VERSION = 3;
 
 const toArgs = (args) => args.map((a) => (a === undefined ? null : typeof a === 'boolean' ? Number(a) : a));
 const plain = (row) => (row ? Object.fromEntries(Object.entries(row)) : undefined);

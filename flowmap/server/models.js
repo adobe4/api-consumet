@@ -66,6 +66,7 @@ export const RES = {
       cost: ['cost', T.num(0, 1e10), false, 0],
       delay: ['delay', T.int(0, 90), false, 0],
       note: ['note', T.str(200), false, ''],
+      look: ['look', T.obj, false, {}],
     },
   },
   tasks: {
@@ -104,14 +105,14 @@ export const RES = {
   },
 };
 
-const JSON_COLS = new Set(['cfg', 'targets', 'sources']);
+const JSON_COLS = new Set(['cfg', 'targets', 'sources', 'look']);
 const BOOL_COLS = new Set(['archived', 'sample']);
 
 export function fromRow(res, row) {
   const out = { id: row.id };
   for (const [api, [col]] of Object.entries(RES[res].fields)) {
     let v = row[col];
-    if (JSON_COLS.has(col)) { try { v = JSON.parse(v ?? ''); } catch { v = col === 'cfg' ? {} : []; } }
+    if (JSON_COLS.has(col)) { try { v = JSON.parse(v ?? ''); } catch { v = col === 'cfg' || col === 'look' ? {} : []; } }
     else if (BOOL_COLS.has(col)) v = !!v;
     out[api] = v;
   }
@@ -150,7 +151,7 @@ export async function deleteProjects(q, uid, ids) {
   await q.run(`DELETE FROM projects WHERE user_id = ? AND id IN (${list})`, uid, ...ids);
 }
 export async function deleteUser(q, uid) {
-  for (const t of ['links', 'tasks', 'logs', 'scans', 'notes', 'agent_keys', 'projects']) await q.run(`DELETE FROM ${t} WHERE user_id = ?`, uid);
+  for (const t of ['links', 'tasks', 'logs', 'scans', 'notes', 'agent_keys', 'board_viewers', 'board_files', 'boards', 'projects']) await q.run(`DELETE FROM ${t} WHERE user_id = ?`, uid);
   await q.run('DELETE FROM users WHERE id = ?', uid);
 }
 

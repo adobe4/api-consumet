@@ -4,7 +4,9 @@ import { RES, HttpError, fromRow, toCols, readWorld, loadWorld, ownedProjectIds,
 import { simulate, alerts, suggestions } from '../shared/engine.js';
 import { buildTemplate, TEMPLATES } from '../shared/templates.js';
 import { scanProject, scanAll, dayIn } from './sync.js';
-import { handleMcp, runBrain, AI_PROVIDERS } from './brain.js';
+import { handleMcp, runBrain, runBoardAI, AI_PROVIDERS } from './brain.js';
+import { listBoards, getBoard, boardOut, createBoard, saveBoard, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, sharedFile } from './boards.js';
+import { generateBoard } from '../shared/board.js';
 
 const safeJson = (s) => { try { return JSON.parse(s); } catch { return {}; } };
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -223,6 +225,36 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     const out = await runBrain(ctxFor(user), { provider: s.aiProvider || 'anthropic', model: s.aiModel, baseUrl: s.aiBaseUrl, apiKey: secretsOf(user).aiKey }, { trigger: 'manual' });
     return { ...out, world: await readWorld(db, user.id) };
   }, { agents: false });
+  // ---------- boards ----------
+  const aiOf = (user) => { const s = settingsOf(user); return { provider: s.aiProvider || 'anthropic', model: s.aiModel, baseUrl: s.aiBaseUrl, apiKey: secretsOf(user).aiKey }; };
+  route('GET', '/api/boards', async ({ user }) => listBoards(db, user.id));
+  route('POST', '/api/boards', async ({ user, body }) => {
+    let data = body.data;
+    if (!data && body.spec) { const g = generateBoard(body.spec); data = { v: 1, items: g.items, links: g.links, order: g.order, settings: {} }; }
+    return createBoard(db, user.id, { name: body.name, icon: body.icon, data });
+  });
+  route('POST', '/api/boards/generate', async ({ user, body }) => {
+    if (!brainLimit(`brain:${user.id}`)) throw new HttpError(429, 'The AI already ran many times this hour. Try again later.');
+    const request = String(body.prompt || '').trim();
+    if (request.length < 4) throw new HttpError(400, 'Describe the board you want');
+    const out = await runBoardAI(ctxFor(user), aiOf(user), request);
+    return { ...out, board: boardOut(await getBoard(db, user.id, out.board.id)) };
+  }, { agents: false });
+  route('GET', '/api/boards/:id', async ({ user, params }) => boardOut(await getBoard(db, user.id, params.id)));
+  route('PUT', '/api/boards/:id', async ({ user, params, body }) => saveBoard(db, user.id, params.id, body));
+  route('DELETE', '/api/boards/:id', async ({ user, params }) => deleteBoard(db, user.id, params.id));
+  route('POST', '/api/boards/:id/duplicate', async ({ user, params }) => duplicateBoard(db, user.id, params.id));
+  route('POST', '/api/boards/:id/files', async ({ user, params, body }) => addFile(db, user.id, { ...body, boardId: params.id }));
+  route('GET', '/api/board-files/:id', async ({ user, params }) => getFile(db, user.id, params.id));
+  route('GET', '/api/boards/:id/share', async ({ user, params }) => shareInfo(db, user.id, params.id), { agents: false });
+  route('PUT', '/api/boards/:id/share', async ({ user, params, body }) => setShare(db, user.id, params.id, body), { agents: false });
+  route('POST', '/api/boards/:id/share/reset', async ({ user, params }) => resetShare(db, user.id, params.id), { agents: false });
+  route('DELETE', '/api/boards/:id/share/viewers/:vid', async ({ user, params }) => removeViewer(db, user.id, params.id, params.vid), { agents: false });
+  // public side of a shared link (no account needed)
+  route('GET', '/api/share/:token', async ({ params }) => shareMeta(db, params.token), { auth: false });
+  route('POST', '/api/share/:token/open', async ({ params, body, req }) => openShare(db, params.token, body, { tryPassword: () => authLimit(`share:${clientIp(req)}:${params.token}`) }), { auth: false });
+  route('GET', '/api/share/:token/files/:fid', async ({ params, query }) => sharedFile(db, params.token, query.get ? query.get('viewer') : query.viewer, params.fid), { auth: false });
+
   route('DELETE', '/api/notes/:id', async ({ user, params }) => {
     await db.run('DELETE FROM notes WHERE id = ? AND user_id = ?', Number(params.id), user.id);
     return { ok: true };
@@ -376,7 +408,7 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
       }
       throw new HttpError(404, 'No such endpoint');
     } catch (e) {
-      if (e instanceof HttpError) return sendJson(res, e.status, { error: e.message });
+      if (e instanceof HttpError) return sendJson(res, e.status, { error: e.message, ...(e.latest ? { latest: e.latest } : {}) });
       if (String(e?.message || '').includes('UNIQUE')) return sendJson(res, 409, { error: 'Already exists' });
       console.error(e);
       return sendJson(res, 500, { error: 'Server error' });

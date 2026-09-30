@@ -5,6 +5,7 @@ import { simulate, alerts, suggestions, KIND_KEYS, RESOURCE_KEYS, TASK_TYPES, KI
 import { RES, HttpError, fromRow, toCols, readWorld, insertSql, ownedProjectIds } from './models.js';
 import { scanAll, scanProject, dayIn } from './sync.js';
 import { goalProgress, groupOf } from '../shared/goals.js';
+import { BOARD_TOOLS } from './boards.js';
 
 const round = (n, d = 0) => (Number.isFinite(n) ? Math.round(n * 10 ** d) / 10 ** d : null);
 const PROJECT_ARG = { type: 'string', description: 'Project id or name' };
@@ -185,6 +186,8 @@ export const TOOLS = [
       return { scanned: results.map((r) => ({ platform: r.platform, url: r.url, ok: r.ok, error: r.error || undefined, data: r.data })) };
     } },
 ];
+const CORE_TOOLS = TOOLS.slice(); // the daily review works on the system, not on boards
+TOOLS.push(...BOARD_TOOLS);
 const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
 export async function callTool(ctx, name, args) {
@@ -207,7 +210,7 @@ export async function handleMcp(ctx, msg) {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: {} },
         serverInfo: { name: 'flowmap', title: 'FlowMap living system', version: '2.0.0' },
-        instructions: 'You are a neuron inside the owner\'s living success system (FlowMap). Call get_overview first. Then act: adjust numbers that are clearly wrong, write short notes, and give a few concrete tasks that raise the weakest projects that matter most. Money is in TZS.',
+        instructions: 'You are a neuron inside the owner\'s living success system (FlowMap). Call get_overview first. Then act: adjust numbers that are clearly wrong, write short notes, and give a few concrete tasks that raise the weakest projects that matter most. Money is in TZS. You can also build boards (create_board, add_to_board): slide decks for tutorial or strategy videos, workflows, mind maps, course outlines, plans.',
       });
     }
     case 'ping': return reply({});
@@ -238,11 +241,11 @@ Each run: read the overview, then act like a neuron in the system:
 - Leave 1 to 3 short notes (add_note) with what you noticed.
 Respect what the owner wrote about themselves and their goals. Be specific (what to post, where, what to mention). Finish with a two-sentence summary for the owner.`;
 
-async function anthropicTurn(cfg, system, messages) {
+async function anthropicTurn(cfg, system, messages, tools = CORE_TOOLS) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: cfg.model || AI_PROVIDERS.anthropic.model, max_tokens: 2500, system, messages, tools: TOOLS.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })) }),
+    body: JSON.stringify({ model: cfg.model || AI_PROVIDERS.anthropic.model, max_tokens: 8000, system, messages, tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })) }),
     signal: AbortSignal.timeout(55000),
   });
   const j = await r.json().catch(() => ({}));
@@ -253,13 +256,13 @@ async function anthropicTurn(cfg, system, messages) {
   return { calls, text, answer: (results) => messages.push({ role: 'user', content: results.map((x) => ({ type: 'tool_result', tool_use_id: x.id, content: x.content, is_error: x.isError })) }) };
 }
 
-async function openaiTurn(cfg, system, messages) {
+async function openaiTurn(cfg, system, messages, tools = CORE_TOOLS) {
   const base = (cfg.baseUrl || AI_PROVIDERS.openai.baseUrl).replace(/\/+$/, '');
   if (!messages.length || messages[0].role !== 'system') messages.unshift({ role: 'system', content: system });
   const r = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
-    body: JSON.stringify({ model: cfg.model, messages, tools: TOOLS.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
+    body: JSON.stringify({ model: cfg.model, messages, tools: tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
     signal: AbortSignal.timeout(55000),
   });
   const j = await r.json().catch(() => ({}));
@@ -299,6 +302,40 @@ export async function runBrain(ctx, ai, { trigger = 'manual', budgetMs = 50000 }
   const summary = (text || 'Review finished.').trim().slice(0, 1500);
   await addNote(ctx.db, ctx.uid, { source: 'ai', kind: 'brain', text: summary });
   return { summary, actions };
+}
+
+// ---------- built-in AI: build a board from a request ----------
+const BOARD_SYSTEM = `You design boards inside FlowMap, a creator's planning and presentation canvas. The owner will present boards full screen and screen-record them for tutorials, strategy videos and courses.
+Read the request, look at the system overview if it helps (get_overview), then call create_board exactly once with a well-structured spec:
+- For a video, lesson or pitch use layout "slides": 5 to 12 slides, each with a short punchy title, 2 to 6 points ("Heading: detail"), an emoji, and speaker notes with what to say.
+- For processes use "workflow" with nodes and edges; for brainstorming "mindmap"; for task boards "kanban"; for plans over time "timeline".
+Write in the language the owner used. Be concrete and specific to their projects when relevant. Finish with one sentence saying what you built.`;
+const BOARD_AI_TOOLS = [TOOL_BY_NAME.get('get_overview'), TOOL_BY_NAME.get('create_board'), TOOL_BY_NAME.get('list_boards')];
+
+export async function runBoardAI(ctx, ai, request) {
+  if (!ai?.apiKey) throw new HttpError(400, 'Add an AI key in the 🧠 Brain settings first, or connect your own AI agent over MCP');
+  if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in the 🧠 Brain settings');
+  const bctx = { ...ctx, source: 'ai' };
+  const turn = ai.provider === 'anthropic' ? anthropicTurn : openaiTurn;
+  const messages = [{ role: 'user', content: String(request).slice(0, 6000) }];
+  let created = null, text = '';
+  for (let step = 0; step < 5 && !created; step++) {
+    let t;
+    try { t = await turn(ai, BOARD_SYSTEM, messages, BOARD_AI_TOOLS); } catch (e) { throw new HttpError(502, e.name === 'TimeoutError' ? 'The AI provider took too long to answer' : e.message); }
+    text = t.text || text;
+    if (!t.calls.length) break;
+    const results = [];
+    for (const c of t.calls) {
+      try {
+        const out = await callTool(bctx, c.name, c.args);
+        if (c.name === 'create_board') created = out.created;
+        results.push({ id: c.id, content: JSON.stringify(out).slice(0, 12000) });
+      } catch (e) { results.push({ id: c.id, content: e.message, isError: true }); }
+    }
+    t.answer(results);
+  }
+  if (!created) throw new HttpError(502, text ? `The AI did not build a board: ${text.slice(0, 300)}` : 'The AI did not build a board. Try describing it differently.');
+  return { board: created, summary: (text || '').trim().slice(0, 600) };
 }
 
 export { addNote, addDays };
