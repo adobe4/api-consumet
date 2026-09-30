@@ -139,3 +139,20 @@ test('connection styles are saved on project pipes', async () => {
   const w = (await call('GET', '/api/world', null, A)).body;
   assert.equal(w.links.find((x) => x.id === l.id).look.dash, 'dashed');
 });
+
+test('New Beginning template: real projects, pipes, tasks, goals and its board, once', async () => {
+  const r = await call('POST', '/api/world/reset', { template: 'newstart' }, B);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.projects.map((p) => p.name).sort(), ['AI Mikeka', 'Blonxin', 'Domo Sauti AI', 'Kuni Box', 'Vinei TV']);
+  assert.equal(r.body.links.length, 3);
+  assert.equal(r.body.tasks.filter((t) => t.status === 'todo').length, 6);
+  assert.equal(r.body.projects.find((p) => p.name === 'AI Mikeka').cfg.price, 15000);
+  assert.ok(r.body.projects.every((p) => p.cfg.goal));
+  const list = async () => (await call('GET', '/api/boards', null, B)).body.boards || (await call('GET', '/api/boards', null, B)).body;
+  let nb = (await list()).filter((b) => b.name === 'New Beginning');
+  assert.equal(nb.length, 1);
+  assert.equal(nb[0].slides, 9);
+  await call('POST', '/api/world/reset', { template: 'newstart' }, B);
+  nb = (await list()).filter((b) => b.name === 'New Beginning');
+  assert.equal(nb.length, 1, 'loading it again adds no copy');
+});

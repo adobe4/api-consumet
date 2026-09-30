@@ -54,7 +54,7 @@ export function showAuth(root, onDone) {
       h('div', { class: 'field' }, h('label', { for: 'a-pass' }, mode === 'register' ? 'Password (8+ characters)' : 'Password'),
         h('input', { id: 'a-pass', type: 'password', autocomplete: mode === 'register' ? 'new-password' : 'current-password', value: state.password, oninput: (e) => { state.password = e.target.value; } })),
       mode === 'register' ? h('div', { class: 'field' }, h('label', null, 'Start with'), h('div', { class: 'tpl' },
-        [['creator', 'Creator empire', 'Vinei TV, Blonxin, TikTok, AI Mikeka, Domosauti, DigitalSoko and WhatsApp IPTV, preloaded with sample activity.'], ['blank', 'Blank canvas', 'Start empty and build your own map.']]
+        [['creator', 'Creator empire', 'Vinei TV, Blonxin, TikTok, AI Mikeka, Domosauti, DigitalSoko and WhatsApp IPTV, preloaded with sample activity.'], ['newstart', 'New Beginning', 'Blonxin, Vinei TV, Kuni Box, AI Mikeka and Domo Sauti AI with real numbers, plus the 90-day plan board.'], ['blank', 'Blank canvas', 'Start empty and build your own map.']]
           .map(([v, t, d]) => h('label', null, h('input', { type: 'radio', name: 'tpl', value: v, checked: state.template === v, onchange: () => { state.template = v; } }), h('div', null, h('b', null, t), h('span', null, d)))))) : null,
       errBox, btn,
     );

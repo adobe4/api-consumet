@@ -6,7 +6,7 @@ import { simulate, alerts, suggestions } from '../shared/engine.js';
 import { buildTemplate, TEMPLATES } from '../shared/templates.js';
 import { scanProject, scanAll, dayIn } from './sync.js';
 import { handleMcp, runBrain, runBoardAI, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey } from './brain.js';
-import { listBoards, getBoard, boardOut, createBoard, saveBoard, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, sharedFile } from './boards.js';
+import { listBoards, getBoard, boardOut, createBoard, seedBoards, saveBoard, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, sharedFile } from './boards.js';
 import { generateBoard } from '../shared/board.js';
 
 const safeJson = (s) => { try { return JSON.parse(s); } catch { return {}; } };
@@ -108,7 +108,9 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     const settings = typeof body.tz === 'string' && body.tz.length < 60 ? { tz: body.tz } : {};
     const uid = (await db.run('INSERT INTO users (email, name, pass, settings) VALUES (?, ?, ?, ?)', email, name, hashPassword(password), JSON.stringify(settings))).lastInsertRowid;
     try {
-      await loadWorld(db, uid, buildTemplate(template, DAY.test(body.today || '') ? body.today : dayIn(settings.tz)), { replace: true });
+      const world = buildTemplate(template, DAY.test(body.today || '') ? body.today : dayIn(settings.tz));
+      await loadWorld(db, uid, world, { replace: true });
+      await seedBoards(db, uid, world.boards);
     } catch (e) { await deleteUser(db, uid); throw e; }
     return { token: signToken(secret, uid), user: publicUser(await db.get('SELECT * FROM users WHERE id = ?', uid)) };
   }, { auth: false });
@@ -264,7 +266,9 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
   }, { agents: false });
   route('POST', '/api/world/reset', async ({ user, body }) => {
     const template = TEMPLATES[body.template] ? body.template : 'blank';
-    await loadWorld(db, user.id, buildTemplate(template, todayOf(user, body.today)), { replace: true });
+    const world = buildTemplate(template, todayOf(user, body.today));
+    await loadWorld(db, user.id, world, { replace: true });
+    await seedBoards(db, user.id, world.boards);
     return readWorld(db, user.id);
   }, { agents: false });
   route('POST', '/api/world/clear-sample', async ({ user }) => {

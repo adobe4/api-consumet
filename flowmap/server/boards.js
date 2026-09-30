@@ -34,6 +34,21 @@ export async function createBoard(q, uid, { name, icon = '', data } = {}) {
   const id = (await q.run('INSERT INTO boards (user_id, name, icon, data, version, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)', uid, nameOf(name), String(icon || '').slice(0, 8), JSON.stringify(d), now, now)).lastInsertRowid;
   return boardOut(await getBoard(q, uid, id));
 }
+// Boards that come with a starter template: each is built from one or more layout specs placed side by side.
+// A board the owner already has (same name) is left alone, so loading the template again adds no copies.
+export async function seedBoards(q, uid, boards = []) {
+  const have = new Set((await q.all('SELECT name FROM boards WHERE user_id = ?', uid)).map((r) => r.name));
+  for (const b of boards) {
+    if (have.has(b.name)) continue;
+    const d = { v: 1, items: [], links: [], order: [], settings: {} };
+    for (const spec of b.specs) {
+      const bb = bounds(d.items);
+      const g = generateBoard(spec, bb ? { origin: { x: bb.x1 + 300, y: bb.y0 } } : undefined);
+      d.items.push(...g.items); d.links.push(...g.links); d.order.push(...g.order);
+    }
+    await createBoard(q, uid, { name: b.name, icon: b.icon, data: d });
+  }
+}
 // version: the version the client last saw. A different one means someone else saved in between.
 export async function saveBoard(q, uid, id, { name, icon, data, version } = {}) {
   const r = await getBoard(q, uid, id);

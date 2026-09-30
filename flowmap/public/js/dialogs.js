@@ -443,7 +443,7 @@ export function openSettings() {
       hasSample() ? h('button', { class: 'btn', onclick: async () => { await clearSample(); notify('Sample activity cleared', 'good'); closeAllModals(); } }, 'Clear sample activity') : null),
     h('div', { class: 'sec' }, 'Start over'),
     h('div', { class: 'row' },
-      h('div', { class: 'grow' }, select([{ value: 'creator', label: 'Creator empire (your 8 projects)' }, { value: 'blank', label: 'Blank canvas' }], tpl, (v) => { tpl = v; })),
+      h('div', { class: 'grow' }, select([{ value: 'creator', label: 'Creator empire (your 8 projects)' }, { value: 'newstart', label: 'New Beginning (real numbers + 90-day plan)' }, { value: 'blank', label: 'Blank canvas' }], tpl, (v) => { tpl = v; })),
       h('button', { class: 'btn danger', onclick: async () => {
         if (!(await confirmDialog({ title: 'Replace your whole map?', message: 'All projects, pipes, tasks and logs will be replaced by the template.', confirm: 'Replace everything', danger: true }))) return;
         await resetWorld(tpl); closeAllModals();
