@@ -1,5 +1,6 @@
 // How each kind of board item looks. build() returns the element's inner content; the editor positions it.
-import { h, fmtNum } from '../util.js';
+import { h, fmtNum, raw } from '../util.js';
+import { icon } from '../icons.js';
 import { S, project } from '../store.js';
 import { KINDS } from '/shared/engine.js';
 import { fileUrl, videoUrl } from './files.js';
@@ -13,7 +14,8 @@ export const SHAPE_LABEL = { rect: '▭ Box', round: '▢ Rounded', pill: '⬭ P
 const NS = 'http://www.w3.org/2000/svg';
 
 export const TYPE_LABEL = { note: 'Sticky note', card: 'Card', text: 'Text', shape: 'Shape', frame: 'Frame', flip: 'Flip card', image: 'Image', video: 'Video', file: 'File', link: 'Link', project: 'Project', sticker: 'Sticker', ink: 'Drawing', checklist: 'Checklist', prompt: 'Prompt', hide: 'Hide' };
-const ed = (cls, text, field, placeholder) => h('div', { class: `ed ${cls}`, 'data-field': field, 'data-ph': placeholder || '' }, text || '');
+// typed text goes in raw: what people write is never turned into icons
+const ed = (cls, text, field, placeholder) => h('div', { class: `ed ${cls}`, 'data-field': field, 'data-ph': placeholder || '' }, raw(text || ''));
 const ellipsis = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 // ctx: { share, onCheck(item, i), onCopy(item), onFlip(item), onOpenFile(item), onPickVideo(item), readonly }
@@ -28,7 +30,7 @@ export function buildItem(it, ctx) {
       kids.push(h('div', { class: 'cb' },
         d.num ? h('span', { class: 'num' }, String(d.num)) : null,
         ed('ttl', it.title, 'title', 'Title'), ed('txt', it.text, 'text', 'Details'),
-        (d.attach || []).length ? h('div', { class: 'atts' }, d.attach.map((a) => h('button', { type: 'button', class: 'att', 'data-act': 'open-attach', 'data-file': a.fileId, title: `Open ${a.name}` }, h('b', null, (a.name.split('.').pop() || 'file').slice(0, 4).toUpperCase()), ellipsis(a.name, 26)))) : null));
+        (d.attach || []).length ? h('div', { class: 'atts' }, d.attach.map((a) => h('button', { type: 'button', class: 'att', 'data-act': 'open-attach', 'data-file': a.fileId, title: `Open ${a.name}` }, h('b', null, (a.name.split('.').pop() || 'file').slice(0, 4).toUpperCase()), raw(ellipsis(a.name, 26))))) : null));
       return kids;
     }
     case 'shape': {
@@ -47,20 +49,20 @@ export function buildItem(it, ctx) {
       const lines = String(d.back || '').split('\n').filter(Boolean);
       return [h('div', { class: 'fin' },
         h('div', { class: 'face front' }, h('div', null, ed('ttl', it.title, 'title', 'Front'), h('small', null, 'TAP TO FLIP'))),
-        h('div', { class: 'face back' }, h('h4', null, it.title || 'Inside'),
-          lines.length ? h('ul', null, lines.map((l) => h('li', null, h('i'), l))) : h('p', null, 'Double-click to write the back.')))];
+        h('div', { class: 'face back' }, h('h4', null, raw(it.title || 'Inside')),
+          lines.length ? h('ul', null, lines.map((l) => h('li', null, h('i'), raw(l)))) : h('p', null, 'Double-click to write the back.')))];
     }
-    case 'image': return [imgBox(d.url, d.fileId, ctx, 'img'), it.text ? h('div', { class: 'cap' }, it.text) : null];
+    case 'image': return [imgBox(d.url, d.fileId, ctx, 'img'), it.text ? h('div', { class: 'cap' }, raw(it.text)) : null];
     case 'video': {
       const box = h('div', { class: 'vid' }, h('div', { class: 'vwait' }, '🎬'));
       if (d.url) box.replaceChildren(h('video', { src: d.url, controls: true, playsinline: true, preload: 'metadata' }));
       else if (d.localId) videoUrl(d.localId).then((u) => {
         if (u) box.replaceChildren(h('video', { src: u, controls: true, playsinline: true, preload: 'metadata' }));
-        else box.replaceChildren(h('div', { class: 'vmiss' }, h('b', null, '🎬 ', d.name || 'Video'), h('small', null, 'This video lives on the device that added it.'), ctx.readonly ? null : h('button', { type: 'button', class: 'btn sm', 'data-act': 'pick-video' }, 'Choose the file here')));
+        else box.replaceChildren(h('div', { class: 'vmiss' }, h('b', null, icon('clapperboard'), ' ', raw(d.name || 'Video')), h('small', null, 'This video lives on the device that added it.'), ctx.readonly ? null : h('button', { type: 'button', class: 'btn sm', 'data-act': 'pick-video' }, 'Choose the file here')));
       });
-      return [box, h('div', { class: 'cap' }, it.text || d.name || 'Video', h('span', null, d.localId ? 'on this device' : ''))];
+      return [box, h('div', { class: 'cap' }, raw(it.text || d.name || 'Video'), h('span', null, d.localId ? 'on this device' : ''))];
     }
-    case 'file': return [h('div', { class: 'fchip', 'data-act': 'open-file' }, h('b', null, (d.name || 'file').split('.').pop().slice(0, 4).toUpperCase()), h('div', null, h('strong', null, ellipsis(d.name || 'File', 40)), h('small', null, `${d.size ? `${fmtNum(d.size / 1024)} KB · ` : ''}${ctx.readonly ? 'tap' : 'double-click'} to open`))), d.preview ? h('pre', { class: 'fprev sf-scroll' }, d.preview) : null];
+    case 'file': return [h('div', { class: 'fchip', 'data-act': 'open-file' }, h('b', null, (d.name || 'file').split('.').pop().slice(0, 4).toUpperCase()), h('div', null, h('strong', null, raw(ellipsis(d.name || 'File', 40))), h('small', null, `${d.size ? `${fmtNum(d.size / 1024)} KB · ` : ''}${ctx.readonly ? 'tap' : 'double-click'} to open`))), d.preview ? h('pre', { class: 'fprev sf-scroll' }, raw(d.preview)) : null];
     case 'link': {
       let host = '';
       try { host = new URL(d.url).hostname.replace(/^www\./, ''); } catch { /* not a url yet */ }
@@ -75,13 +77,14 @@ export function buildItem(it, ctx) {
         h('div', { class: 'pjs' }, s?.money > 0.5 ? h('div', null, h('b', null, `TZS ${fmtNum(s.money)}`), h('small', null, 'money/day')) : null, s?.attention > 0.5 ? h('div', null, h('b', null, fmtNum(s.attention)), h('small', null, 'views/day')) : null),
         h('small', { class: 'live' }, '● live from your tracker'))];
     }
-    case 'sticker': return [h('span', { class: 'emo' }, it.text || '⭐')];
+    // an icon sticker ('i:arrow-right', drawn in the item colour) or an emoji exactly as chosen
+    case 'sticker': { const t = it.text || 'i:star'; return [t.startsWith('i:') ? h('span', { class: 'emo ico' }, icon(t.slice(2))) : h('span', { class: 'emo' }, raw(t))]; }
     case 'checklist': {
       const items = d.items || [];
       const done = items.filter((x) => x.done).length;
       return [h('div', { class: 'ckh' }, ed('ttl', it.title, 'title', 'Checklist'), h('span', null, `${done}/${items.length}`)),
         h('div', { class: 'meter' }, h('i', { style: { width: `${items.length ? (done / items.length) * 100 : 0}%` } })),
-        h('div', { class: 'cks sf-scroll' }, items.map((x, i) => h('label', { class: `ck${x.done ? ' on' : ''}` }, h('button', { type: 'button', class: `check${x.done ? ' on' : ''}`, 'data-act': 'check', 'data-i': i, 'aria-label': x.done ? 'Mark not done' : 'Mark done' }, x.done ? '✓' : ''), h('span', null, x.t))),
+        h('div', { class: 'cks sf-scroll' }, items.map((x, i) => h('label', { class: `ck${x.done ? ' on' : ''}` }, h('button', { type: 'button', class: `check${x.done ? ' on' : ''}`, 'data-act': 'check', 'data-i': i, 'aria-label': x.done ? 'Mark not done' : 'Mark done' }, x.done ? '✓' : ''), h('span', null, raw(x.t)))),
           ctx.readonly ? null : h('button', { type: 'button', class: 'ckadd', 'data-act': 'check-add' }, '＋ Add item'))];
     }
     case 'prompt': return [h('div', { class: 'prh' }, h('span', null, '✦'), ed('ttl', it.title, 'title', 'Prompt'), h('button', { type: 'button', class: 'btn sm primary', 'data-act': 'copy', title: 'Copy the prompt' }, '⧉ Copy')), ed('txt selectable sf-scroll', it.text, 'text', 'Write or paste a prompt…')];

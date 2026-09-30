@@ -23,10 +23,12 @@ export function initMapUi({ renderer, stage, app }) {
   document.addEventListener('keydown', (e) => {
     if (e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey) return;
     if (ctx.app.classList.contains('board-mode')) return; // boards have their own keys
-    if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleImmersive(); }
+    if (e.key === 'f' || e.key === 'F') { e.preventDefault(); if (isClean()) setClean(false); else toggleImmersive(); }
+    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); toggleClean(); }
+    if (e.key === 'Escape' && isClean()) setClean(false);
     if (e.key === 'Escape') closeMenu();
   });
-  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && app.classList.contains('immersive') && ctx.fsEntered) setImmersive(false); });
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && app.classList.contains('immersive') && ctx.fsEntered) { if (isClean()) setClean(false); else setImmersive(false); } });
   document.addEventListener('pointerdown', (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); }, true);
 }
 
@@ -46,6 +48,7 @@ export function tankAction(action, id) {
   else if (action === 'connect') { setTool('link'); ctx.renderer.startLink?.(id); }
   else if (action === 'edit') openProjectEditor(id);
   else if (action === 'details') { select({ type: 'project', id }); openTab('focus'); }
+  else if (action === 'checkin') { if (isClean()) setClean(false); openTab('checkin'); }
   else if (action === 'scan') {
     notify(`Scanning ${p.name}…`);
     scanProject(id).then((r) => { if (r) notify(r.every((x) => x.ok) ? `${p.name} scanned` : r.find((x) => !x.ok).error, r.every((x) => x.ok) ? 'good' : 'error'); });
@@ -78,6 +81,7 @@ export function openViewMenu(anchor) {
     rd.autoLayout ? null : item('✨', 'Tidy up the layout', () => tidy(), 'primary'),
     rd.autoLayout || rd.lookAreas ? null : item('▦', zonesOn ? 'Hide areas' : 'Show areas', () => setZones(!zonesOn)),
     rd.fit ? item('⤢', 'Fit everything', () => rd.fit()) : null,
+    item('i:scan', 'Clean view: only the system (C)', () => setClean(true)),
     window.flowmapTheme ? (window.flowmapTheme.current === 'light'
       ? item('🌙', 'Dark mode', () => window.flowmapTheme.set('dark'))
       : item('☀️', 'Light mode', () => window.flowmapTheme.set('light'))) : null,
@@ -295,6 +299,36 @@ function setImmersive(on) {
   updateLiveBits();
 }
 export const toggleImmersive = () => setImmersive(!isImmersive());
+
+// ---------- clean view: full screen, only the living system ----------
+// No buttons, panels or banners: alerts show as a pulse on the card itself. Esc, C or the fading pill leaves.
+let cleanPill = null, cleanTimer = 0;
+export const isClean = () => ctx.app.classList.contains('clean');
+export function setClean(on) {
+  if (on === isClean()) return;
+  ctx.app.classList.toggle('clean', on);
+  closeMenu();
+  if (on) {
+    select(null);
+    cleanPill ||= h('button', { type: 'button', class: 'clean-exit', onclick: () => setClean(false) }, 'i:minimize-2', ' Exit clean view');
+    ctx.stage.append(cleanPill);
+    wakePill();
+    ctx.stage.addEventListener('pointermove', wakePill);
+    ctx.stage.addEventListener('pointerdown', wakePill);
+  } else {
+    cleanPill?.remove();
+    ctx.stage.removeEventListener('pointermove', wakePill);
+    ctx.stage.removeEventListener('pointerdown', wakePill);
+  }
+  setImmersive(on);
+}
+function wakePill() {
+  if (!cleanPill) return;
+  cleanPill.classList.remove('away');
+  clearTimeout(cleanTimer);
+  cleanTimer = setTimeout(() => cleanPill?.classList.add('away'), 2200);
+}
+export const toggleClean = () => setClean(!isClean());
 
 let mini = null;
 function buildMiniHud() {

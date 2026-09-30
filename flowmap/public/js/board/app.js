@@ -1,5 +1,5 @@
 // Boards: the home page (your boards, templates, "ask AI to build one") and the editor for one board.
-import { h, clear, store_ls } from '../util.js';
+import { h, clear, store_ls, setText } from '../util.js';
 import { api } from '../api.js';
 import { S, projects, notify } from '../store.js';
 import { RESOURCES } from '/shared/engine.js';
@@ -11,19 +11,19 @@ import { createEditor } from './editor.js';
 export const TEMPLATES = [
   { id: 'blank', icon: '🧩', name: 'Blank board', about: 'An empty floor to think on', spec: null },
   { id: 'tutorial', icon: '🎬', name: 'Tutorial video', about: 'Slides for a screen-recorded lesson', spec: { layout: 'slides', slides: [
-    { title: 'The hook', subtitle: 'Why this matters to you today', points: ['The problem: what people get wrong', 'The promise: what you will be able to do'], emoji: '🔥', note: 'Look at the camera. Say the result first.' },
-    { title: 'Step 1', points: ['What to do: the first action', 'Why: the reason it works', 'Tip: a common mistake to avoid'], emoji: '1️⃣' },
-    { title: 'Step 2', points: ['What to do', 'Show it: live demo', 'Check: how to know it worked'], emoji: '2️⃣' },
-    { title: 'Step 3', points: ['What to do', 'Example: a real case', 'Shortcut: the faster way'], emoji: '3️⃣' },
-    { title: 'Recap', points: ['Step 1', 'Step 2', 'Step 3'], emoji: '✅' },
-    { title: 'Your next move', subtitle: 'Subscribe, comment, or try it now', points: ['Link: where to go next', 'Question: ask the viewers'], emoji: '🚀' },
+    { title: 'The hook', subtitle: 'Why this matters to you today', points: ['The problem: what people get wrong', 'The promise: what you will be able to do'], emoji: 'i:flame', note: 'Look at the camera. Say the result first.' },
+    { title: 'Step 1', points: ['What to do: the first action', 'Why: the reason it works', 'Tip: a common mistake to avoid'], emoji: 'i:target' },
+    { title: 'Step 2', points: ['What to do', 'Show it: live demo', 'Check: how to know it worked'], emoji: 'i:lightbulb' },
+    { title: 'Step 3', points: ['What to do', 'Example: a real case', 'Shortcut: the faster way'], emoji: 'i:zap' },
+    { title: 'Recap', points: ['Step 1', 'Step 2', 'Step 3'], emoji: 'i:circle-check' },
+    { title: 'Your next move', subtitle: 'Subscribe, comment, or try it now', points: ['Link: where to go next', 'Question: ask the viewers'], emoji: 'i:rocket' },
   ] } },
   { id: 'course', icon: '🎓', name: 'Course outline', about: 'Modules and lessons you can sell as a link', spec: { layout: 'slides', slides: [
-    { title: 'Welcome', points: ['Who this is for', 'What you will be able to do', 'How to use this board'], emoji: '👋' },
-    { title: 'Module 1: Foundations', points: ['Lesson 1', 'Lesson 2', 'Exercise'], emoji: '📘' },
-    { title: 'Module 2: Build it', points: ['Lesson 1', 'Lesson 2', 'Exercise'], emoji: '🛠️' },
-    { title: 'Module 3: Grow it', points: ['Lesson 1', 'Lesson 2', 'Exercise'], emoji: '📈' },
-    { title: 'Final project', points: ['Brief', 'Checklist', 'Share your result'], emoji: '🏆' },
+    { title: 'Welcome', points: ['Who this is for', 'What you will be able to do', 'How to use this board'], emoji: 'i:hand' },
+    { title: 'Module 1: Foundations', points: ['Lesson 1', 'Lesson 2', 'Exercise'], emoji: 'i:book-open' },
+    { title: 'Module 2: Build it', points: ['Lesson 1', 'Lesson 2', 'Exercise'], emoji: 'i:wrench' },
+    { title: 'Module 3: Grow it', points: ['Lesson 1', 'Lesson 2', 'Exercise'], emoji: 'i:trending-up' },
+    { title: 'Final project', points: ['Brief', 'Checklist', 'Share your result'], emoji: 'i:trophy' },
   ] } },
   { id: 'strategy', icon: '🧭', name: 'Strategy map', about: 'A mind map for planning a strategy video', spec: { layout: 'mindmap', center: 'My strategy', branches: [
     { title: 'Audience', children: ['Who they are', 'What they need'] }, { title: 'Content', children: ['Formats', 'Rhythm'] },
@@ -111,13 +111,13 @@ export function createBoards(host) {
   }
   async function aiBuild(text, btn) {
     if (text.trim().length < 4) { notify('Describe the board you want first', 'error'); return; }
-    btn.disabled = true; btn.textContent = '✨ Building… (up to a minute)';
+    btn.disabled = true; setText(btn, '✨ Building… (up to a minute)');
     try {
       const r = await api('POST', '/api/boards/generate', { prompt: text });
       notify(r.summary || 'Board ready', 'good');
       openBoard(r.board.id, false, r.board);
     } catch (e) { notify(e.message, 'error'); }
-    finally { btn.disabled = false; btn.textContent = '✨ Build it'; }
+    finally { btn.disabled = false; setText(btn, '✨ Build it'); }
   }
 
   // ---------- editor ----------

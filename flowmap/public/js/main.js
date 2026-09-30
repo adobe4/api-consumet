@@ -1,4 +1,4 @@
-import { h, clear, fmtNum, fmtTZS, fmtDay, store_ls, pct } from './util.js';
+import { h, clear, fmtNum, fmtTZS, fmtDay, store_ls, pct, setText } from './util.js';
 import { auth, setUnauthorizedHandler } from './api.js';
 import { S, snap, dayFraction, project, projects, on, loadAll, resetLocal, refreshToday, select, setTool, setOffset, setScenario, currentAlerts,
   HORIZON_DAYS, resetWorld, moveProject, addDays, hasSample } from './store.js';
@@ -11,7 +11,7 @@ import { toast, closeAllModals, hasModal } from './ui-common.js';
 import { sfx, sound } from './audio.js';
 import { openBrainSettings } from './brain-ui.js';
 import { getMapStyle } from './mapstyle.js';
-import { initMapUi, setMapRenderer, tankAction, openContextMenu, openViewMenu, toggleImmersive, updateToday, updateLiveBits, maybeMorningReplay, maybeWeekReview } from './map-ui.js';
+import { initMapUi, setMapRenderer, tankAction, openContextMenu, openViewMenu, toggleImmersive, updateToday, updateLiveBits, maybeMorningReplay, maybeWeekReview, toggleClean } from './map-ui.js';
 
 const $ = (id) => document.getElementById(id);
 const boot = $('boot'), authEl = $('auth'), appEl = $('app');
@@ -161,7 +161,7 @@ function buildTopbar() {
   const meterFill = h('i');
   hudEls.meter = meterFill; hudEls.healthVal = h('b', null, '–');
   const linkBtn = h('button', { class: 'btn', id: 'tool-link', onclick: () => setTool(S.tool === 'link' ? null : 'link') }, '🔗', h('span', { class: 'lbl-txt' }, 'Connect'));
-  const soundBtn = h('button', { class: 'btn icon', title: 'Sound', onclick: (e) => { sound.enabled = !sound.enabled; e.currentTarget.textContent = sound.enabled ? '🔊' : '🔇'; if (sound.enabled) sfx.pop(); } }, sound.enabled ? '🔊' : '🔇');
+  const soundBtn = h('button', { class: 'btn icon', title: 'Sound', onclick: (e) => { sound.enabled = !sound.enabled; setText(e.currentTarget, sound.enabled ? '🔊' : '🔇'); if (sound.enabled) sfx.pop(); } }, sound.enabled ? '🔊' : '🔇');
   const modes = h('div', { class: 'modes', role: 'tablist', 'aria-label': 'Tracker or boards' },
     h('button', { type: 'button', role: 'tab', 'data-mode': 'tracker', onclick: () => setMode('tracker') }, '📊', h('span', { class: 'lbl-txt' }, 'Tracker')),
     h('button', { type: 'button', role: 'tab', 'data-mode': 'boards', onclick: () => setMode('boards') }, '🧩', h('span', { class: 'lbl-txt' }, 'Boards')));
@@ -217,7 +217,7 @@ function updateHud() {
     const d = hudEls[key].delta;
     if (S.offset > 0 && Math.abs(base) > 0.01) {
       const ch = (now - base) / Math.abs(base);
-      d.textContent = `${ch >= 0 ? '▲' : '▼'}${Math.abs(Math.round(ch * 100))}%`;
+      setText(d, `${ch >= 0 ? '▲' : '▼'}${Math.abs(Math.round(ch * 100))}%`);
       d.className = `delta ${(ch >= 0) !== !!invert ? 'up' : 'down'}`;
     } else { d.textContent = ''; d.className = 'delta'; }
   };
@@ -284,6 +284,7 @@ function buildZoom() {
     h('button', { class: 'btn', title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => renderer.zoomBy(0.8) }, '－'),
     h('button', { class: 'btn', title: 'Fit everything', 'aria-label': 'Fit everything', onclick: () => renderer.fit() }, '⤢'),
     h('button', { class: 'btn', title: 'Full screen (F)', 'aria-label': 'Full screen', onclick: () => toggleImmersive() }, '⛶'),
+    h('button', { class: 'btn', title: 'Clean view (C): full screen, only the system, alerts pulse on the cards', 'aria-label': 'Clean view', onclick: () => toggleClean() }, 'i:scan'),
     renderer.openLook ? h('button', { class: 'btn', title: 'Look: floor, pipes, cards, theme', 'aria-label': 'Change the look', onclick: (e) => renderer.openLook(e.currentTarget) }, '🎨') : null,
     renderer.replay ? h('button', { class: 'btn', title: 'View: map style, tidy up, areas, replay, week', 'aria-label': 'More view options', onclick: (e) => openViewMenu(e.currentTarget) }, '⋯') : null,
   ].filter(Boolean));
@@ -319,13 +320,13 @@ function showTip(info, x, y) {
 
 // ---------- timeline ----------
 const tl = {};
-function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; if (tl.play) tl.play.textContent = '▶'; } }
+function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; if (tl.play) setText(tl.play, '▶'); } }
 function buildTimeline() {
   tl.range = h('input', { type: 'range', min: 0, max: 90, value: 0, 'aria-label': 'Time travel', oninput: (e) => { stopPlay(); setOffset(Number(e.target.value)); } });
   tl.play = h('button', { class: 'btn icon', title: 'Play the future', onclick: () => {
     if (playTimer) { stopPlay(); return; }
     if (S.offset >= 90) setOffset(0);
-    tl.play.textContent = '⏸';
+    setText(tl.play, '⏸');
     playTimer = setInterval(() => { if (S.offset >= 90) { stopPlay(); return; } setOffset(S.offset + 1); }, 700);
   } }, '▶');
   tl.seg = h('div', { class: 'seg' }, Object.entries(SCEN).map(([k, label]) => h('button', { dataset: { k }, title: k === 'planned' ? 'Only the tasks on your list happen' : k === 'keep' ? 'You keep posting at each project\'s rhythm' : 'Nothing more happens', onclick: () => setScenario(k) }, label)));

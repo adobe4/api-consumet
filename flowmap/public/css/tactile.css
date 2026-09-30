@@ -62,7 +62,8 @@ img { -webkit-user-drag: none; }
 
 /* ---------- fields ---------- */
 input[type=text], input[type=email], input[type=password], input[type=number], input[type=date], input[type=url], input[type=search], select, textarea {
-  border: 0; border-radius: 12px; background: var(--bg); box-shadow: var(--sunk-sm); color: var(--text); padding: 10px 12px; }
+  -webkit-appearance: none; appearance: none; border: 0; border-radius: 12px; background: var(--bg); box-shadow: var(--sunk-sm); color: var(--text); padding: 10px 12px; }
+select { background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 30px; }
 input:focus, select:focus, textarea:focus { box-shadow: var(--sunk-sm), 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
 select option { background: var(--panel-solid); }
 input[type=range] { accent-color: var(--accent); }
@@ -164,3 +165,16 @@ input[type=range] { accent-color: var(--accent); }
   .modes { order: 2; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+/* ---------- line icons (Lucide) in place of emoji ---------- */
+.lic { width: 1.15em; height: 1.15em; flex: none; display: inline-block; vertical-align: -0.2em; stroke-width: 2; }
+.btn .lic { width: 16px; height: 16px; vertical-align: -3px; }
+.btn.icon .lic, .btn.icon > .lic { width: 18px; height: 18px; }
+.btn.sm .lic { width: 14px; height: 14px; }
+.mic .lic { width: 17px; height: 17px; color: var(--muted); vertical-align: -3px; }
+.mi:hover .mic .lic, .mi.primary .mic .lic { color: var(--accent); }
+.mi.danger .mic .lic { color: inherit; }
+.tabs .lic { width: 15px; height: 15px; }
+.chip .lic { width: 14px; height: 14px; }
+.toast .lic { width: 16px; height: 16px; color: var(--accent); }
+h1 .lic, h2 .lic, h3 .lic, .modal-h .lic { color: var(--accent); }

@@ -89,6 +89,27 @@ export function statusOf(health) {
 }
 export const flowLevelOf = (health) => 0.12 + 0.88 * clamp01(health / 100);
 
+// ---------- check-in rhythm ----------
+// How often the owner says they will log real numbers: for the whole system (world.checkin) or per project
+// (cfg.checkin, '' = follow the system). A check-in that is overdue makes that project's numbers stale:
+// its health and flow sag, its pipes slow, and the projects it feeds feel it too.
+export const CHECKIN_RHYTHMS = { daily: 1, weekly: 7, monthly: 30 };
+export const checkinDaysOf = (world, p) => CHECKIN_RHYTHMS[(p.cfg && p.cfg.checkin) || world.checkin] || 0;
+// 1 = fresh, falling to 0.4 once a check-in is more than two rhythms late
+export function freshAt(ctx, p, dn) {
+  const R = ctx.rhythm.get(p.id);
+  if (!R) return { fresh: 1, overdue: 0, lastCheckin: null };
+  // the forecast assumes you check in again from tomorrow; only "stop" keeps the silence going
+  if (dn > ctx.todayN && ctx.scenario !== 'stop') return { fresh: 1, overdue: 0, lastCheckin: null };
+  const days = ctx.checkins.get(p.id);
+  let last = null;
+  for (const d of days) { if (d > Math.min(dn, ctx.todayN)) break; last = d; }
+  if (last === null) last = p.createdOn ? dayNum(p.createdOn) : null; // a new project gets one rhythm of grace
+  if (last === null) return { fresh: 1, overdue: 0, lastCheckin: null };
+  const overdue = Math.max(0, dn - last - R);
+  return { fresh: overdue ? 1 - 0.6 * clamp01(overdue / (2 * R + 1)) : 1, overdue, lastCheckin: dayStr(last) };
+}
+
 // ---------- context ----------
 // scenario: 'planned' = only the tasks already on your list happen
 //           'keep'    = you also keep posting at each project's cadence
@@ -155,7 +176,9 @@ export function buildContext(world, { today, scenario = 'planned' }) {
     const t = TASK_TYPES[HEAL_TYPE[p.kind] || 'other'];
     return [p.id, t.strength / (1 - Math.pow(0.5, cadenceOf(p) / t.half))];
   }));
-  return { today, todayN, scenario, projects, byId, links, outgoing, incoming, actions, pulses, steady, logsBy, base: new Map() };
+  const rhythm = new Map(projects.map((p) => [p.id, checkinDaysOf(world, p)]));
+  const checkins = new Map(projects.map((p) => [p.id, [...new Set(logsBy.get(p.id).map((l) => dayNum(l.day)))].sort((a, b) => a - b)]));
+  return { today, todayN, scenario, projects, byId, links, outgoing, incoming, actions, pulses, steady, logsBy, rhythm, checkins, base: new Map() };
 }
 
 // ---------- health & pulses ----------
@@ -276,9 +299,23 @@ export function simulate(world, { today, horizon = 90, scenario = 'planned' } = 
     // phase 1: health and own output
     for (const p of P) {
       const h = healthAt(ctx, p, dn);
-      const flow = flowLevelOf(h.health);
+      const f = freshAt(ctx, p, dn);
+      // stale numbers: health sags and the project gives out less
+      const health = Math.round(h.health * (0.55 + 0.45 * f.fresh) * 10) / 10;
+      const flow = flowLevelOf(health) * (0.5 + 0.5 * f.fresh);
       const sb = selfMult(ctx, p, dn) - 1;
-      state.set(p.id, { p, ...h, flow, sb });
+      state.set(p.id, { p, ...h, health, flow, sb, fresh: f.fresh, overdue: f.overdue, lastCheckin: f.lastCheckin });
+    }
+    // a living system: projects fed by stale ones weaken too
+    for (const p of P) {
+      const inc = ctx.incoming.get(p.id);
+      if (!inc.length) continue;
+      const u = inc.reduce((a, l) => a + (1 - state.get(l.from).fresh), 0) / inc.length;
+      if (u <= 0) continue;
+      const st = state.get(p.id);
+      st.health = Math.round(st.health * (1 - 0.25 * u) * 10) / 10;
+      st.flow *= 1 - 0.15 * u;
+      st.upstreamStale = u;
     }
     // phase 2: incoming effects from yesterday (or delayed) totals
     const srcAt = (l) => {
@@ -354,6 +391,7 @@ export function simulate(world, { today, horizon = 90, scenario = 'planned' } = 
         money: st.money, attention: st.attention, customers: st.customers, progress: st.progress, cost: st.cost, profit: st.profit,
         fuelIn: st.fuelIn, incAttention: st.incAttention, incCustomers: st.incCustomers, boost: st.sb,
         progressBoost: st.progressBoost, fuelBoost: st.fuelBoost, cadence: cadenceOf(st.p),
+        fresh: st.fresh, checkinOverdue: st.overdue, lastCheckin: st.lastCheckin, checkinEvery: ctx.rhythm.get(st.p.id), upstreamStale: st.upstreamStale || 0,
       };
     }
     tot.profit = tot.money - tot.cost;
@@ -449,8 +487,15 @@ export function alerts(world, ctx, snap) {
     out.push({ id: 'cash', level: 'warn', title: 'Costs are higher than income',
       detail: `The system loses about ${Math.round(-snap.totals.profit).toLocaleString('en-US')} TZS per day.`, weight: 50 });
   }
+  const stale = ctx.projects.filter((p) => snap.projects[p.id]?.checkinOverdue > 0);
+  if (stale.length) {
+    const worst = Math.min(...stale.map((p) => snap.projects[p.id].fresh));
+    out.push({ id: 'stale', level: worst <= 0.6 ? 'critical' : 'warn', projectIds: stale.map((p) => p.id), title: stale.length === 1 ? `Check in ${stale[0].name}` : `${stale.length} projects are waiting for a check-in`,
+      detail: `${stale.map((p) => p.name).join(', ')} ${stale.length === 1 ? 'has' : 'have'} no fresh numbers, so ${stale.length === 1 ? 'its' : 'their'} flow is slowing and the projects they feed feel it.`,
+      action: { type: 'checkin' }, weight: 45 + (1 - worst) * 50 });
+  }
   const loggedToday = (world.logs || []).some((l) => l.day === T);
-  if (!loggedToday && ctx.projects.length) {
+  if (!loggedToday && ctx.projects.length && !stale.length && [...ctx.rhythm.values()].some((r) => r === 1)) {
     out.push({ id: 'checkin', level: 'info', title: 'Daily check-in pending', detail: 'Log today\'s money, attention and customers to keep the simulation honest.', action: { type: 'checkin' }, weight: 5 });
   }
   return out.sort((a, b) => b.weight - a.weight);

@@ -1,4 +1,10 @@
 // Small DOM + formatting helpers. Text always goes in as text nodes, never as HTML.
+import { hasGlyph, glyphs, stripGlyphs } from './icons.js';
+
+// what people typed: always shown exactly as written (no icon swapping)
+export const raw = (s) => document.createTextNode(s == null ? '' : String(s));
+// set an element's interface text, icons included
+export function setText(el, s) { if (!el) return; const t = String(s ?? ''); el.replaceChildren(...(hasGlyph(t) ? glyphs(t) : [document.createTextNode(t)])); }
 
 export function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -10,6 +16,7 @@ export function h(tag, attrs, ...kids) {
     else if (k === 'dataset') Object.assign(el.dataset, v);
     else if (k === 'for') el.htmlFor = v;
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
+    else if ((k === 'title' || k === 'aria-label' || k === 'placeholder') && typeof v === 'string') el.setAttribute(k, stripGlyphs(v));
     else if (k in el && typeof v !== 'object' && !k.includes('-')) el[k] = v;
     else el.setAttribute(k, v === true ? '' : v);
   }
@@ -20,7 +27,9 @@ function append(el, kids) {
   for (const k of kids) {
     if (Array.isArray(k)) append(el, k);
     else if (k === null || k === undefined || k === false) continue;
-    else el.append(k instanceof Node ? k : document.createTextNode(String(k)));
+    else if (k instanceof Node) el.append(k);
+    else if (typeof k === 'string' && hasGlyph(k)) el.append(...glyphs(k)); // interface emoji -> line icons
+    else el.append(document.createTextNode(String(k)));
   }
 }
 // Empties an element; the returned append() skips null/false so optional parts never render as "null".

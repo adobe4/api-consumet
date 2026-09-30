@@ -1,5 +1,5 @@
 // The 🧠 dialog: what the AI should know about you, the built-in daily AI, and links for outside AI agents.
-import { h, clear } from './util.js';
+import { h, clear, setText } from './util.js';
 import { S, notify, saveSettings, saveSecrets, runBrain, listAgentKeys, createAgentKey, deleteAgentKey } from './store.js';
 import { openModal, field, select, confirmDialog } from './ui-common.js';
 
@@ -65,7 +65,7 @@ export function openBrainSettings() {
       const r = await runBrain();
       result.append(h('div', { class: 'banner good' }, h('div', null, h('b', null, `Done: ${r.actions.length} action${r.actions.length === 1 ? '' : 's'}. `), r.summary)));
     } catch (err) { result.append(h('div', { class: 'banner bad' }, err.message)); }
-    btn.disabled = false; btn.textContent = '▶ Run a review now';
+    btn.disabled = false; setText(btn, '▶ Run a review now');
   } }, '▶ Run a review now');
 
   // ---- outside agents ----

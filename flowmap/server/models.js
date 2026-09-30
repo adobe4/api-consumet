@@ -168,7 +168,11 @@ export async function readWorld(q, uid, { logDays = 400 } = {}) {
   const noteSince = new Date(Date.now() - 60 * 86400000).toISOString();
   // latest scan per project + link
   const scans = await q.all(`SELECT s.* FROM scans s JOIN (SELECT project_id, url, MAX(id) AS id FROM scans WHERE user_id = ? GROUP BY project_id, url) m ON m.id = s.id`, uid);
+  const u = await q.get('SELECT settings FROM users WHERE id = ?', uid);
+  let checkin = 'daily';
+  try { const st = JSON.parse(u?.settings || '{}'); if (['daily', 'weekly', 'monthly', 'off'].includes(st.checkin)) checkin = st.checkin; } catch { /* keep the default */ }
   return {
+    checkin, // how often numbers are logged: overdue check-ins slow the system down
     projects: await list('projects', 'SELECT * FROM projects WHERE user_id = ? ORDER BY id'),
     links: await list('links', 'SELECT * FROM links WHERE user_id = ? ORDER BY id'),
     tasks: await list('tasks', 'SELECT * FROM tasks WHERE user_id = ? ORDER BY id'),

@@ -22,6 +22,21 @@
       apply();
     },
   };
+  // motion: "calm" stops every animation; flowing lights become still arrows (per device)
+  var MKEY = 'flowmap.motion';
+  var motion = 'full';
+  try { motion = JSON.parse(localStorage.getItem(MKEY)) === 'calm' ? 'calm' : 'full'; } catch (e) { /* storage blocked */ }
+  function applyMotion() { document.documentElement.setAttribute('data-motion', motion); }
+  window.flowmapMotion = {
+    get calm() { return motion === 'calm'; },
+    set: function (v) {
+      motion = v === 'calm' ? 'calm' : 'full';
+      try { localStorage.setItem(MKEY, JSON.stringify(motion)); } catch (e) { /* storage blocked */ }
+      applyMotion();
+      try { window.dispatchEvent(new CustomEvent('flowmap-motion', { detail: motion })); } catch (e) { /* very old browser */ }
+    },
+  };
+  applyMotion();
   if (mq) { if (mq.addEventListener) mq.addEventListener('change', apply); else if (mq.addListener) mq.addListener(apply); }
   apply();
 })();

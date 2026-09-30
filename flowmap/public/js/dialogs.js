@@ -1,8 +1,8 @@
 // Modal dialogs: project / pipe / task editors, the "water it" dialog, help and settings.
-import { h, clear, fmtNum, fmtFull, download, fmtDay } from './util.js';
+import { h, clear, fmtNum, fmtFull, download, fmtDay, setText } from './util.js';
 import { MAP_STYLES, getMapStyle, setMapStyle } from './mapstyle.js';
 import { S, snap, project, projects, nameOf, addProject, updateProject, deleteProject, addLink, updateLink, deleteLink,
-  addTask, updateTask, deleteTask, completeTask, notify, hasSample, clearSample, resetWorld, importWorld, exportWorld, scanProject, saveSecrets } from './store.js';
+  addTask, updateTask, deleteTask, completeTask, notify, hasSample, clearSample, resetWorld, importWorld, exportWorld, scanProject, saveSecrets, setCheckinRhythm } from './store.js';
 import { KINDS, KIND_KEYS, RESOURCES, TASK_TYPES, CHANNELS, cfgOf, configBase } from '/shared/engine.js';
 import { PLATFORMS, normalizeSources } from '/shared/sources.js';
 import { GOAL_METRICS, DEFAULT_GROUP, groupOf } from '/shared/goals.js';
@@ -136,6 +136,8 @@ export function openProjectEditor(id, opts = {}) {
     h('div', { class: 'grid2' },
       field('Needs a post / action every (days)', numInput(d.cfg.cadenceDays, (v) => { d.cfg.cadenceDays = Math.max(1, v ?? 1); }, { min: 1, max: 90 }), 'Miss this rhythm and the project starts to dry out.'),
       field('Monthly cost (TZS)', numInput(d.monthlyCost, (v) => { d.monthlyCost = v ?? 0; }, { min: 0 }), 'Tools, servers, subscriptions, ad budget.')),
+    field('Check-in rhythm', chipGroup([{ value: '', label: `Like the system (${S.world.checkin || 'daily'})` }, { value: 'daily', label: 'Daily' }, { value: 'weekly', label: 'Weekly' }, { value: 'monthly', label: 'Monthly' }, { value: 'off', label: 'Off' }],
+      d.cfg.checkin || '', (v) => { if (v) d.cfg.checkin = v; else delete d.cfg.checkin; }), 'How often you log this project\'s numbers. Overdue, its flow and health sag and it slows the projects it feeds.'),
     h('div', { class: 'sec' }, 'Goal & area'),
     goalHost,
     field('Area on the map', h('div', null,
@@ -354,7 +356,9 @@ export function openHelp() {
       ex('💧', 'Water it when you act', 'After posting a video or promo, tap “Water”. Tell it how you feel about it and which projects you pushed. The pipes you aimed at surge, then fade over days.'),
       ex('⏩', 'Scrub the timeline', 'Drag the bar at the bottom to see the future. Compare “planned tasks only”, “keep my pace” and “stop posting” to see what happens if you slack.'),
       ex('✍️', 'Make it yours', 'Double-click empty space to add a project. Use Connect to draw a pipe between two projects. Click a pipe to change how much flows, what it costs and how long it takes. Add tasks such as a sponsored ad for this week.'),
-      ex('📝', 'Daily check-in keeps it honest', 'Log what each project made today, or set a whole month at once. The simulation adapts to your real numbers.'),
+      ex('📝', 'Check-ins keep the system alive', 'Log what each project made, or set a whole month at once. Choose how often you check in (daily, weekly or monthly) in ⚙️ Settings, or per project. When a check-in is late, that project\'s health and flow sag, its pipes slow down, and the projects it feeds weaken too, until you check in again.'),
+      ex('🎯', 'Clean view', 'Press C (or the clean-view button next to the zoom) for full screen with only the system: no buttons, no panels. A card pulses yellow when it needs attention and red when it needs you now. Esc brings everything back.'),
+      ex('⏸', 'Animations off', 'In ⚙️ Settings you can turn animations off. Nothing moves, and the flowing lights become still arrows pointing the way things flow.'),
     ),
     actions: [{ label: 'Got it', kind: 'primary' }],
   });
@@ -377,12 +381,25 @@ export function openSettings() {
   } });
   let tpl = 'creator';
   const pw = { current: '', next: '' };
-  const soundBtn = h('button', { class: `btn${sound.enabled ? ' on' : ''}`, onclick: (e) => { sound.enabled = !sound.enabled; e.currentTarget.classList.toggle('on', sound.enabled); e.currentTarget.textContent = sound.enabled ? '🔊 Sound on' : '🔇 Sound off'; if (sound.enabled) sfx.pop(); } }, sound.enabled ? '🔊 Sound on' : '🔇 Sound off');
+  const soundBtn = h('button', { class: `btn${sound.enabled ? ' on' : ''}`, onclick: (e) => { sound.enabled = !sound.enabled; e.currentTarget.classList.toggle('on', sound.enabled); setText(e.currentTarget, sound.enabled ? '🔊 Sound on' : '🔇 Sound off'); if (sound.enabled) sfx.pop(); } }, sound.enabled ? '🔊 Sound on' : '🔇 Sound off');
   const themeHost = h('div');
   const paintTheme = () => clear(themeHost).append(chipGroup(
     [{ value: 'system', label: '🖥️ Same as device' }, { value: 'light', label: '☀️ Light' }, { value: 'dark', label: '🌙 Dark' }],
     window.flowmapTheme?.pref || 'system', (v) => { window.flowmapTheme?.set(v); paintTheme(); }));
   paintTheme();
+  const motionHost = h('div');
+  const paintMotion = () => clear(motionHost).append(chipGroup(
+    [{ value: 'full', label: '✨ Animations on' }, { value: 'calm', label: '⏸ Animations off' }],
+    window.flowmapMotion?.calm ? 'calm' : 'full', (v) => { window.flowmapMotion?.set(v); paintMotion(); }),
+    h('div', { class: 'hint' }, window.flowmapMotion?.calm ? 'Nothing moves. Pipes show still arrows pointing the way things flow.' : 'Lights flow through the pipes and cards react with small animations.'));
+  paintMotion();
+  const rhythmHost = h('div');
+  const RHYTHM_HINT = { daily: 'Check in every day. Miss a day and that project\'s flow, speed and health start to drop, and the projects it feeds feel it too.', weekly: 'Check in once a week. After a week without numbers the project starts to slow down.', monthly: 'Check in once a month, for projects you track loosely.', off: 'Check-ins never slow anything down.' };
+  const paintRhythm = () => clear(rhythmHost).append(chipGroup(
+    [{ value: 'daily', label: '📅 Daily' }, { value: 'weekly', label: '🗓️ Weekly' }, { value: 'monthly', label: '📆 Monthly' }, { value: 'off', label: 'Off' }],
+    S.world.checkin || 'daily', (v) => { setCheckinRhythm(v).catch((e) => notify(e.message, 'error')); paintRhythm(); }),
+    h('div', { class: 'hint' }, `${RHYTHM_HINT[S.world.checkin || 'daily']} Each project can have its own rhythm in its settings.`));
+  paintRhythm();
   const styleHost = h('div');
   const paintStyle = () => clear(styleHost).append(chipGroup(MAP_STYLES.map(({ value, label }) => ({ value, label })), getMapStyle(), (v) => { setMapStyle(v); paintStyle(); }),
     h('div', { class: 'hint' }, MAP_STYLES.find((m) => m.value === getMapStyle()).hint));
@@ -391,6 +408,9 @@ export function openSettings() {
     h('div', { class: 'sec' }, 'Appearance'),
     field('Theme', themeHost),
     field('Map style', styleHost),
+    field('Motion', motionHost),
+    h('div', { class: 'sec' }, 'Check-ins'),
+    field('How often you log your numbers', rhythmHost),
     h('div', { class: 'sec' }, 'Account'),
     field('Your name', h('input', { type: 'text', value: name, maxLength: 60, oninput: (e) => { name = e.target.value; } }), user.email),
     h('div', { class: 'grid2' },

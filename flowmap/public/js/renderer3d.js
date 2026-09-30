@@ -11,7 +11,7 @@ import { OutputPass } from '/vendor/three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from '/vendor/three/addons/environments/RoomEnvironment.js';
 import { S, project, projects, on, liveSnap, snap } from './store.js';
 import { RESOURCES, KINDS, TASK_TYPES } from '/shared/engine.js';
-import { clamp, lerp, fmtNum } from './util.js';
+import { clamp, lerp, fmtNum, setText } from './util.js';
 import { goalProgress, groupOf, GOAL_METRICS } from '/shared/goals.js';
 
 const U = 100; // map coordinates (stored on projects) per world unit
@@ -726,16 +726,16 @@ export function createRenderer(canvas, hooks) {
     if (text !== t.text) {
       t.text = text;
       const q = (c) => t.label.querySelector(c);
-      q('.ic').textContent = p.icon || kind.icon;
+      setText(q('.ic'), p.icon || kind.icon);
       q('.nm').textContent = p.name;
       q('.pct').textContent = `${pct}%`;
       q('.pct').style.color = STATUS_COLOR[status];
       q('.card').style.setProperty('--st', STATUS_COLOR[status]);
       q('.nums').innerHTML = nums.join('');
       q('.st').textContent = `${status === 'thriving' ? 'Thriving' : status === 'steady' ? 'Steady' : status === 'thirsty' ? 'Thirsty' : 'Dying'} · ${since}`;
-      q('.need').textContent = need;
+      setText(q('.need'), need);
       q('.need').hidden = !need;
-      q('.goal').textContent = goalText;
+      setText(q('.goal'), goalText);
       q('.goal').hidden = !goalText;
     }
     const top = t.group.position.clone();

@@ -77,7 +77,7 @@ export function scenarios() {
     [sc, sc === S.scenario ? S.sim : simulate(S.world, { today: S.today, horizon: HORIZON, scenario: sc })])));
 }
 
-const pickWorld = (w) => ({ projects: w.projects, links: w.links, tasks: w.tasks, logs: w.logs, notes: w.notes || [], scans: w.scans || [] });
+const pickWorld = (w) => ({ checkin: w.checkin || S.world?.checkin || 'daily', projects: w.projects, links: w.links, tasks: w.tasks, logs: w.logs, notes: w.notes || [], scans: w.scans || [] });
 
 export async function loadAll() {
   const w = await get('/api/world');
@@ -267,6 +267,12 @@ export async function saveSettings(settings) {
   const r = await patch('/api/me', { settings });
   S.user = r.user;
   return r.user;
+}
+// check-in rhythm for the whole system: applied at once, then saved
+export async function setCheckinRhythm(v) {
+  S.world.checkin = v;
+  recompute();
+  await saveSettings({ checkin: v });
 }
 export async function saveSecrets(secrets) {
   const r = await api('PUT', '/api/me/secrets', secrets);

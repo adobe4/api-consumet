@@ -2,10 +2,11 @@
 // health. Tap a card and it lifts while a larger card rises from beneath it with everything that matters:
 // health, numbers, trend, goal, tasks and actions. Pipes (or lines) carry views, money, customers and speed-ups
 // between projects, with light flowing faster where more flows. Same interface as the other map renderers.
-import { S, project, projects, on, snap, completeTask } from './store.js';
+import { S, project, projects, on, snap, completeTask, currentAlerts } from './store.js';
 import { KINDS, RESOURCES, TASK_TYPES } from '/shared/engine.js';
 import { goalProgress, groupOf, GOAL_METRICS } from '/shared/goals.js';
-import { h, fmtNum, clear } from './util.js';
+import { h, fmtNum, clear, setText } from './util.js';
+import { hasGlyph } from './icons.js';
 import { createSurface, route, drawLink, svgEl } from './surface.js';
 import { globalLook, cardLook, pipeLook, lookPanel, cardStylePanel, pipeStylePanel } from './looks.js';
 
@@ -74,7 +75,7 @@ export function createRenderer(canvas, hooks) {
   function cardEl(p) {
     let c = cards.get(p.id);
     if (!c) {
-      c = h('div', { class: 'pc', tabindex: 0, role: 'button', 'data-id': p.id }, h('span', { class: 'led' }), h('span', { class: 'em' }), h('span', { class: 'nm' }));
+      c = h('div', { class: 'pc', tabindex: 0, role: 'button', 'data-id': p.id }, h('span', { class: 'alrt', 'aria-hidden': 'true' }), h('span', { class: 'led' }), h('span', { class: 'em' }), h('span', { class: 'nm' }));
       c.addEventListener('pointerdown', (e) => cardDown(e, p.id));
       c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(p.id); } });
       c.addEventListener('pointerenter', () => { c.classList.add('hov'); highlight(p.id); });
@@ -90,8 +91,11 @@ export function createRenderer(canvas, hooks) {
     c.style.left = `${X(p)}px`; c.style.top = `${Y(p)}px`;
     c.style.setProperty('--c', p.color || KINDS[p.kind]?.color || '#ff8a5c');
     c.style.setProperty('--st', ST_VAR[st]);
+    // alerts live on the card itself: a yellow pulse when it needs attention, red when it needs you now
+    const lv = Math.max(alertLevel.get(p.id) || 0, st === 'dying' ? 2 : st === 'thirsty' ? 1 : 0, s?.checkinOverdue > 0 ? (s.fresh <= 0.6 ? 2 : 1) : 0);
+    c.dataset.alert = lv === 2 ? 'bad' : lv === 1 ? 'warn' : '';
     c.dataset.st = st; c.dataset.finish = l.finish; c.dataset.size = l.size; c.dataset.shape = l.shape; c.dataset.fx = l.fx;
-    c.querySelector('.em').textContent = l.icon ? p.icon || KINDS[p.kind]?.icon || '' : '';
+    setText(c.querySelector('.em'), l.icon ? (hasGlyph(p.icon) ? p.icon : KINDS[p.kind]?.icon || '⬢') : '');
     c.querySelector('.em').hidden = !l.icon;
     c.querySelector('.nm').textContent = p.name;
     c.setAttribute('aria-label', `${p.name}, ${Math.round(s?.health ?? 0)}% health. Open details`);
@@ -226,6 +230,8 @@ export function createRenderer(canvas, hooks) {
     const act = (a, label, cls = '') => h('button', { type: 'button', class: `btn ${cls}`, onclick: (e) => { e.stopPropagation(); doAction(a, p.id, e.currentTarget); } }, label);
     clear(info).append(
       h('div', { class: 'pi-top' }, ring(s.health, st), h('div', { class: 'pi-who' }, h('b', null, `${p.icon || ''} ${p.name}`), h('small', null, `${ST_WORD[st]} · ${since}`))),
+      s.checkinOverdue > 0 ? h('div', { class: 'pi-stale' }, h('span', null, `📝 Check-in ${s.checkinOverdue} day${s.checkinOverdue === 1 ? '' : 's'} late · flow down to ${Math.round((0.5 + 0.5 * s.fresh) * 100)}%`), act('checkin', 'Check in', 'sm primary')) : null,
+      !s.checkinOverdue && s.upstreamStale > 0 ? h('div', { class: 'pi-stale soft' }, h('span', null, '⚠️ Slowed by a project that feeds it and is waiting for a check-in')) : null,
       sec.has('stats') ? h('div', { class: 'pi-stats' }, ...stats.slice(0, 3)) : null,
       sec.has('chart') ? h('div', { class: 'pi-chart' }, sparkSvg(sp.vals, color), h('small', null, `${sp.key === 'money' ? 'Money' : 'Views'} · ${sp.label}`)) : null,
       sec.has('goal') && goal ? h('div', { class: 'pi-goal' },
@@ -352,8 +358,20 @@ export function createRenderer(canvas, hooks) {
   }
 
   // ---------- render ----------
+  let alertLevel = new Map();
+  function readAlerts() {
+    alertLevel = new Map();
+    if (S.offset !== 0) return; // alerts describe today; the future shows through health
+    for (const a of currentAlerts()) {
+      const lv = a.level === 'critical' ? 2 : a.level === 'warn' ? 1 : 0;
+      if (!lv) continue;
+      if (a.id === 'stale') continue; // each card shows its own lateness instead
+      for (const id of a.projectIds || (a.projectId ? [a.projectId] : [])) alertLevel.set(id, Math.max(alertLevel.get(id) || 0, lv));
+    }
+  }
   function render() {
     if (destroyed || !S.sim) return;
+    readAlerts();
     const list = projects();
     const seen = new Set(list.map((p) => p.id));
     for (const [id, c] of [...cards]) if (!seen.has(id)) { c.remove(); cards.delete(id); }
@@ -373,6 +391,7 @@ export function createRenderer(canvas, hooks) {
       render();
     }),
     on('tool', () => { linkFrom = null; drawGhost(); render(); }),
+    (() => { const f = () => render(); window.addEventListener('flowmap-motion', f); return () => window.removeEventListener('flowmap-motion', f); })(),
   ];
 
   // ---------- public api ----------

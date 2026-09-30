@@ -88,3 +88,33 @@ test('an unfinished task changes the forecast, never today', () => {
   assert.equal(after.days[0].projects.blonxin.health, before.days[0].projects.blonxin.health);
   assert.ok(after.days[2].projects.blonxin.health > before.days[2].projects.blonxin.health + 5);
 });
+
+test('a missed check-in slows the project and the projects it feeds', () => {
+  const fresh = world();
+  fresh.checkin = 'daily';
+  // everyone checked in today...
+  for (const p of fresh.projects) fresh.logs.push({ projectId: p.id, day: TODAY, money: 0 });
+  const src = fresh.links[0].from, dst = fresh.links[0].to;
+  const a = simulate(fresh, { today: TODAY, horizon: 1 }).days[0];
+  // ...then the source stops checking in: its logs end 5 days ago
+  const stale = world();
+  stale.checkin = 'daily';
+  const old = addDays(TODAY, -5);
+  stale.logs = stale.logs.filter((l) => l.projectId !== src || l.day <= old);
+  for (const p of stale.projects) if (p.id !== src) stale.logs.push({ projectId: p.id, day: TODAY, money: 0 });
+  if (!stale.logs.some((l) => l.projectId === src)) stale.logs.push({ projectId: src, day: old, money: 0 });
+  const sim = simulate(stale, { today: TODAY, horizon: 1 });
+  const b = sim.days[0];
+  assert.ok(b.projects[src].fresh < 1 && b.projects[src].checkinOverdue > 0);
+  assert.ok(b.projects[src].health < a.projects[src].health, 'stale project loses health');
+  assert.ok(b.projects[src].flow < a.projects[src].flow, 'and flow');
+  assert.ok(b.links[fresh.links[0].id].speed < a.links[fresh.links[0].id].speed, 'its pipes slow down');
+  assert.ok(b.projects[dst].health < a.projects[dst].health, 'the project it feeds weakens too');
+  assert.ok(alerts(stale, sim.ctx, b).some((x) => x.id === 'stale' && x.projectIds.includes(src)));
+  // weekly rhythm: 5 days without numbers is still fine
+  stale.checkin = 'weekly';
+  assert.equal(simulate(stale, { today: TODAY, horizon: 0 }).days[0].projects[src].fresh, 1);
+  // off: never stale
+  stale.checkin = 'off';
+  assert.equal(simulate(stale, { today: TODAY, horizon: 0 }).days[0].projects[src].fresh, 1);
+});

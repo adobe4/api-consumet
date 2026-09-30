@@ -104,7 +104,7 @@ const SPEC_SCHEMA = {
   properties: {
     layout: { type: 'string', enum: ['slides', 'workflow', 'mindmap', 'kanban', 'timeline', 'notes'], description: 'slides = a presentation (one 16:9 frame per slide, great for tutorial or strategy videos); workflow = boxes and arrows left to right; mindmap = centre with branches; kanban = columns of sticky notes; timeline = milestones on a line; notes = a wall of sticky notes' },
     title: { type: 'string' },
-    slides: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, subtitle: { type: 'string' }, points: { type: 'array', items: { type: 'string' }, description: 'Up to 6. "Heading: detail" shows the heading bold.' }, note: { type: 'string', description: 'Speaker notes, shown only to the presenter' }, emoji: { type: 'string' }, color: { type: 'string' } } } },
+    slides: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, subtitle: { type: 'string' }, points: { type: 'array', items: { type: 'string' }, description: 'Up to 6. "Heading: detail" shows the heading bold.' }, note: { type: 'string', description: 'Speaker notes, shown only to the presenter' }, emoji: { type: 'string', description: 'A sticker for the slide. Prefer a line icon: i:flame, i:target, i:lightbulb, i:zap, i:rocket, i:trophy, i:star, i:circle-check, i:trending-up, i:banknote, i:megaphone, i:heart, i:clock, i:flag, i:gift, i:crown, i:sparkles' }, color: { type: 'string' } } } },
     nodes: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, text: { type: 'string' }, color: { type: 'string' }, group: { type: 'string' }, kind: { type: 'string', enum: ['card', 'note', 'shape'] } } } },
     edges: { type: 'array', items: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string' }, flow: { type: 'boolean' } } } },
     center: { type: 'string' },
@@ -119,7 +119,7 @@ const ITEM_SCHEMA = {
   properties: {
     type: { type: 'string', enum: ITEM_TYPES }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
     title: { type: 'string' }, text: { type: 'string' }, color: { type: 'string', description: 'Hex colour' },
-    shape: { type: 'string', enum: SHAPES, description: 'For type=shape' }, emoji: { type: 'string', description: 'For type=sticker' },
+    shape: { type: 'string', enum: SHAPES, description: 'For type=shape' }, emoji: { type: 'string', description: 'For type=sticker. Prefer a line icon: i:arrow-right, i:arrow-left, i:arrow-up, i:arrow-down, i:check, i:x, i:star, i:flame, i:rocket, i:lightbulb, i:target, i:zap, i:trophy, i:heart, i:thumbs-up, i:circle-alert, i:sparkles, i:banknote, i:clock, i:pin, i:flag, i:megaphone (an emoji also works)' },
     url: { type: 'string', description: 'For type=image or type=link' }, back: { type: 'string', description: 'For type=flip: text on the back, one line per row' },
     items: { type: 'array', items: { type: 'string' }, description: 'For type=checklist' },
     cover: { type: 'string', enum: ['blur', 'frost', 'solid', 'curtain'], description: 'For type=hide: a cover laid over other items (put it after them) that the viewer taps to reveal what is underneath. Good for quiz answers, prices, the next step.' },
@@ -133,7 +133,7 @@ function itemFromSpec(a, origin) {
   if (Number(o.w) > 0) it.w = Number(o.w);
   if (Number(o.h) > 0) it.h = Number(o.h);
   if (type === 'shape') it.data.shape = SHAPES.includes(o.shape) ? o.shape : 'round';
-  if (type === 'sticker') it.text = String(o.emoji || o.text || '⭐').slice(0, 8);
+  if (type === 'sticker') it.text = String(o.emoji || o.text || 'i:star').slice(0, 40);
   if (type === 'image' || type === 'link') it.data.url = String(o.url || '').slice(0, 2000);
   if (type === 'flip') it.data.back = String(o.back || '').slice(0, 4000);
   if (type === 'checklist') it.data.items = (Array.isArray(o.items) ? o.items : []).slice(0, 40).map((t) => ({ t: String(t).slice(0, 200), done: false }));

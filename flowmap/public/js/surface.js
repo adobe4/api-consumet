@@ -60,6 +60,7 @@ export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onCon
   // smooth camera moves (focus, fit, presenting)
   function flyTo(target, ms = 650) {
     cancelAnimationFrame(anim);
+    if (calmMotion()) ms = 0; // animations off: jump straight there
     const from = { ...cam }, t0 = performance.now();
     const step = (now) => {
       const t = Math.min(1, (now - t0) / ms), e = ease(t);
@@ -289,7 +290,8 @@ export function drawLink(g, r, style, sid, { hot = false, dim = false, speed = 2
   const w = Math.max(1, st.width);
   g.setAttribute('class', `sf-link k-${st.kind}${hot ? ' hot' : ''}${dim ? ' dim' : ''}`);
   const P = (attrs, parent = g) => svgEl('path', { d: r.d, fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', ...attrs }, parent);
-  const F = (attrs) => P(attrs, flowG || g); // an animated light
+  // an animated light, or with animations off, still arrows pointing the way it flows
+  const F = (attrs, arrowColor = attrs.stroke, size = 5) => (calmMotion() ? arrowsAlong(flowG || g, r.d, arrowColor, size) : P(attrs, flowG || g));
   const dash = st.dash === 'dashed' ? `${w * 3.2} ${w * 2.4}` : st.dash === 'dotted' ? `0.1 ${Math.max(6, w * 2.2)}` : null;
   const flowDur = `${Math.max(0.6, speed)}s`;
   if (st.kind === 'tunnel') {
@@ -299,7 +301,7 @@ export function drawLink(g, r, style, sid, { hot = false, dim = false, speed = 2
     const floor = svgEl('g', { filter: `url(#${sid}-inset)` }, g);
     P({ stroke: 'var(--floor)', 'stroke-width': tw }, floor);
     P({ stroke: `url(#${sid}-deep)`, 'stroke-width': tw }, floor);
-    if (st.flow) F({ stroke: col, 'stroke-width': Math.max(2.5, tw * 0.3), 'stroke-dasharray': '1 21', class: 'sf-flow sf-bead', style: `animation-duration:${flowDur}` });
+    if (st.flow) F({ stroke: col, 'stroke-width': Math.max(2.5, tw * 0.3), 'stroke-dasharray': '1 21', class: 'sf-flow sf-bead', style: `animation-duration:${flowDur}` }, col, Math.max(3.5, tw * 0.3));
     else P({ stroke: col, 'stroke-width': Math.max(2, tw * 0.18), opacity: 0.55 });
     marker(g, st.start, r.a, Math.max(9, tw * 0.9), col); marker(g, st.end, r.b, Math.max(9, tw * 0.9), col);
   } else if (st.kind === 'raised') {
@@ -308,21 +310,39 @@ export function drawLink(g, r, style, sid, { hot = false, dim = false, speed = 2
     P({ stroke: 'var(--raise)', 'stroke-width': tw });
     P({ stroke: col, 'stroke-width': tw * 0.42, opacity: 0.92, 'stroke-dasharray': dash });
     P({ stroke: 'rgba(255,255,255,0.5)', 'stroke-width': Math.max(1.5, tw * 0.14), transform: `translate(0 ${-tw * 0.2})` });
-    if (st.flow) F({ stroke: '#fff', 'stroke-width': Math.max(2.5, tw * 0.26), 'stroke-dasharray': '1 21', class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 });
+    if (st.flow) F({ stroke: '#fff', 'stroke-width': Math.max(2.5, tw * 0.26), 'stroke-dasharray': '1 21', class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 }, '#fff', Math.max(3.5, tw * 0.28));
     marker(g, st.start, r.a, Math.max(10, tw), col); marker(g, st.end, r.b, Math.max(10, tw), col);
   } else if (st.kind === 'drawn') {
     const tw = Math.max(3, w * 0.6);
     P({ stroke: col, 'stroke-width': tw, opacity: 0.35 });
-    if (st.flow) F({ stroke: col, 'stroke-width': tw, 'stroke-dasharray': '10 10', class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.95 });
+    if (st.flow) F({ stroke: col, 'stroke-width': tw, 'stroke-dasharray': '10 10', class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.95 }, col, Math.max(4, tw * 1.3));
+    if (st.flow && calmMotion()) P({ stroke: col, 'stroke-width': tw, opacity: 0.95 });
     else P({ stroke: col, 'stroke-width': tw, 'stroke-dasharray': dash, opacity: 0.95 });
     marker(g, st.start, r.a, Math.max(9, tw * 2.6), col); marker(g, st.end, r.b, Math.max(9, tw * 2.6), col);
   } else {
     P({ stroke: col, 'stroke-width': w, 'stroke-dasharray': dash, class: 'sf-line' });
-    if (st.flow) F({ stroke: 'var(--flow-bead, #fff)', 'stroke-width': Math.max(1.5, w * 0.7), 'stroke-dasharray': `1 ${Math.max(12, w * 5)}`, class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 });
+    if (st.flow) F({ stroke: 'var(--flow-bead, #fff)', 'stroke-width': Math.max(1.5, w * 0.7), 'stroke-dasharray': `1 ${Math.max(12, w * 5)}`, class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 }, col, Math.max(4, w * 1.8));
     marker(g, st.start, r.a, Math.max(9, w * 3), col); marker(g, st.end, r.b, Math.max(9, w * 3), col);
   }
   // wide invisible stroke so thin lines are easy to hover and tap
   P({ stroke: 'transparent', 'stroke-width': Math.max(18, w + 14), class: 'sf-hit', 'data-link': hitId ?? '' });
+}
+
+export const calmMotion = () => typeof document !== 'undefined' && document.documentElement.dataset.motion === 'calm';
+// chevrons spaced along a path, each turned to the direction of travel
+function arrowsAlong(parent, d, color, size) {
+  const probe = svgEl('path', { d, fill: 'none', stroke: 'none' }, parent);
+  const len = probe.getTotalLength?.() || 0;
+  if (len < size * 4) { probe.remove(); return; }
+  const step = Math.max(38, size * 7), n = Math.min(40, Math.floor((len - step * 0.4) / step));
+  const sw = Math.max(1.6, size * 0.45);
+  for (let i = 0; i < Math.max(1, n); i++) {
+    const t = n ? step * (i + 0.75) : len / 2;
+    const a = probe.getPointAtLength(t), b = probe.getPointAtLength(Math.min(len, t + 1));
+    const ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+    svgEl('path', { d: `M${-size},${-size} L${size * 0.55},0 L${-size},${size}`, fill: 'none', stroke: color, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: 'sf-arrow', transform: `translate(${a.x.toFixed(1)} ${a.y.toFixed(1)}) rotate(${ang.toFixed(1)})` }, parent);
+  }
+  probe.remove();
 }
 
 export function drawLabel(g, r, text) {

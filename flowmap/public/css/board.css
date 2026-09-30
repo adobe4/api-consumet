@@ -347,7 +347,8 @@
 .bd:is(.staged, .presenting, .readonly) .bi.movable, .bd:is(.staged, .presenting, .readonly) .t-hide.tap-move { cursor: grab; }
 .bd:is(.staged, .presenting, .readonly) .t-hide.tap-reveal, .bd:is(.staged, .presenting, .readonly) .t-flip { cursor: pointer; }
 .bi.lifted { z-index: 99999998 !important; scale: 1.04; box-shadow: 18px 30px 50px var(--sh-d), -6px -6px 18px var(--sh-l) !important; cursor: grabbing !important; transition: scale 0.25s var(--spring), box-shadow 0.25s; }
-.bd:not(.staged):not(.presenting):not(.readonly) .bi.movable::before { content: "✋"; position: absolute; right: 8px; bottom: 8px; z-index: 3; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; font-size: 11px; background: var(--face); box-shadow: var(--raised-sm); pointer-events: none; }
+.bd:not(.staged):not(.presenting):not(.readonly) .bi.movable::before { content: ""; position: absolute; right: 8px; bottom: 8px; z-index: 3; width: 24px; height: 24px; border-radius: 50%; background: var(--face); box-shadow: var(--raised-sm); pointer-events: none; }
+.bd:not(.staged):not(.presenting):not(.readonly) .bi.movable::after { content: ""; position: absolute; right: 13px; bottom: 13px; z-index: 4; width: 14px; height: 14px; background: var(--accent); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 11V6a2 2 0 0 0-4 0v5'/%3E%3Cpath d='M14 10V4a2 2 0 0 0-4 0v2'/%3E%3Cpath d='M10 10.5V6a2 2 0 0 0-4 0v8'/%3E%3Cpath d='M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 11V6a2 2 0 0 0-4 0v5'/%3E%3Cpath d='M14 10V4a2 2 0 0 0-4 0v2'/%3E%3Cpath d='M10 10.5V6a2 2 0 0 0-4 0v8'/%3E%3Cpath d='M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15'/%3E%3C/svg%3E") center / contain no-repeat; pointer-events: none; }
 .bctx .cb.on { color: var(--accent); background: var(--bg); box-shadow: var(--sunk-sm); }
 
 .stage-bar { position: absolute; left: 50%; bottom: 18px; translate: -50% 0; z-index: 75; display: flex; align-items: center; gap: 6px; padding: 6px; border-radius: 18px; background: var(--face); box-shadow: var(--raised-lg); animation: pop-in 0.3s var(--spring); white-space: nowrap; }
@@ -388,3 +389,13 @@
 @media (max-width: 760px) {
   .stage-bar { bottom: 70px; max-width: calc(100% - 16px); overflow-x: auto; }
 }
+.bd-tools .tool .lic { width: 20px; height: 20px; }
+.bctx .cb .lic { width: 17px; height: 17px; vertical-align: -3px; }
+.emo-b .lic { width: 22px; height: 22px; }
+.ico-grid .emo-b { color: var(--text); }
+.t-sticker .emo.ico { color: var(--c); display: grid; place-items: center; }
+.t-sticker .emo .lic { width: 1em; height: 1em; stroke-width: 2.3; filter: drop-shadow(2px 3px 3px var(--sh-d)); }
+.tplc .ti .lic, .bt .bi-ic .lic, .bd-icon .lic { color: var(--accent); }
+.tplc .ti .lic { width: 26px; height: 26px; }
+.hz-ic .lic { width: 18px; height: 18px; color: var(--accent); }
+.pb .lic { width: 18px; height: 18px; }

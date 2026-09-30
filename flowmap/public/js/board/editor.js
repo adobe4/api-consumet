@@ -1,6 +1,7 @@
 // The board editor: an infinite tactile canvas for planning, explaining and presenting.
 // Items are DOM elements on the shared surface; connections and drawings are SVG in the same world space.
-import { h, clear, debounce } from '../util.js';
+import { h, clear, debounce, setText, raw } from '../util.js';
+import { icon as svgIcon } from '../icons.js';
 import { api } from '../api.js';
 import { S, projects, project, notify } from '../store.js';
 import { createSurface, route, drawLink, drawLabel, svgEl, LINK_DEFAULT } from '../surface.js';
@@ -14,16 +15,17 @@ import { openShareDialog } from './share.js';
 import { openModal } from '../ui-common.js';
 
 const COLORS = ['', ...PALETTE];
+const ICON_STICKERS = ['arrow-right', 'arrow-left', 'arrow-up', 'arrow-down', 'arrow-up-right', 'mouse-pointer-click', 'pointer', 'check', 'x', 'circle-check', 'circle-x', 'star', 'flame', 'rocket', 'lightbulb', 'target', 'zap', 'trophy', 'crown', 'heart', 'thumbs-up', 'party-popper', 'sparkles', 'badge-check', 'circle-alert', 'circle-question-mark', 'info', 'trending-up', 'trending-down', 'banknote', 'clock', 'pin', 'flag', 'megaphone', 'bell', 'gift', 'eye', 'hand'].map((n) => `i:${n}`);
 const STICKERS = ['👉', '👈', '👆', '👇', '➡️', '⬅️', '⬆️', '⬇️', '↗️', '✅', '❌', '⭐', '🔥', '🚀', '💡', '🎯', '💰', '📈', '📉', '❤️', '👏', '🎉', '😂', '🤯', '😮', '⚠️', '❓', '❗', '💯', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '🎬', '📌', '🧠', '⏰'];
 const DEF_FINISH = { note: 'tinted', card: 'soft', shape: 'solid', frame: 'raised', flip: 'soft', image: 'soft', video: 'soft', file: 'soft', link: 'soft', project: 'soft', checklist: 'soft', prompt: 'soft', text: 'none', sticker: 'none', ink: 'none', hide: 'none' };
 const TOOLS = [
   ['select', '↖', 'Select & move (V)', 'v'], ['hand', '✋', 'Move the board (H or hold Space)', 'h'],
-  ['note', '🗒️', 'Sticky note (N)', 'n'], ['card', '▭', 'Card (C)', 'c'], ['text', 'T', 'Text (T)', 't'], ['shape', '◆', 'Shapes (S)', 's'],
+  ['note', '🗒️', 'Sticky note (N)', 'n'], ['card', '▭', 'Card (C)', 'c'], ['text', 'i:type', 'Text (T)', 't'], ['shape', '◆', 'Shapes (S)', 's'],
   ['frame', '▦', 'Frame / slide (F)', 'f'], ['flip', '🂠', 'Flip card', ''], ['checklist', '☑', 'Checklist', ''], ['prompt', '✦', 'Prompt with copy button (P)', 'p'],
   ['hide', '🙈', 'Hide: a blur or cover you tap away to reveal (R)', 'r'],
   ['connector', '⤳', 'Connect (L)', 'l'], ['pen', '✏️', 'Draw (D)', 'd'], ['highlight', '🖍️', 'Highlighter', ''], ['eraser', '⌫', 'Eraser (E)', 'e'],
   ['sticker', '😀', 'Stickers & arrows', ''], ['image', '🖼️', 'Image: link or upload', 'i'], ['file', '📎', 'Attach a text file', ''], ['video', '🎬', 'Video from this device', ''],
-  ['link', '🔗', 'Web link', ''], ['project', '📊', 'Live project from your tracker', ''], ['laser', '🔴', 'Laser pointer (X)', 'x'],
+  ['link', '🔗', 'Web link', ''], ['project', '📊', 'Live project from your tracker', ''], ['laser', 'i:spotlight', 'Laser pointer (X)', 'x'],
 ];
 
 export function createEditor(host, { board, share = null, onBack, onRenamed }) {
@@ -31,7 +33,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   let data = { v: 1, items: [], links: [], order: [], settings: {}, ...board.data };
   data.items ||= []; data.links ||= []; data.order ||= []; data.settings ||= {};
   let version = board.version, name = board.name, icon = board.icon || '';
-  let tool = 'select', toolLock = false, sticker = '👉', shapeKind = 'round', penColor = '#ff7a2f';
+  let tool = 'select', toolLock = false, sticker = 'i:arrow-right', shapeKind = 'round', penColor = '#ff7a2f';
   const sel = new Set();
   const els = new Map(), linkEls = new Map(), inkEls = new Map();
   let editing = null, undo = [], redo = [], destroyed = false, drag = null;
@@ -69,7 +71,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   sf.overlay.append(ctxBar);
 
   // top bar
-  const nameEl = h('div', { class: 'bd-name', contenteditable: readonly ? 'false' : 'true', spellcheck: 'false', title: readonly ? '' : 'Rename' }, name);
+  const nameEl = h('div', { class: 'bd-name', contenteditable: readonly ? 'false' : 'true', spellcheck: 'false', title: readonly ? '' : 'Rename' }, raw(name));
   const iconBtn = h('button', { class: 'bd-icon', type: 'button', title: readonly ? '' : 'Change icon', onclick: (e) => !readonly && pickIcon(e.currentTarget) }, icon || '🧩');
   const status = h('span', { class: 'bd-status' }, readonly ? 'View only' : 'Saved');
   const undoBtn = h('button', { class: 'btn icon bd-editonly', type: 'button', title: 'Undo (Ctrl+Z)', onclick: () => doUndo() }, '↶');
@@ -434,7 +436,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     root.classList.toggle('staged', v);
     nameEl.contentEditable = v ? 'false' : 'true';
     lockBtn.classList.toggle('on', v);
-    lockBtn.querySelector('.lk-ic').textContent = v ? '🔒' : '🔓';
+    setText(lockBtn.querySelector('.lk-ic'), v ? '🔒' : '🔓');
     lockBtn.querySelector('.lbl-txt').textContent = v ? 'Locked' : 'Lock';
     closePop(); closeMenu();
     if (v) { select([]); if (tool !== 'laser') setTool('select'); } else resetStage();
@@ -531,7 +533,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       const [dw, dh] = DEFAULT_SIZE[type] || [200, 140];
       it = makeItem(type, { x: snap(w.x - dw / 2), y: snap(w.y - dh / 2), z: type === 'frame' ? minZ() - 1 : maxZ() + 1, anim: { in: 'pop' } });
       if (type === 'shape') it.data.shape = shapeKind;
-      if (type === 'sticker') { it.text = sticker; it.anim = { in: 'pop', loop: 'bounce' }; }
+      if (type === 'sticker') { it.text = sticker; it.anim = { in: 'pop', loop: sticker.startsWith('i:') ? 'none' : 'bounce' }; }
       if (type === 'note') it.color = PALETTE[(data.items.length) % 6];
       if (type === 'frame') { it.title = `Frame ${data.items.filter((i) => i.type === 'frame').length + 1}`; it.style = { shadow: 'raised' }; }
       if (type === 'checklist') { it.title = 'Checklist'; it.data.items = [{ t: 'First step', done: false }, { t: 'Second step', done: false }]; }
@@ -654,7 +656,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (!it) return;
       if (act === 'copy') {
         const text = it.text || '';
-        const done = () => { btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = '⧉ Copy'; }, 1400); };
+        const done = () => { setText(btn, '✓ Copied'); setTimeout(() => { setText(btn, '⧉ Copy'); }, 1400); };
         navigator.clipboard?.writeText(text).then(done).catch(() => { const r = document.createRange(); const t = el.querySelector('.txt'); if (t) { r.selectNodeContents(t); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } });
       } else if (act === 'check') {
         if (readonly) return;
@@ -1029,7 +1031,13 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     openPop({ anchor: btn, title: 'Pick a shape, then tap the board', width: 330, body: h('div', { class: 'shape-grid' }, Object.entries(SHAPE_LABEL).map(([k, label]) => h('button', { type: 'button', class: `btn${shapeKind === k ? ' on' : ''}`, onclick: () => { shapeKind = k; closePop(); } }, label))) });
   }
   function stickerPicker(btn, pt, at) {
-    openPop({ ...(btn ? { anchor: btn } : pt), title: at ? 'Add a sticker' : 'Pick a sticker, then tap the board', width: 360, body: h('div', { class: 'emo-grid' }, STICKERS.map((s) => h('button', { type: 'button', class: `emo-b${sticker === s ? ' on' : ''}`, onclick: () => { sticker = s; closePop(); if (at) place(makeItem('sticker', { text: s, w: 84, h: 84, anim: { in: 'pop', loop: 'bounce' } }), at); } }, s))) });
+    const pickOne = (v) => { sticker = v; closePop(); if (at) place(makeItem('sticker', { text: v, w: 84, h: 84, anim: { in: 'pop', loop: v.startsWith('i:') ? 'none' : 'bounce' } }), at); };
+    const b = (v, face) => h('button', { type: 'button', class: `emo-b${sticker === v ? ' on' : ''}`, title: v.startsWith('i:') ? v.slice(2).replace(/-/g, ' ') : '', onclick: () => pickOne(v) }, face);
+    openPop({ ...(btn ? { anchor: btn } : pt), title: at ? 'Add a sticker' : 'Pick a sticker, then tap the board', width: 380, body: h('div', { class: 'pgrid' },
+      h('div', { class: 'psec' }, 'Icons · take the colour you give them'),
+      h('div', { class: 'emo-grid ico-grid' }, ICON_STICKERS.map((v) => b(v, svgIcon(v.slice(2))))),
+      h('div', { class: 'psec' }, 'Emoji'),
+      h('div', { class: 'emo-grid' }, STICKERS.map((v) => b(v, raw(v))))) });
   }
   function penPicker(btn) {
     openPop({ anchor: btn, title: '✏️ Draw', width: 340, body: h('div', { class: 'pgrid' },
@@ -1055,7 +1063,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   }
   function pickIcon(btn) {
     const ICONS = ['🧩', '🎬', '🎓', '📈', '🧠', '🚀', '💡', '🗺️', '📋', '🎯', '💰', '📺', '🎵', '🛒', '⚽', '💬', '🏆', '🔥'];
-    openPop({ anchor: btn, title: 'Board icon', width: 320, body: h('div', { class: 'emo-grid' }, ICONS.map((s) => h('button', { type: 'button', class: 'emo-b', onclick: () => { icon = s; iconBtn.textContent = s; closePop(); onRenamed?.(name, icon); save(); } }, s))) });
+    openPop({ anchor: btn, title: 'Board icon', width: 320, body: h('div', { class: 'emo-grid' }, ICONS.map((s) => h('button', { type: 'button', class: 'emo-b', onclick: () => { icon = s; setText(iconBtn, s); closePop(); onRenamed?.(name, icon); save(); } }, s))) });
   }
   function boardLook(btn) {
     const theme = window.flowmapTheme;
@@ -1135,13 +1143,14 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   updateStageBar();
   const offTheme = () => renderLinks();
   window.addEventListener('flowmap-theme', offTheme);
+  window.addEventListener('flowmap-motion', offTheme); // lights ⇄ still arrows
 
   return {
     root,
     destroy() {
       destroyed = true; save.flush?.();
       window.removeEventListener('keydown', onKey); document.removeEventListener('paste', onPaste); document.removeEventListener('fullscreenchange', onFs);
-      window.removeEventListener('flowmap-theme', offTheme);
+      window.removeEventListener('flowmap-theme', offTheme); window.removeEventListener('flowmap-motion', offTheme);
       presenting?.end?.(); closePop(); closeMenu();
       sf.destroy(); root.remove();
     },

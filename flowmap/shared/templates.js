@@ -93,5 +93,7 @@ export function buildTemplate(name, today) {
     logs.push({ id: `l-t-${i}`, projectId: 'tiktok', day: D(-i), money: null, attention: Math.round(15000 * wobble(i, 0.2)), customers: null, posts: i <= 3 ? 1 : 0, feel: 3, note: '', sample: 1 });
     logs.push({ id: `l-i-${i}`, projectId: 'iptv', day: D(-i), money: Math.round(18000 * wobble(i, 0.25)), attention: null, customers: Math.round(1 + Math.max(0, Math.sin(i))), posts: i === 1 ? 1 : 0, feel: 4, note: '', sample: 1 });
   }
+  // the other projects were checked in too (no numbers logged), so the sample starts with a fresh system
+  for (const id of ['blonxin', 'newch', 'mikeka', 'domo', 'soko']) logs.push({ id: `l-${id}-1`, projectId: id, day: D(-1), money: null, attention: null, customers: null, posts: 0, feel: 3, note: '', sample: 1 });
   return { projects, links, tasks, logs };
 }
