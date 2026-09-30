@@ -21,10 +21,12 @@ export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onCon
   const world = document.createElement('div');
   world.className = 'sf-world';
   const under = svgEl('svg', { class: 'sf-svg sf-under', width: 1, height: 1 });
+  // moving lights live on their own layer, so animating them never repaints the filtered pipes under them
+  const flows = svgEl('svg', { class: 'sf-svg sf-flows', width: 1, height: 1 });
   const layer = document.createElement('div');
   layer.className = 'sf-layer';
   const over = svgEl('svg', { class: 'sf-svg sf-over', width: 1, height: 1 });
-  world.append(under, layer, over);
+  world.append(under, flows, layer, over);
   const overlay = document.createElement('div');
   overlay.className = 'sf-overlay';
   root.append(world, overlay);
@@ -201,7 +203,7 @@ export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onCon
     root.remove();
   }
   return {
-    root, world, layer, under, over, overlay, defs, id, cam,
+    root, world, layer, under, flows, over, overlay, defs, id, cam,
     get size() { return { W, H }; },
     toWorld, toScreen, local, zoomAt, flyTo, fit, frameFor, centerOn, setGround, resize, destroy,
     zoomBy: (f) => { const k = clamp(cam.k * f, minK, maxK); flyTo({ k, tx: W / 2 - ((W / 2 - cam.tx) / cam.k) * k, ty: H / 2 - ((H / 2 - cam.ty) / cam.k) * k }, 260); },
@@ -279,13 +281,15 @@ function marker(g, kind, at, size, color, cls = '') {
 }
 
 // Draw one connection into group g (cleared first). r = route(); style as above; sid = surface id (for defs).
-export function drawLink(g, r, style, sid, { hot = false, dim = false, speed = 2.4, hitId } = {}) {
+export function drawLink(g, r, style, sid, { hot = false, dim = false, speed = 2.4, hitId, flowG = null } = {}) {
   g.textContent = '';
+  if (flowG) { flowG.textContent = ''; flowG.setAttribute('class', `sf-flowg${hot ? ' hot' : ''}${dim ? ' dim' : ''}`); }
   const st = { ...LINK_DEFAULT, ...style };
   const col = st.color || 'var(--link, #ff8a3d)';
   const w = Math.max(1, st.width);
   g.setAttribute('class', `sf-link k-${st.kind}${hot ? ' hot' : ''}${dim ? ' dim' : ''}`);
   const P = (attrs, parent = g) => svgEl('path', { d: r.d, fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', ...attrs }, parent);
+  const F = (attrs) => P(attrs, flowG || g); // an animated light
   const dash = st.dash === 'dashed' ? `${w * 3.2} ${w * 2.4}` : st.dash === 'dotted' ? `0.1 ${Math.max(6, w * 2.2)}` : null;
   const flowDur = `${Math.max(0.6, speed)}s`;
   if (st.kind === 'tunnel') {
@@ -295,7 +299,7 @@ export function drawLink(g, r, style, sid, { hot = false, dim = false, speed = 2
     const floor = svgEl('g', { filter: `url(#${sid}-inset)` }, g);
     P({ stroke: 'var(--floor)', 'stroke-width': tw }, floor);
     P({ stroke: `url(#${sid}-deep)`, 'stroke-width': tw }, floor);
-    if (st.flow) P({ stroke: col, 'stroke-width': Math.max(3, tw * 0.34), 'stroke-dasharray': '2 18', class: 'sf-flow', style: `animation-duration:${flowDur}`, filter: `url(#${sid}-glow)` });
+    if (st.flow) F({ stroke: col, 'stroke-width': Math.max(2.5, tw * 0.3), 'stroke-dasharray': '1 21', class: 'sf-flow sf-bead', style: `animation-duration:${flowDur}` });
     else P({ stroke: col, 'stroke-width': Math.max(2, tw * 0.18), opacity: 0.55 });
     marker(g, st.start, r.a, Math.max(9, tw * 0.9), col); marker(g, st.end, r.b, Math.max(9, tw * 0.9), col);
   } else if (st.kind === 'raised') {
@@ -304,16 +308,17 @@ export function drawLink(g, r, style, sid, { hot = false, dim = false, speed = 2
     P({ stroke: 'var(--raise)', 'stroke-width': tw });
     P({ stroke: col, 'stroke-width': tw * 0.42, opacity: 0.92, 'stroke-dasharray': dash });
     P({ stroke: 'rgba(255,255,255,0.5)', 'stroke-width': Math.max(1.5, tw * 0.14), transform: `translate(0 ${-tw * 0.2})` });
-    if (st.flow) P({ stroke: '#fff', 'stroke-width': Math.max(2.5, tw * 0.26), 'stroke-dasharray': '2 18', class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 });
+    if (st.flow) F({ stroke: '#fff', 'stroke-width': Math.max(2.5, tw * 0.26), 'stroke-dasharray': '1 21', class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 });
     marker(g, st.start, r.a, Math.max(10, tw), col); marker(g, st.end, r.b, Math.max(10, tw), col);
   } else if (st.kind === 'drawn') {
     const tw = Math.max(3, w * 0.6);
     P({ stroke: col, 'stroke-width': tw, opacity: 0.35 });
-    P({ stroke: col, 'stroke-width': tw, 'stroke-dasharray': st.flow ? '10 10' : dash, class: st.flow ? 'sf-flow' : '', style: st.flow ? `animation-duration:${flowDur}` : '', opacity: 0.95 });
+    if (st.flow) F({ stroke: col, 'stroke-width': tw, 'stroke-dasharray': '10 10', class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.95 });
+    else P({ stroke: col, 'stroke-width': tw, 'stroke-dasharray': dash, opacity: 0.95 });
     marker(g, st.start, r.a, Math.max(9, tw * 2.6), col); marker(g, st.end, r.b, Math.max(9, tw * 2.6), col);
   } else {
     P({ stroke: col, 'stroke-width': w, 'stroke-dasharray': dash, class: 'sf-line' });
-    if (st.flow) P({ stroke: 'var(--flow-bead, #fff)', 'stroke-width': Math.max(1.5, w * 0.7), 'stroke-dasharray': `1 ${Math.max(12, w * 5)}`, class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 });
+    if (st.flow) F({ stroke: 'var(--flow-bead, #fff)', 'stroke-width': Math.max(1.5, w * 0.7), 'stroke-dasharray': `1 ${Math.max(12, w * 5)}`, class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 });
     marker(g, st.start, r.a, Math.max(9, w * 3), col); marker(g, st.end, r.b, Math.max(9, w * 3), col);
   }
   // wide invisible stroke so thin lines are easy to hover and tap

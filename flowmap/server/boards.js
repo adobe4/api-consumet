@@ -122,6 +122,7 @@ const ITEM_SCHEMA = {
     shape: { type: 'string', enum: SHAPES, description: 'For type=shape' }, emoji: { type: 'string', description: 'For type=sticker' },
     url: { type: 'string', description: 'For type=image or type=link' }, back: { type: 'string', description: 'For type=flip: text on the back, one line per row' },
     items: { type: 'array', items: { type: 'string' }, description: 'For type=checklist' },
+    cover: { type: 'string', enum: ['blur', 'frost', 'solid', 'curtain'], description: 'For type=hide: a cover laid over other items (put it after them) that the viewer taps to reveal what is underneath. Good for quiz answers, prices, the next step.' },
     ref: { type: 'string', description: 'Your own name for this item so connections can point at it' },
   },
 };
@@ -137,6 +138,7 @@ function itemFromSpec(a, origin) {
   if (type === 'flip') it.data.back = String(o.back || '').slice(0, 4000);
   if (type === 'checklist') it.data.items = (Array.isArray(o.items) ? o.items : []).slice(0, 40).map((t) => ({ t: String(t).slice(0, 200), done: false }));
   if (type === 'frame') it.style.shadow = 'raised';
+  if (type === 'hide') { it.data = { cover: ['blur', 'frost', 'solid', 'curtain'].includes(o.cover) ? o.cover : 'blur', tap: 'reveal' }; if (!it.title) it.title = 'Tap to reveal'; it.z = 1000; }
   it.anim = { in: 'pop' };
   return it;
 }

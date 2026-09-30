@@ -76,7 +76,8 @@ export function openViewMenu(anchor) {
       ? item('🫧', 'Switch to glass tanks (3D)', () => setMapStyle('tanks'))
       : item('🃏', 'Switch to cards', () => setMapStyle('cards')),
     rd.autoLayout ? null : item('✨', 'Tidy up the layout', () => tidy(), 'primary'),
-    rd.autoLayout ? null : item('▦', zonesOn ? 'Hide areas' : 'Show areas', () => setZones(!zonesOn)),
+    rd.autoLayout || rd.lookAreas ? null : item('▦', zonesOn ? 'Hide areas' : 'Show areas', () => setZones(!zonesOn)),
+    rd.fit ? item('⤢', 'Fit everything', () => rd.fit()) : null,
     window.flowmapTheme ? (window.flowmapTheme.current === 'light'
       ? item('🌙', 'Dark mode', () => window.flowmapTheme.set('dark'))
       : item('☀️', 'Light mode', () => window.flowmapTheme.set('light'))) : null,

@@ -6,14 +6,30 @@ import { RESOURCES } from '/shared/engine.js';
 import { openPop, segRow, swatchRow, toggleRow, rangeRow, closePop } from './pop.js';
 
 export const CARD_COLORS = ['', '#ff4d5e', '#ff8a5c', '#ffb020', '#e8b86b', '#b8e04a', '#4be38a', '#2fb4a0', '#e07a5f', '#ff6fae', '#c9a27e', '#8a7b6d'];
-export const LOOK_DEFAULT = { ground: 'dots', pipe: 'tunnel', card: 'soft', lines: 'curved', labels: true };
-export const CARD_DEFAULT = { finish: '', size: 'm', shape: 'round', fx: 'none', icon: true, info: { sections: ['stats', 'chart', 'goal', 'tasks', 'actions'], width: 'normal' } };
+// the whole tracker: floor, cards and pipes. Every card and pipe may override it.
+export const LOOK_DEFAULT = { ground: 'dots', pipe: 'tunnel', card: 'soft', lines: 'curved', labels: true, cardSize: 'l', cardShape: 'round', cardFx: 'none', icons: true, areas: 'off', thick: 'normal', flow: true, spacing: 'tight' };
+// '' = follow the whole-map look
+export const CARD_DEFAULT = { finish: '', size: '', shape: '', fx: '', icon: null, info: { sections: ['stats', 'chart', 'goal', 'tasks', 'actions'], width: 'normal' } };
 export const INFO_SECTIONS = [['stats', 'Numbers'], ['chart', 'Trend'], ['goal', 'Goal'], ['tasks', 'Tasks'], ['note', 'Note'], ['channels', 'Channels'], ['actions', 'Buttons']];
 
 export const globalLook = () => ({ ...LOOK_DEFAULT, ...(S.user?.settings?.look || {}) });
-export const cardLook = (p) => {
+// a card's own choices (for its style panel)
+export const cardOwn = (p) => {
   const l = p?.cfg?.look || {};
   return { ...CARD_DEFAULT, ...l, info: { ...CARD_DEFAULT.info, ...(l.info || {}) } };
+};
+// what a card actually shows: its own choices, else the whole-map look. Early saves stored the old defaults
+// (m, round, none) for every styled card, so those count as "follow the map".
+export const cardLook = (p) => {
+  const o = cardOwn(p), g = globalLook();
+  return {
+    ...o,
+    finish: o.finish || g.card,
+    size: o.size && o.size !== 'm' ? o.size : g.cardSize,
+    shape: o.shape && o.shape !== 'round' ? o.shape : g.cardShape,
+    fx: o.fx && o.fx !== 'none' ? o.fx : g.cardFx,
+    icon: typeof o.icon === 'boolean' && o.icon === false ? false : g.icons,
+  };
 };
 // a project pipe: its own look, else the global default. Pipes carry their resource colour unless recoloured.
 export function pipeLook(link) {
@@ -22,7 +38,7 @@ export function pipeLook(link) {
   return {
     kind, path: l.path || (kind === 'line' ? g.lines : 'curved'), dash: l.dash || 'solid',
     start: l.start || 'none', end: l.end || (kind === 'line' ? 'arrow' : 'none'),
-    color: l.color || RESOURCES[link?.resource]?.color || '#ff8a3d', width: l.width || 0, flow: l.flow ?? true,
+    color: l.color || RESOURCES[link?.resource]?.color || '#ff8a3d', width: l.width || 0, flow: l.flow ?? g.flow,
   };
 }
 
@@ -36,8 +52,8 @@ const persistCard = new Map();
 export function setCardLook(id, patch) {
   const p = project(id);
   if (!p) return;
-  const cur = cardLook(p);
-  const next = { ...cur, ...patch, info: { ...cur.info, ...(patch.info || {}) } };
+  const cur = p.cfg?.look || {};
+  const next = { ...cur, ...patch, info: { ...CARD_DEFAULT.info, ...(cur.info || {}), ...(patch.info || {}) } };
   p.cfg = { ...(p.cfg || {}), look: next };
   emit('look');
   if (!persistCard.has(id)) persistCard.set(id, debounce(() => updateProject(id, { cfg: project(id).cfg }), 600));
@@ -57,23 +73,38 @@ export const PATHS = [['curved', 'Curved'], ['straight', 'Straight'], ['elbow', 
 export const DASHES = [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']];
 export const ENDS = [['none', '—', 'Nothing'], ['arrow', '➜', 'Arrow'], ['triangle', '▶', 'Triangle'], ['dot', '●', 'Dot'], ['diamond', '◆', 'Diamond'], ['bar', '┃', 'Bar']];
 
-export function lookPanel(anchorOrPoint) {
+export function lookPanel(anchorOrPoint, { onTidy, onFit } = {}) {
   const g = globalLook();
   const theme = window.flowmapTheme;
+  const set = (patch) => setGlobalLook(patch);
   const body = h('div', { class: 'pgrid' },
     theme ? segRow('Theme', [['system', 'Device'], ['light', 'Light'], ['dark', 'Dark']], theme.pref || 'system', (v) => theme.set(v)) : null,
-    segRow('Floor', [['dots', 'Dots'], ['grid', 'Grid'], ['plain', 'Plain']], g.ground, (v) => setGlobalLook({ ground: v })),
-    segRow('Pipes', PIPE_KINDS, g.pipe, (v) => setGlobalLook({ pipe: v })),
-    segRow('Lines', PATHS, g.lines, (v) => setGlobalLook({ lines: v })),
-    segRow('Cards', [['soft', 'Soft'], ['tinted', 'Tinted'], ['solid', 'Solid'], ['glass', 'Glass'], ['flat', 'Flat']], g.card, (v) => setGlobalLook({ card: v })),
-    h('p', { class: 'phint' }, 'Every card and pipe can also have its own style: tap it, then 🎨 Style.'));
-  return openPop({ ...(anchorOrPoint instanceof Element ? { anchor: anchorOrPoint } : anchorOrPoint), title: '🎨 Look', body, width: 380 });
+    segRow('Floor', [['dots', 'Dots'], ['grid', 'Grid'], ['plain', 'Plain']], g.ground, (v) => set({ ground: v })),
+    h('div', { class: 'psec' }, 'Cards'),
+    segRow('Size', [['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL'], ['xxl', 'XXL']], g.cardSize, (v) => set({ cardSize: v })),
+    segRow('Finish', [['soft', 'Soft'], ['tinted', 'Tinted'], ['solid', 'Solid'], ['glass', 'Glass'], ['flat', 'Flat']], g.card, (v) => set({ card: v })),
+    segRow('Shape', [['round', 'Rounded'], ['pill', 'Pill'], ['square', 'Square'], ['circle', 'Circle']], g.cardShape, (v) => set({ cardShape: v })),
+    segRow('Effect', [['none', 'None'], ['glow', 'Glow'], ['float', 'Float'], ['pulse', 'Pulse'], ['shine', 'Shine']], g.cardFx, (v) => set({ cardFx: v })),
+    toggleRow('Icons', g.icons, (v) => set({ icons: v })),
+    segRow('Spacing', [['tight', 'Tight'], ['normal', 'Normal'], ['wide', 'Wide']], g.spacing, (v) => set({ spacing: v })),
+    h('div', { class: 'psec' }, 'Pipes'),
+    segRow('Style', PIPE_KINDS, g.pipe, (v) => set({ pipe: v })),
+    segRow('Thickness', [['thin', 'Thin'], ['normal', 'Normal'], ['bold', 'Bold']], g.thick, (v) => set({ thick: v })),
+    segRow('Path', PATHS, g.lines, (v) => set({ lines: v })),
+    toggleRow('Flowing lights', g.flow, (v) => set({ flow: v })),
+    h('div', { class: 'psec' }, 'Groups'),
+    segRow('Areas', [['off', 'Off'], ['labels', 'Labels'], ['trays', 'Trays']], g.areas, (v) => set({ areas: v })),
+    onTidy || onFit ? h('div', { class: 'row', style: 'gap:8px;margin-top:4px' },
+      onTidy ? h('button', { type: 'button', class: 'btn sm', onclick: () => { closePop(); onTidy(); } }, '✨ Tidy up') : null,
+      onFit ? h('button', { type: 'button', class: 'btn sm', onclick: () => onFit() }, '⤢ Fit everything') : null) : null,
+    h('p', { class: 'phint' }, 'This is the look of the whole map. Any single card or pipe can have its own: right-click it (or press and hold) → Style.'));
+  return openPop({ ...(anchorOrPoint instanceof Element ? { anchor: anchorOrPoint } : anchorOrPoint), title: '🎨 Look', body, width: 430 });
 }
 
 export function cardStylePanel(id, anchorOrPoint) {
   const p = project(id);
   if (!p) return null;
-  const l = cardLook(p);
+  const l = cardOwn(p);
   const set = (patch) => setCardLook(id, patch);
   const sections = new Set(l.info.sections);
   const secRow = h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Show'),
@@ -83,11 +114,11 @@ export function cardStylePanel(id, anchorOrPoint) {
     })));
   const body = h('div', { class: 'pgrid' },
     swatchRow('Colour', CARD_COLORS, p.color || '', (c) => { updateProject(id, { color: c }); emit('look'); }),
-    segRow('Finish', [['', 'Default'], ['soft', 'Soft'], ['tinted', 'Tinted'], ['solid', 'Solid'], ['glass', 'Glass'], ['flat', 'Flat']], l.finish, (v) => set({ finish: v })),
-    segRow('Size', [['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL']], l.size, (v) => set({ size: v })),
-    segRow('Shape', [['round', 'Rounded'], ['pill', 'Pill'], ['square', 'Square'], ['circle', 'Circle']], l.shape, (v) => set({ shape: v })),
-    segRow('Effect', [['none', 'None'], ['glow', 'Glow'], ['float', 'Float'], ['pulse', 'Pulse'], ['shine', 'Shine']], l.fx, (v) => set({ fx: v })),
-    toggleRow('Show icon', l.icon, (v) => set({ icon: v })),
+    segRow('Finish', [['', 'Map'], ['soft', 'Soft'], ['tinted', 'Tinted'], ['solid', 'Solid'], ['glass', 'Glass'], ['flat', 'Flat']], l.finish, (v) => set({ finish: v })),
+    segRow('Size', [['', 'Map'], ['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL'], ['xxl', 'XXL']], l.size === 'm' ? '' : l.size, (v) => set({ size: v })),
+    segRow('Shape', [['', 'Map'], ['round', 'Rounded'], ['pill', 'Pill'], ['square', 'Square'], ['circle', 'Circle']], l.shape === 'round' ? '' : l.shape, (v) => set({ shape: v })),
+    segRow('Effect', [['', 'Map'], ['glow', 'Glow'], ['float', 'Float'], ['pulse', 'Pulse'], ['shine', 'Shine']], l.fx === 'none' ? '' : l.fx, (v) => set({ fx: v })),
+    toggleRow('Show icon', l.icon !== false, (v) => set({ icon: v ? null : false })),
     h('div', { class: 'psec' }, 'Info card'),
     secRow,
     segRow('Width', [['compact', 'Compact'], ['normal', 'Normal'], ['wide', 'Wide']], l.info.width, (v) => set({ info: { width: v } })),

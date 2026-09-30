@@ -18,8 +18,13 @@ const addDay = (d, n) => { const t = new Date(`${d}T00:00:00Z`); t.setUTCDate(t.
 export function createRenderer(canvas, hooks) {
   const stage = canvas.parentElement;
   canvas.style.display = 'none';
-  let zonesOn = true, linkFrom = null, openId = null, hoverLink = null, destroyed = false;
-  const cards = new Map(), pipes = new Map();
+  let linkFrom = null, openId = null, hoverLink = null, destroyed = false;
+  const cards = new Map(), pipes = new Map(), lights = new Map();
+  // spacing: the map can be drawn tighter than the saved layout (made for tanks), so cards read large when it all fits.
+  // Saved positions never change; X/Y give where a project is drawn.
+  const SPREAD = { tight: 0.6, normal: 0.8, wide: 1 };
+  const sp = () => SPREAD[globalLook().spacing] || SPREAD.tight;
+  const X = (p) => p.x * sp(), Y = (p) => p.y * sp();
   let areaEls = new Map();
 
   const sf = createSurface(stage, {
@@ -35,12 +40,13 @@ export function createRenderer(canvas, hooks) {
       const hit = e.target.closest?.('[data-link]');
       if (card) hooks.onContext?.({ type: 'node', id: Number(card.dataset.id) }, e.clientX, e.clientY);
       else if (hit) hooks.onContext?.({ type: 'link', id: Number(hit.dataset.link) }, e.clientX, e.clientY);
-      else hooks.onContext?.({ type: 'ground', x: Math.round(w.x), y: Math.round(w.y) }, e.clientX, e.clientY);
+      else hooks.onContext?.({ type: 'ground', x: Math.round(w.x / sp()), y: Math.round(w.y / sp()) }, e.clientX, e.clientY);
     },
-    onDoubleClick: (e, w) => { if (!e.target.closest('.pc, .pinfo, [data-link]')) hooks.onAddAt?.(Math.round(w.x), Math.round(w.y)); },
+    onDoubleClick: (e, w) => { if (!e.target.closest('.pc, .pinfo, [data-link]')) hooks.onAddAt?.(Math.round(w.x / sp()), Math.round(w.y / sp())); },
   });
   const { layer, under, overlay } = sf;
   const pipeGroup = svgEl('g', { class: 'pc-pipes' }, under);
+  const lightGroup = svgEl('g', { class: 'pc-lights' }, sf.flows);
   // area trays lie on the floor, under the pipes
   const floorLayer = h('div', { class: 'sf-floor' });
   sf.world.insertBefore(floorLayer, under);
@@ -52,11 +58,16 @@ export function createRenderer(canvas, hooks) {
   sf.root.addEventListener('sf-tap', () => { if (S.tool === 'link') { linkFrom = null; hooks.onToolHint?.('Tap the project that GIVES'); drawGhost(); return; } hooks.onSelect?.(null); });
 
   // ---------- look ----------
+  let lastFitKey = null;
   function applyLook() {
     const g = globalLook();
     sf.setGround(g.ground);
     sf.root.dataset.card = g.card;
     render();
+    // new spacing or card size: show it all again
+    const key = `${g.spacing}|${g.cardSize}`;
+    if (lastFitKey && key !== lastFitKey && !openId) requestAnimationFrame(() => fit());
+    lastFitKey = key;
   }
 
   // ---------- cards ----------
@@ -76,10 +87,10 @@ export function createRenderer(canvas, hooks) {
   function renderCard(p) {
     const c = cardEl(p), l = cardLook(p), s = snap()?.projects[p.id];
     const st = ST(s?.health ?? 60);
-    c.style.left = `${p.x}px`; c.style.top = `${p.y}px`;
+    c.style.left = `${X(p)}px`; c.style.top = `${Y(p)}px`;
     c.style.setProperty('--c', p.color || KINDS[p.kind]?.color || '#ff8a5c');
     c.style.setProperty('--st', ST_VAR[st]);
-    c.dataset.st = st; c.dataset.finish = l.finish || globalLook().card; c.dataset.size = l.size; c.dataset.shape = l.shape; c.dataset.fx = l.fx;
+    c.dataset.st = st; c.dataset.finish = l.finish; c.dataset.size = l.size; c.dataset.shape = l.shape; c.dataset.fx = l.fx;
     c.querySelector('.em').textContent = l.icon ? p.icon || KINDS[p.kind]?.icon || '' : '';
     c.querySelector('.em').hidden = !l.icon;
     c.querySelector('.nm').textContent = p.name;
@@ -89,35 +100,54 @@ export function createRenderer(canvas, hooks) {
     c.classList.toggle('dimmed', !!S.selection && S.selection.type === 'project' && S.selection.id !== p.id && !related(S.selection.id, p.id));
   }
   const related = (a, b) => S.world.links.some((l) => (l.from === a && l.to === b) || (l.to === a && l.from === b));
-  const boxOf = (id) => { const p = project(id), c = cards.get(id); if (!p || !c) return null; const w = c.offsetWidth || 120, hh = c.offsetHeight || 46; return { x: p.x - w / 2, y: p.y - hh / 2, w, h: hh }; };
+  const boxOf = (id) => { const p = project(id), c = cards.get(id); if (!p || !c) return null; const w = c.offsetWidth || 120, hh = c.offsetHeight || 46; return { x: X(p) - w / 2, y: Y(p) - hh / 2, w, h: hh }; };
 
   // ---------- pipes ----------
-  function renderPipes() {
-    const live = snap();
+  const THICK = { thin: 0.6, normal: 1, bold: 1.5 };
+  function pipeState(l) {
+    const sel = S.selection?.type === 'link' && S.selection.id === l.id;
+    const focus = S.selection?.type === 'project' ? S.selection.id : hoverId;
+    const hot = sel || hoverLink === l.id || (focus != null && (l.from === focus || l.to === focus)) || flash.has(l.id);
+    const dim = !hot && (focus != null || (S.selection?.type === 'link' && !sel));
+    return { hot, dim };
+  }
+  // only = a set of project ids: redraw just their pipes (while dragging)
+  function renderPipes(only = null) {
+    const live = snap(), f = THICK[globalLook().thick] || 1;
     const seen = new Set();
     for (const l of S.world.links) {
       if (!project(l.from) || !project(l.to) || l.from === l.to) continue;
       seen.add(l.id);
-      let g = pipes.get(l.id);
+      if (only && !only.has(l.from) && !only.has(l.to) && pipes.has(l.id)) continue;
+      let g = pipes.get(l.id), fg = lights.get(l.id);
       if (!g) { g = svgEl('g', {}, pipeGroup); pipes.set(l.id, g); }
+      if (!fg) { fg = svgEl('g', {}, lightGroup); lights.set(l.id, fg); }
       const look = pipeLook(l), o = live?.links[l.id] || { norm: 0.1, speed: 0.4, amount: 0 };
       const A = boxOf(l.from), B = boxOf(l.to);
       if (!A || !B) continue;
       const pipe = look.kind !== 'line';
-      const width = look.width || (pipe ? 10 + 12 * Math.min(1, o.norm) : 2.5 + 2 * Math.min(1, o.norm));
+      const n = Math.min(1, o.norm || 0);
+      const width = look.width || (pipe ? (6 + 8 * n) * f : (1.8 + 1.8 * n) * f);
       const r = route(A, B, look.path, { center: pipe && look.end === 'none' && look.start === 'none', gap: pipe ? 2 : 6 });
-      const sel = S.selection?.type === 'link' && S.selection.id === l.id;
-      const focus = S.selection?.type === 'project' ? S.selection.id : hoverId;
-      const hot = sel || hoverLink === l.id || (focus != null && (l.from === focus || l.to === focus)) || flash.has(l.id);
-      const dim = !hot && (focus != null || (S.selection?.type === 'link' && !sel));
-      drawLink(g, r, { ...look, width }, sf.id, { hot, dim, speed: (3.4 - 2.4 * Math.min(1, o.speed || 0)) / (flash.has(l.id) ? 3 : 1), hitId: l.id });
+      const { hot, dim } = pipeState(l);
+      drawLink(g, r, { ...look, width }, sf.id, { hot, dim, speed: (3.6 - 2.4 * Math.min(1, o.speed || 0)) / (flash.has(l.id) ? 3 : 1), hitId: l.id, flowG: fg });
       g.style.setProperty('--link', look.color);
       g.dataset.id = l.id;
     }
-    for (const [id, g] of [...pipes]) if (!seen.has(id)) { g.remove(); pipes.delete(id); }
+    for (const [id, g] of [...pipes]) if (!seen.has(id)) { g.remove(); pipes.delete(id); lights.get(id)?.remove(); lights.delete(id); }
+  }
+  // hovering only changes emphasis: no redraw
+  function pipeStates() {
+    for (const l of S.world.links) {
+      const g = pipes.get(l.id), fg = lights.get(l.id);
+      if (!g) continue;
+      const { hot, dim } = pipeState(l);
+      g.classList.toggle('hot', hot); g.classList.toggle('dim', dim);
+      fg?.classList.toggle('hot', hot); fg?.classList.toggle('dim', dim);
+    }
   }
   let hoverId = null;
-  function highlight(id) { if (hoverId === id) return; hoverId = id; renderPipes(); }
+  function highlight(id) { if (hoverId === id) return; hoverId = id; pipeStates(); }
   const flash = new Set();
 
   // ---------- areas: sunk trays under each group ----------
@@ -125,7 +155,8 @@ export function createRenderer(canvas, hooks) {
     const list = projects();
     const groups = new Map();
     for (const p of list) { const g = groupOf(p); (groups.get(g) || groups.set(g, []).get(g)).push(p); }
-    const show = zonesOn && groups.size > 1;
+    const mode = globalLook().areas;
+    const show = mode !== 'off' && groups.size > 1;
     const next = new Map();
     if (show) for (const [name, members] of groups) {
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -134,6 +165,7 @@ export function createRenderer(canvas, hooks) {
       let el = areaEls.get(name);
       if (!el) { el = h('div', { class: 'pc-area' }, h('span', null, name)); floorLayer.append(el); }
       el.firstChild.textContent = name;
+      el.dataset.mode = mode;
       Object.assign(el.style, { left: `${x0 - 48}px`, top: `${y0 - 56}px`, width: `${x1 - x0 + 96}px`, height: `${y1 - y0 + 96}px` });
       next.set(name, el);
     }
@@ -215,7 +247,7 @@ export function createRenderer(canvas, hooks) {
     const b = boxOf(p.id);
     if (!b) return;
     const w = parseFloat(info.style.width) || INFO_W.normal;
-    info.style.left = `${p.x - w / 2}px`;
+    info.style.left = `${X(p) - w / 2}px`;
     info.style.top = `${b.y - 16}px`;
   }
   function doAction(a, id, btn) {
@@ -236,7 +268,7 @@ export function createRenderer(canvas, hooks) {
     // bring the whole card into view at a comfortable size
     requestAnimationFrame(() => {
       const b = boxOf(id), ih = info.offsetHeight, w = parseFloat(info.style.width);
-      const box = { x: p.x - w / 2 - 20, y: b.y - 30, w: w + 40, h: ih + 50 };
+      const box = { x: X(p) - w / 2 - 20, y: b.y - 30, w: w + 40, h: ih + 50 };
       const { W, H } = sf.size;
       const tl = sf.toScreen(box.x, box.y), br = sf.toScreen(box.x + box.w, box.y + box.h);
       const visible = tl.x > 8 && tl.y > 60 && br.x < W - 8 && br.y < H - 8 && sf.cam.k >= 0.8;
@@ -267,12 +299,12 @@ export function createRenderer(canvas, hooks) {
     c.setPointerCapture(e.pointerId);
     const start = { x: e.clientX, y: e.clientY, px: p.x, py: p.y, moved: false };
     const move = (ev) => {
-      const dx = (ev.clientX - start.x) / sf.cam.k, dy = (ev.clientY - start.y) / sf.cam.k;
+      const dx = (ev.clientX - start.x) / sf.cam.k / sp(), dy = (ev.clientY - start.y) / sf.cam.k / sp();
       if (!start.moved && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 5) return;
       if (!start.moved) { start.moved = true; c.classList.add('dragging'); if (openId === id) close(); }
       hooks.onMoved?.(id, Math.round(start.px + dx), Math.round(start.py + dy));
-      c.style.left = `${p.x}px`; c.style.top = `${p.y}px`;
-      renderPipes(); renderAreas();
+      c.style.left = `${X(p)}px`; c.style.top = `${Y(p)}px`;
+      if (!start.raf) start.raf = requestAnimationFrame(() => { start.raf = 0; renderPipes(new Set([id])); if (globalLook().areas !== 'off') renderAreas(); });
     };
     const up = () => {
       c.removeEventListener('pointermove', move); c.removeEventListener('pointerup', up); c.removeEventListener('pointercancel', up);
@@ -288,11 +320,11 @@ export function createRenderer(canvas, hooks) {
   sf.root.addEventListener('pointermove', (e) => {
     const hit = e.target.closest?.('[data-link]');
     const id = hit ? Number(hit.dataset.link) : null;
-    if (id !== hoverLink) { hoverLink = id; renderPipes(); }
+    if (id !== hoverLink) { hoverLink = id; pipeStates(); }
     showTip(id, e);
     if (S.tool === 'link' && linkFrom) drawGhost(sf.toWorld(sf.local(e).x, sf.local(e).y));
   });
-  sf.root.addEventListener('pointerleave', () => { hoverLink = null; tip.hidden = true; renderPipes(); });
+  sf.root.addEventListener('pointerleave', () => { hoverLink = null; tip.hidden = true; pipeStates(); });
   function showTip(id, e) {
     const l = id && S.world.links.find((x) => x.id === id);
     const o = l && snap()?.links[l.id];
@@ -316,7 +348,7 @@ export function createRenderer(canvas, hooks) {
   function drawGhost(pt) {
     const p = linkFrom && project(linkFrom);
     if (!p || !pt) { ghost.setAttribute('d', ''); return; }
-    ghost.setAttribute('d', `M${p.x},${p.y} L${pt.x},${pt.y}`);
+    ghost.setAttribute('d', `M${X(p)},${Y(p)} L${pt.x},${pt.y}`);
   }
 
   // ---------- render ----------
@@ -348,26 +380,49 @@ export function createRenderer(canvas, hooks) {
     const bs = projects().map((p) => boxOf(p.id)).filter(Boolean);
     if (!bs.length) return { x: -300, y: -200, w: 600, h: 400 };
     const x0 = Math.min(...bs.map((b) => b.x)), y0 = Math.min(...bs.map((b) => b.y)), x1 = Math.max(...bs.map((b) => b.x + b.w)), y1 = Math.max(...bs.map((b) => b.y + b.h));
-    return { x: x0 - 40, y: y0 - 70, w: x1 - x0 + 80, h: y1 - y0 + 110 };
+    return { x: x0 - 20, y: y0 - 24, w: x1 - x0 + 40, h: y1 - y0 + 44 };
   }
-  const insets = () => (sf.size.W < 760 ? { top: 150, bottom: 40, left: 0, right: 56 } : { top: 110, bottom: 20, left: 0, right: 60 });
-  function fit({ animate = true } = {}) { sf.fit(allBounds(), { pad: 30, maxZoom: 1.25, insets: insets(), animate }); }
+  // keep the whole system clear of the panels that float over the map (banner, today card, zoom buttons)
+  function insets() {
+    const root = sf.root.getBoundingClientRect();
+    const phone = sf.size.W < 760;
+    const ins = { top: phone ? 80 : 64, bottom: 20, left: 8, right: phone ? 64 : 72 };
+    const mid = root.top + root.height / 2;
+    for (const e of stage.querySelectorAll('.stage-top > *, .future-banner, .today, .legend')) {
+      if (e.hidden || e.offsetParent === null) continue;
+      const r = e.getBoundingClientRect();
+      if (!r.width || !r.height || r.bottom < root.top || r.top > root.bottom) continue;
+      // a panel over the top or bottom part of the map: keep the system above or below it
+      if (r.top + r.height / 2 < mid) ins.top = Math.max(ins.top, r.bottom - root.top + 10);
+      else ins.bottom = Math.max(ins.bottom, root.bottom - r.top + 10);
+    }
+    return ins;
+  }
+  function fit({ animate = true } = {}) { sf.fit(allBounds(), { pad: 24, maxZoom: 1.3, insets: insets(), animate }); }
+  // the first view shows everything; it is refitted once fonts and the floating panels have settled,
+  // unless the person has already moved the map
+  let touched = false;
+  sf.root.addEventListener('pointerdown', () => { touched = true; });
+  sf.root.addEventListener('wheel', () => { touched = true; }, { passive: true });
   function intro() {
     render();
     fit({ animate: false });
+    const again = () => { if (!touched && !destroyed && !openId) { render(); fit({ animate: false }); } };
+    document.fonts?.ready.then(again);
+    setTimeout(again, 400);
     layer.classList.remove('intro'); void layer.offsetWidth; layer.classList.add('intro');
     [...cards.values()].forEach((c, i) => c.style.setProperty('--i', i));
   }
   function focus(id) {
     const p = project(id);
     if (!p) return;
-    if (openId !== id) sf.centerOn(p.x, p.y + 120, Math.max(sf.cam.k, 0.9));
+    if (openId !== id) sf.centerOn(X(p), Y(p) + 120, Math.max(sf.cam.k, 0.9));
   }
   function burst(task) {
     const p = project(task.projectId), c = p && cards.get(p.id);
     if (!c) return;
     c.classList.remove('burst'); void c.offsetWidth; c.classList.add('burst');
-    const ripple = h('div', { class: 'pc-ripple', style: { left: `${p.x}px`, top: `${p.y}px`, '--c': p.color || '#ff8a5c' } });
+    const ripple = h('div', { class: 'pc-ripple', style: { left: `${X(p)}px`, top: `${Y(p)}px`, '--c': p.color || '#ff8a5c' } });
     layer.append(ripple); setTimeout(() => ripple.remove(), 1200);
     const type = TASK_TYPES[task.type] || TASK_TYPES.other;
     floatText(p.id, `${type.icon} Done`, 'var(--good)');
@@ -379,13 +434,13 @@ export function createRenderer(canvas, hooks) {
   function floatText(id, text, color) {
     const p = project(id), b = boxOf(id);
     if (!p || !b) return;
-    const el = h('div', { class: 'pc-float', style: { left: `${p.x}px`, top: `${b.y - 8}px`, color } }, text);
+    const el = h('div', { class: 'pc-float', style: { left: `${X(p)}px`, top: `${b.y - 8}px`, color } }, text);
     layer.append(el); setTimeout(() => el.remove(), 2200);
   }
   function replay(fromHealth, highlightIds = []) {
     highlightIds.forEach((id, i) => setTimeout(() => { const c = cards.get(id); if (c) { c.classList.remove('burst'); void c.offsetWidth; c.classList.add('burst'); } }, 500 + i * 400));
   }
-  function screenPos(id) { const p = project(id); if (!p) return null; const r = sf.root.getBoundingClientRect(), s = sf.toScreen(p.x, p.y); return { x: r.left + s.x, y: r.top + s.y }; }
+  function screenPos(id) { const p = project(id); if (!p) return null; const r = sf.root.getBoundingClientRect(), s = sf.toScreen(X(p), Y(p)); return { x: r.left + s.x, y: r.top + s.y }; }
   function destroy() {
     destroyed = true;
     offs.forEach((f) => f());
@@ -398,10 +453,11 @@ export function createRenderer(canvas, hooks) {
     kind: 'cards', fit, intro, replay, focus, burst, floatText, screenPos, destroy,
     resize: () => sf.resize(),
     zoomBy: (f) => sf.zoomBy(f),
-    setZones: (v) => { zonesOn = !!v; render(); },
+    setZones: () => {}, // areas are part of the look here
+    lookAreas: true,
     startLink: (id) => { linkFrom = id; hooks.onToolHint?.('Now tap the project it feeds'); render(); },
     timeOfDay: () => { const hr = new Date().getHours(); return hr < 5 || hr >= 21 ? 'night' : hr < 8 ? 'dawn' : hr < 17 ? 'day' : 'evening'; },
-    openLook: (anchor) => lookPanel(anchor),
+    openLook: (anchor) => lookPanel(anchor, { onTidy: () => import('./map-ui.js').then((m) => m.tidy()), onFit: () => fit() }),
     styleProject: (id, at) => cardStylePanel(id, at),
     styleLink: (id, at) => { const l = S.world.links.find((x) => x.id === id); if (l) pipeStylePanel(l, at); },
     legendNote: [['width', 'Pipes', 'wider and faster = more flows'], ['led', 'Light', 'health: green good, red needs you'], ['tap', 'Tap a card', 'to lift it and see everything']],
