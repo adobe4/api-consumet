@@ -4,7 +4,8 @@
 .sf[data-ground="dots"] { background-image: radial-gradient(circle, var(--dot) calc(1.15px * min(1.4, max(0.7, var(--gk, 1)))), transparent calc(1.6px * min(1.4, max(0.7, var(--gk, 1))))); background-size: var(--gs, 22px) var(--gs, 22px); }
 .sf[data-ground="grid"] { background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: var(--gs, 22px) var(--gs, 22px); }
 .sf.panning, .sf.grab { cursor: grabbing; }
-.sf-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.sf-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.sf.moving .sf-world { will-change: transform; } /* only while moving: at rest everything is redrawn sharp */
 .sf-layer, .sf-floor { position: absolute; left: 0; top: 0; }
 .sf-svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
 .sf-over { z-index: 50; }

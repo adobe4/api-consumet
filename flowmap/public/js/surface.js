@@ -44,9 +44,25 @@ export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onCon
     const g = GRID * cam.k * m;
     root.style.setProperty('--gs', `${g}px`);
     if (m !== lod) { lod = m; defs.querySelector('pattern')?.setAttribute('patternTransform', `translate(2.5 3.5) scale(${m})`); }
+    // Sharp at every zoom: while the camera moves the world is one GPU layer (smooth), and once it rests
+    // the browser draws text, icons and lines again at the new scale instead of stretching the old picture.
+    root.classList.add('moving');
+    clearTimeout(settleT);
+    settleT = setTimeout(settle, 140);
     root.style.backgroundPosition = `${cam.tx}px ${cam.ty}px`;
     root.style.setProperty('--gk', cam.k);
     for (const fn of listeners) fn(cam);
+  }
+  let settleT = 0, rasterK = cam.k;
+  function settle() {
+    if (pan || pinch) { settleT = setTimeout(settle, 140); return; }
+    root.classList.remove('moving');
+    if (Math.abs(cam.k - rasterK) > 1e-3) {
+      rasterK = cam.k;
+      // the flowing-lights layer keeps its own GPU picture: rebuild it at the new scale
+      flows.style.willChange = 'auto';
+      requestAnimationFrame(() => requestAnimationFrame(() => { flows.style.willChange = ''; }));
+    }
   }
   const toWorld = (sx, sy) => ({ x: (sx - cam.tx) / cam.k, y: (sy - cam.ty) / cam.k });
   const toScreen = (x, y) => ({ x: x * cam.k + cam.tx, y: y * cam.k + cam.ty });

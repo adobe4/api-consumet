@@ -307,7 +307,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .stat .sofar:empty { display: none; }
 .labels3d { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 /* one calm card per tank: icon, name, health. Details and actions appear on hover / selection */
-.tank3d { position: absolute; left: 0; top: 0; display: grid; justify-items: center; gap: 5px; transform-origin: 50% 100%; will-change: transform; transition: opacity 0.25s; text-align: center; }
+.tank3d { position: absolute; left: 0; top: 0; display: grid; justify-items: center; gap: 5px; transform-origin: 50% 100%; transition: opacity 0.25s; text-align: center; }
 .tank3d .card { --st: #46e58a; display: flex; align-items: center; gap: 7px; padding: 4px 10px 4px 5px; border-radius: 999px; background: rgba(var(--paper), 0.86); border: 1px solid rgba(var(--ink), 0.14); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35); white-space: nowrap; pointer-events: auto; cursor: pointer; backdrop-filter: blur(4px); }
 .tank3d .ic { width: 26px; height: 26px; display: grid; place-items: center; font-size: 15px; border-radius: 50%; background: rgba(var(--ink), 0.06); box-shadow: inset 0 0 0 2px var(--st); }
 .tank3d .nm { font-weight: 700; font-size: 13.5px; color: var(--text); }

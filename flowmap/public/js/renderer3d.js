@@ -206,9 +206,10 @@ function crackTexture(seed) {
 
 export function createRenderer(canvas, hooks) {
   const stage = canvas.parentElement;
-  const isTouch = matchMedia('(pointer: coarse)').matches;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  let pixelRatio = Math.min(window.devicePixelRatio || 1, isTouch ? 1.5 : 2);
+  // always the screen's own sharpness (up to 2x), re-read when the page is zoomed or moves to another screen
+  const sharpness = () => Math.min(window.devicePixelRatio || 1, 2);
+  let pixelRatio = sharpness();
   renderer.setPixelRatio(pixelRatio);
   // Neutral tone mapping keeps the project colours saturated instead of bleaching bright liquid to white
   renderer.toneMapping = THREE.NeutralToneMapping;
@@ -744,7 +745,7 @@ export function createRenderer(canvas, hooks) {
     const d = camera.position.distanceTo(top);
     const scale = clamp(21 / d, W < 520 ? 0.56 : 0.82, 1.1);
     // whole pixels and 2-decimal scale keep the text crisp and the label still when nothing moves
-    const tf = `translate3d(${Math.round(sp.x)}px, ${Math.round(sp.y)}px, 0) translate(-50%, -100%) scale(${scale.toFixed(2)})`;
+    const tf = `translate(${Math.round(sp.x)}px, ${Math.round(sp.y)}px) translate(-50%, -100%) scale(${scale.toFixed(2)})`;
     if (t.tf !== tf) { t.tf = tf; t.label.style.transform = tf; }
     t.label.style.zIndex = sel ? '6' : hov ? '5' : status === 'dying' ? '3' : '1';
     t.label.hidden = sp.behind;
@@ -897,14 +898,10 @@ export function createRenderer(canvas, hooks) {
 
     if (bloomOn) composer.render(); else renderer.render(scene, camera);
 
-    // keep phones smooth: lower the resolution, then drop the glow, if frames run long
+    // keep slow phones smooth by dropping the glow; the picture itself always stays sharp
     frames++;
     if (dt > 0.034) slowTime += dt; else slowTime = Math.max(0, slowTime - dt * 0.5);
-    if (frames > 120 && slowTime > 2) {
-      slowTime = 0;
-      if (pixelRatio > 1) { pixelRatio = 1; renderer.setPixelRatio(1); resize(); }
-      else if (bloomOn) bloomOn = false;
-    }
+    if (frames > 120 && slowTime > 2) { slowTime = 0; if (bloomOn) bloomOn = false; }
   }
 
   // ---------- link tool ----------
@@ -1110,6 +1107,7 @@ export function createRenderer(canvas, hooks) {
   function resize() {
     const r = canvas.getBoundingClientRect();
     W = Math.max(1, r.width); H = Math.max(1, r.height);
+    if (pixelRatio !== sharpness()) { pixelRatio = sharpness(); renderer.setPixelRatio(pixelRatio); }
     renderer.setSize(W, H, false);
     composer.setPixelRatio(pixelRatio);
     composer.setSize(W, H);
