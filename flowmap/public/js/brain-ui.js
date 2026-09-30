@@ -48,7 +48,16 @@ export function openBrainSettings() {
       h('optgroup', { label: 'Best for the brain (can use tools)' }, rec.map((m) => h('option', { value: m, selected: m === value }, m))),
       rest.length ? h('optgroup', { label: 'All NVIDIA models' }, rest.map((m) => h('option', { value: m, selected: m === value }, m))) : null);
     if (value && !rec.includes(value) && !rest.includes(value)) sel.prepend(h('option', { value, selected: true }, value));
-    return sel;
+    // NVIDIA's public list misses many models your key can use: type any model name instead
+    const wrap = h('span', { class: 'mpick' }, sel);
+    const typeBtn = h('button', { type: 'button', class: 'btn sm', title: 'Type any model name, e.g. meta/llama-3.3-70b-instruct', onclick: () => {
+      const inp = h('input', { type: 'text', value: sel.value || value || '', placeholder: 'e.g. meta/llama-3.3-70b-instruct', spellcheck: 'false', class: 'mono',
+        onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } },
+        onchange: (e) => { const v = e.target.value.trim(); if (v) onPick(v); } });
+      wrap.replaceChildren(inp); inp.focus(); inp.select();
+    } }, 'i:pencil', ' Type');
+    wrap.append(typeBtn);
+    return wrap;
   };
   const status = (t) => !t ? h('span', { class: 'kchip' }, 'Not tested')
     : t.ok && t.tools ? h('span', { class: 'kchip good', title: t.note }, `✓ Works · ${(t.ms / 1000).toFixed(1)}s`)

@@ -236,3 +236,5 @@ details.addkey summary { cursor: pointer; font-weight: 750; color: var(--accent)
 details.addkey[open] summary { margin-bottom: 10px; }
 .mono { font-family: var(--mono); font-size: 12.5px; }
 @media (max-width: 760px) { .keyrow { flex-wrap: wrap; } .keyrow select { max-width: 100%; } }
+.mpick { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.mpick input { max-width: 280px; padding: 6px 10px; }
