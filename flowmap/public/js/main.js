@@ -38,10 +38,10 @@ async function logout() {
 }
 setUnauthorizedHandler(() => { closeAllModals(); logout(); });
 
-// The River is plain Canvas 2D. The glass tanks need WebGL 2; older devices get the flat map.
+// The cards are plain DOM on a flat floor. The glass tanks need WebGL 2; older devices get the flat map.
 async function makeRenderer(canvas, hooks) {
-  if (getMapStyle() === 'river') {
-    try { return (await import('./river.js')).createRenderer(canvas, hooks); } catch (e) { console.warn('River view unavailable', e); }
+  if (getMapStyle() === 'cards') {
+    try { return (await import('./cards.js')).createRenderer(canvas, hooks); } catch (e) { console.warn('Card view unavailable', e); }
   }
   try {
     const m = await import('./renderer3d.js');
@@ -57,6 +57,7 @@ async function enterApp(isNew) {
   requestAnimationFrame(() => { renderer.resize(); if (renderer.intro) renderer.intro(); else renderer.fit({ animate: false }); });
   updateAll();
   boot.classList.add('gone');
+  setMode(store_ls.get('flowmap.mode', 'tracker'));
   if (isNew || !store_ls.get('flowmap.seenHelp', false)) { store_ls.set('flowmap.seenHelp', true); setTimeout(openHelp, 400); }
   else if (renderer.replay) { maybeMorningReplay(); maybeWeekReview(); }
   if (sound.enabled && currentAlerts().some((a) => a.level === 'critical')) setTimeout(sfx.alarm, 700);
@@ -134,7 +135,7 @@ async function switchMapStyle() {
     requestAnimationFrame(() => { renderer.resize(); if (renderer.intro) renderer.intro(); else renderer.fit({ animate: false }); });
     const s = S.selection;
     if (s?.type === 'project') setTimeout(() => renderer.focus(s.id), 900);
-    toast(renderer.kind === 'river' ? '〰️ River view' : renderer.is3d ? '🫧 Glass tanks view' : 'Flat map view', 'info');
+    toast(renderer.kind === 'cards' ? '🃏 Card view' : renderer.is3d ? '🫧 Glass tanks view' : 'Flat map view', 'info');
   } finally { switching = false; }
 }
 
@@ -161,8 +162,11 @@ function buildTopbar() {
   hudEls.meter = meterFill; hudEls.healthVal = h('b', null, '–');
   const linkBtn = h('button', { class: 'btn', id: 'tool-link', onclick: () => setTool(S.tool === 'link' ? null : 'link') }, '🔗', h('span', { class: 'lbl-txt' }, 'Connect'));
   const soundBtn = h('button', { class: 'btn icon', title: 'Sound', onclick: (e) => { sound.enabled = !sound.enabled; e.currentTarget.textContent = sound.enabled ? '🔊' : '🔇'; if (sound.enabled) sfx.pop(); } }, sound.enabled ? '🔊' : '🔇');
+  const modes = h('div', { class: 'modes', role: 'tablist', 'aria-label': 'Tracker or boards' },
+    h('button', { type: 'button', role: 'tab', 'data-mode': 'tracker', onclick: () => setMode('tracker') }, '📊', h('span', { class: 'lbl-txt' }, 'Tracker')),
+    h('button', { type: 'button', role: 'tab', 'data-mode': 'boards', onclick: () => setMode('boards') }, '🧩', h('span', { class: 'lbl-txt' }, 'Boards')));
   clear($('topbar')).append(
-    brand(),
+    brand(), modes,
     h('div', { class: 'hud' },
       stat('money', 'money', 'Money / day'), stat('attention', 'attention', 'Attention / day'), stat('customers', 'customers', 'Customers / day'), stat('net', '', 'Net / day'),
       h('div', { class: 'stat' }, h('small', null, 'System health'), hudEls.healthVal, h('div', { class: 'meter' }, meterFill))),
@@ -172,8 +176,24 @@ function buildTopbar() {
       h('button', { class: 'btn', onclick: () => openTab('checkin') }, '📝', h('span', { class: 'lbl-txt' }, 'Check-in')),
       h('button', { class: 'btn', title: 'AI brain: connect an AI that gives you tasks', onclick: () => openBrainSettings() }, '🧠', h('span', { class: 'lbl-txt' }, 'Brain')),
       soundBtn,
-      h('button', { class: 'btn icon', title: 'How it works', onclick: openHelp }, '❓'),
-      h('button', { class: 'btn icon', title: 'Settings & data', onclick: openSettings }, '⚙️')));
+      h('button', { class: 'btn icon keep', title: 'How it works', onclick: openHelp }, '❓'),
+      h('button', { class: 'btn icon keep', title: 'Settings & data', onclick: openSettings }, '⚙️')));
+}
+// ---------- tracker / boards ----------
+let boardsUi = null;
+async function setMode(mode) {
+  const board = mode === 'boards';
+  store_ls.set('flowmap.mode', board ? 'boards' : 'tracker');
+  appEl.classList.toggle('board-mode', board);
+  document.querySelectorAll('.modes [data-mode]').forEach((b) => { const on = b.dataset.mode === (board ? 'boards' : 'tracker'); b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+  $('boards-host').hidden = !board;
+  if (board) {
+    if (!boardsUi) boardsUi = (await import('./board/app.js')).createBoards($('boards-host'));
+    boardsUi.show();
+  } else {
+    boardsUi?.hide();
+    requestAnimationFrame(() => renderer?.resize());
+  }
 }
 function updateTopbarTool() { $('tool-link')?.classList.toggle('on', S.tool === 'link'); }
 
@@ -264,6 +284,7 @@ function buildZoom() {
     h('button', { class: 'btn', title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => renderer.zoomBy(0.8) }, '－'),
     h('button', { class: 'btn', title: 'Fit everything', 'aria-label': 'Fit everything', onclick: () => renderer.fit() }, '⤢'),
     h('button', { class: 'btn', title: 'Full screen (F)', 'aria-label': 'Full screen', onclick: () => toggleImmersive() }, '⛶'),
+    renderer.openLook ? h('button', { class: 'btn', title: 'Look: floor, pipes, cards, theme', 'aria-label': 'Change the look', onclick: (e) => renderer.openLook(e.currentTarget) }, '🎨') : null,
     renderer.replay ? h('button', { class: 'btn', title: 'View: map style, tidy up, areas, replay, week', 'aria-label': 'More view options', onclick: (e) => openViewMenu(e.currentTarget) }, '⋯') : null,
   ].filter(Boolean));
 }

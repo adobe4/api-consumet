@@ -329,9 +329,14 @@ export function openTaskEditor({ id, projectId, type, title } = {}) {
 export function openHelp() {
   const ex = (e, t, p) => h('div', { class: 'ex' }, h('div', { class: 'e' }, e), h('div', null, h('b', null, t), h('p', null, p)));
   return openModal({
-    title: 'How your living map works', wide: true,
+    title: 'How FlowMap works', wide: true,
     body: h('div', { class: 'explain' },
-      ex('🫧', 'Every project is a tank', 'The liquid level is its health. Post, promote or improve it and it fills. Ignore it and the liquid drops, cracks appear, smoke rises and the flow slows. Below 30% it is dying.'),
+      ex('🃏', 'Every project is a card', 'Soft cards rest on a dotted or gridded floor. Tap one and it floats up to show a bigger card underneath with its health, money, views, goal and tasks. The light on each card is its health: green, yellow, orange or red. Prefer 3D? Switch to glass tanks in ⚙️ Settings.'),
+      ex('🎨', 'Make the look yours', 'The 🎨 Look button sets the floor (dots, grid or plain), the card finish, size, shape and effects, and how pipes look: sunk tunnels in the floor, raised tubes, drawn lines or plain Miro-style lines with arrows or dots at the ends. Right-click one card or pipe to style just that one.'),
+      ex('🧩', 'Boards for planning, teaching and presenting', 'Switch to Boards at the top. Start from a template (tutorial video, course, strategy map, workflow, task board) or ask AI to build one. Add sticky notes, cards, shapes, frames, flip cards, checklists, prompts with a copy button, images, text files, web links, videos from this device, drawings and stickers, then join them with connectors. Right-click anything for more.'),
+      ex('▶️', 'Present and record', 'Frames become slides. ▶ Present glides between them full screen with entry animations, a laser pointer (L), spotlight (S), pen (P) and speaker notes (N); the controls hide themselves so you can screen-record cleanly.'),
+      ex('🔗', 'Share a board as a link', 'Share gives a board a link: open to anyone, or behind a password, and limited to any number of people (one browser counts as one person). Remove a person to free their place, or reset the link to cut everyone off. Viewers can look, flip cards and copy prompts, but not change anything.'),
+      ex('🫧', 'In tank view every project is a tank', 'The liquid level is its health. Post, promote or improve it and it fills. Ignore it and the liquid drops, cracks appear, smoke rises and the flow slows. Below 30% it is dying.'),
       ex('🕰️', 'It runs on the real clock', 'Through the day each tank slowly drifts toward where it will be tomorrow if you do nothing, so neglect shows by evening. The top bar counts what has come in so far today.'),
       ex('🪙', 'Four kinds of flow move through the pipes', 'Gold coins = money (TZS), orange orbs = attention (views), green = customers, pink sparks = progress (tools and content that speed another project up). Brighter and busier = more flow.'),
       ex('🟢', 'Read a tank at a glance', 'The ring on the floor around each tank is its health: it fills like a progress ring and turns green, yellow, orange or red. Hover or tap a tank for its numbers.'),

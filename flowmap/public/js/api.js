@@ -22,7 +22,7 @@ export async function api(method, url, body) {
   }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && auth.token) { auth.token = null; onUnauthorized(); }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status, data });
   return data;
 }
 export const get = (u) => api('GET', u);

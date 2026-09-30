@@ -1,14 +1,14 @@
-// Which picture of the system the map draws: the glass tanks (3D map) or the River (a flow chart laid
-// out automatically). Remembered per device.
+// Which picture of the system the tracker draws: tactile cards (the default) or the 3D glass tanks.
+// Remembered per device.
 import { store_ls } from './util.js';
 
 export const MAP_STYLES = [
+  { value: 'cards', label: '🃏 Cards', hint: 'Soft cards on a dotted or gridded floor. Tap one to lift it and see everything.' },
   { value: 'tanks', label: '🫧 Glass tanks', hint: '3D tanks with flowing pipes' },
-  { value: 'river', label: '〰️ River', hint: 'Where attention starts, what it feeds and what you earn, left to right. Wider = more.' },
 ];
-// 'garden' and 'studio' were earlier flat styles; anyone who picked one gets the River
-const norm = (v) => (v === 'river' || v === 'studio' || v === 'garden' ? 'river' : 'tanks');
-export const getMapStyle = () => norm(store_ls.get('flowmap.mapStyle', 'tanks'));
+// earlier flat styles (garden, studio, river) became the cards
+const norm = (v) => (v === 'tanks' ? 'tanks' : 'cards');
+export const getMapStyle = () => norm(store_ls.get('flowmap.mapStyle', 'cards'));
 export function setMapStyle(style) {
   const next = norm(style);
   if (next === getMapStyle()) return;

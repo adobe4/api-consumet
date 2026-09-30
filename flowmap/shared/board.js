@@ -131,10 +131,10 @@ export function generateBoard(spec, { origin = { x: 0, y: 0 }, style = {} } = {}
       const cw = (FW - 140 - (cols - 1) * 30) / cols, ch = rows > 1 ? 160 : 230;
       pts.forEach((p, i) => {
         const [head, ...rest] = p.split(/:\s+/);
-        add('card', { x: fx + 70 + (i % cols) * (cw + 30), y: fy + 240 + Math.floor(i / cols) * (ch + 26), w: cw, h: ch, title: rest.length ? head : '', text: rest.length ? rest.join(': ') : p, color: color(n + i, null), style: { finish: 'soft' }, data: { num: i + 1 }, anim: { in: 'pop', delay: 0.25 + i * 0.12 } });
+        add('card', { x: fx + 70 + (i % cols) * (cw + 30), y: fy + 240 + Math.floor(i / cols) * (ch + 26), w: cw, h: ch, title: rest.length ? head : '', text: rest.length ? rest.join(': ') : p, color: color(n + i, null), style: { finish: 'soft', font: 'l' }, data: { num: i + 1 }, anim: { in: 'pop', delay: 0.25 + i * 0.12 } });
       });
       if (o.emoji) add('sticker', { x: fx + FW - 150, y: fy + 50, w: 84, h: 84, text: text(o.emoji, 8), anim: { in: 'pop', loop: 'bounce', delay: 0.6 } });
-      if (prev) connect(prev, frame, { style: { dash: 'dashed', width: 3, flow: true } });
+      if (prev && n % PER_ROW) connect(prev, frame, { style: { dash: 'dashed', width: 3, flow: true } });
       prev = frame;
     });
   } else if (layout === 'workflow') {

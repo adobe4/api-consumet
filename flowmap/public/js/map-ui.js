@@ -22,6 +22,7 @@ export function initMapUi({ renderer, stage, app }) {
   buildMiniHud();
   document.addEventListener('keydown', (e) => {
     if (e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (ctx.app.classList.contains('board-mode')) return; // boards have their own keys
     if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleImmersive(); }
     if (e.key === 'Escape') closeMenu();
   });
@@ -58,7 +59,7 @@ function showMenu(title, items, x, y, { above = false } = {}) {
   closeMenu();
   menuEl = h('div', { class: 'ctxmenu', role: 'menu' }, h('div', { class: 'mt' }, title), ...items.filter(Boolean));
   document.body.append(menuEl);
-  const r = menuEl.getBoundingClientRect();
+  const r = { width: menuEl.offsetWidth, height: menuEl.offsetHeight };
   menuEl.style.left = `${Math.max(8, Math.min(window.innerWidth - r.width - 8, x))}px`;
   menuEl.style.top = `${Math.max(8, Math.min(window.innerHeight - r.height - 8, above ? y - r.height - 8 : y))}px`;
   menuEl.querySelector('.mi')?.focus({ preventScroll: true });
@@ -70,9 +71,10 @@ export function openViewMenu(anchor) {
   const zonesOn = store_ls.get('flowmap.zones', true);
   const rd = ctx.renderer;
   showMenu('View', [
-    getMapStyle() === 'river'
-      ? item('🫧', 'Switch to glass tanks', () => setMapStyle('tanks'))
-      : item('〰️', 'Switch to the River', () => setMapStyle('river')),
+    rd.openLook ? item('🎨', 'Look: floor, pipes, cards', () => rd.openLook(anchor), 'primary') : null,
+    getMapStyle() === 'cards'
+      ? item('🫧', 'Switch to glass tanks (3D)', () => setMapStyle('tanks'))
+      : item('🃏', 'Switch to cards', () => setMapStyle('cards')),
     rd.autoLayout ? null : item('✨', 'Tidy up the layout', () => tidy(), 'primary'),
     rd.autoLayout ? null : item('▦', zonesOn ? 'Hide areas' : 'Show areas', () => setZones(!zonesOn)),
     window.flowmapTheme ? (window.flowmapTheme.current === 'light'
@@ -101,6 +103,7 @@ export function openContextMenu(target, x, y) {
       item('🔗', 'Draw a pipe from here', () => tankAction('connect', p.id)),
       (p.sources || []).length ? item('📡', 'Scan its channels', () => tankAction('scan', p.id)) : item('📡', 'Add channel links', () => tankAction('edit', p.id)),
       item('✎', 'Edit project', () => tankAction('edit', p.id)),
+      ctx.renderer.styleProject ? item('🎨', 'Style this card', () => ctx.renderer.styleProject(p.id, { x, y })) : null,
       item('ⓘ', 'Details', () => tankAction('details', p.id)),
     ];
   } else if (target.type === 'link') {
@@ -109,6 +112,7 @@ export function openContextMenu(target, x, y) {
     title = `${project(l.from)?.name} → ${project(l.to)?.name}`;
     items = [
       item('✎', 'Edit pipe', () => openLinkEditor({ id: l.id }), 'primary'),
+      ctx.renderer.styleLink ? item('🎨', 'Pipe style: tunnel, tube, line, arrows', () => ctx.renderer.styleLink(l.id, { x, y })) : null,
       item('↦', `Open ${project(l.from)?.name}`, () => select({ type: 'project', id: l.from })),
       item('⇥', `Open ${project(l.to)?.name}`, () => select({ type: 'project', id: l.to })),
       item('🗑', 'Remove pipe', async () => { if (await confirmDialog({ title: 'Remove this pipe?', message: `${project(l.from)?.name} will stop feeding ${project(l.to)?.name}.`, confirm: 'Remove', danger: true })) deleteLink(l.id); }, 'danger'),
@@ -120,6 +124,7 @@ export function openContextMenu(target, x, y) {
       item('✅', 'Plan a task', () => openTaskEditor({})),
       item('✨', 'Tidy up the layout', () => tidy()),
       item('⤢', 'Fit everything', () => ctx.renderer.fit()),
+      ctx.renderer.openLook ? item('🎨', 'Look: floor, pipes, cards', () => ctx.renderer.openLook({ x, y })) : null,
       item('⛶', isImmersive() ? 'Exit full screen' : 'Full screen', () => toggleImmersive()),
     ];
   }
