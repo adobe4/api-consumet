@@ -230,11 +230,14 @@ export async function handleMcp(ctx, msg) {
 // ---------- built-in AI ----------
 // the first models listed for NVIDIA are strong chat models that can call tools (the brain needs tools)
 export const NVIDIA_MODELS = ['moonshotai/kimi-k2.6', 'moonshotai/kimi-k3', 'deepseek-ai/deepseek-v4.1-flash', 'z-ai/glm-5.3', 'z-ai/glm-5.3-flash', 'nvidia/nemotron-3-super-120b-a12b', 'nvidia/nemotron-3-ultra-550b-a55b', 'mistralai/mistral-large-2-instruct', 'openai/gpt-oss-20b', 'google/gemma-4-31b-it'];
+// Gemini through Google's OpenAI-compatible endpoint; the key's own model list fills in the rest
+export const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'];
 export const AI_PROVIDERS = {
   anthropic: { label: 'Anthropic (Claude)', model: 'claude-sonnet-5-5' },
   openai: { label: 'OpenAI', model: '', baseUrl: 'https://api.openai.com/v1' },
   nvidia: { label: 'NVIDIA (free models)', model: NVIDIA_MODELS[0], baseUrl: 'https://integrate.api.nvidia.com/v1', models: NVIDIA_MODELS },
-  compatible: { label: 'Other (OpenAI-compatible: OpenRouter, Groq, Gemini, DeepSeek...)', model: '', baseUrl: '' },
+  gemini: { label: 'Google Gemini', model: GEMINI_MODELS[0], baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', models: GEMINI_MODELS },
+  compatible: { label: 'Other (OpenAI-compatible: OpenRouter, Groq, DeepSeek...)', model: '', baseUrl: '' },
 };
 const PROVIDER_IDS = Object.keys(AI_PROVIDERS);
 
@@ -253,10 +256,33 @@ export function aiChain(settings = {}, secrets = {}) {
   if (i > 0) list.unshift(...list.splice(i, 1));
   return list;
 }
+// the chat models a key can use, straight from its provider
+const NOT_CHAT = /embed|imagen|veo|tts|aqa|image|live|audio|native|learnlm|robotics|computer-use|whisper|dall-e|moderation|transcribe|search|realtime|rerank|guard/i;
+export async function listModels(cfg) {
+  const anth = cfg.provider === 'anthropic';
+  const url = anth ? 'https://api.anthropic.com/v1/models?limit=100' : `${(cfg.baseUrl || '').replace(/\/+$/, '')}/models`;
+  if (!/^https?:\/\//.test(url)) throw new HttpError(400, 'This key has no address to ask for models');
+  const r = await fetch(url, { headers: anth ? { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' } : { authorization: `Bearer ${cfg.apiKey}` }, signal: AbortSignal.timeout(15000) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new HttpError(502, `The provider refused the model list: ${plainError(r.status, errMsg(j))}`);
+  const ids = (j.data || j.models || []).map((m) => String(m.id || m.name || '').replace(/^models\//, '')).filter((id) => id && !NOT_CHAT.test(id));
+  const recommended = (AI_PROVIDERS[cfg.provider]?.models || []).filter((m) => ids.includes(m));
+  return { recommended, all: [...new Set(ids)].sort() };
+}
+// a sensible model when the default is not available to this key: the newest plain "flash" or "pro"
+export function bestModel(ids, provider) {
+  if (provider !== 'gemini') return ids[0] || '';
+  const ver = (id) => Number((id.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
+  const plain = ids.filter((id) => /^gemini-\d/.test(id) && !/lite|preview|exp|thinking|\d{3,}$/.test(id));
+  const pool = plain.length ? plain : ids.filter((id) => /^gemini-/.test(id));
+  return pool.sort((a, b) => ver(b) - ver(a) || (/flash/.test(b) ? 1 : 0) - (/flash/.test(a) ? 1 : 0))[0] || ids[0] || '';
+}
 export const publicKey = (k) => ({ id: k.id, label: k.label, provider: k.provider, model: k.model || AI_PROVIDERS[k.provider]?.model || '', baseUrl: k.baseUrl || '', tail: String(k.key || '').slice(-4), test: k.test || null });
 
 // what went wrong, in plain words
-const plainError = (status, msg) => ({
+// providers word errors differently: { error: { message } }, Google's [{ error: { message } }], { detail }
+const errMsg = (j) => (Array.isArray(j) ? j[0] : j)?.error?.message || j?.detail || j?.title || '';
+const plainError = (status, msg) => (/valid api key|api key not valid|invalid api key|API_KEY_INVALID/i.test(msg || '') ? 'This key was rejected. Check it is copied completely and still active.' : null) || ({
   401: 'This key was rejected. Check it is copied completely and still active.',
   403: 'This key was rejected or has no access to this model.',
   404: 'This model is not available for this key. Pick another model.',
@@ -275,7 +301,7 @@ export async function testAi(cfg) {
       const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
         body: JSON.stringify({ model: cfg.model || AI_PROVIDERS.anthropic.model, max_tokens: 200, messages: [{ role: 'user', content: ask }], tools: [tool] }), signal: AbortSignal.timeout(30000) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(plainError(r.status, j.error?.message));
+      if (!r.ok) throw new Error(plainError(r.status, errMsg(j)));
       tools = (j.content || []).some((c) => c.type === 'tool_use');
       reply = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join(' ');
     } else {
@@ -283,7 +309,7 @@ export async function testAi(cfg) {
       const r = await fetch(`${base}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
         body: JSON.stringify({ model: cfg.model, max_tokens: 300, messages: [{ role: 'user', content: ask }], tools: [{ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.input_schema } }] }), signal: AbortSignal.timeout(45000) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(plainError(r.status, j.error?.message || j.detail || j.title));
+      if (!r.ok) throw new Error(plainError(r.status, errMsg(j)));
       const m = j.choices?.[0]?.message || {};
       tools = !!(m.tool_calls && m.tool_calls.length);
       reply = m.content || '';
@@ -338,7 +364,7 @@ async function openaiTurn(cfg, system, messages, tools = CORE_TOOLS) {
     signal: AbortSignal.timeout(55000),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`AI provider: ${j.error?.message || r.status}`);
+  if (!r.ok) throw new Error(`AI provider: ${plainError(r.status, errMsg(j))}`);
   const m = j.choices?.[0]?.message || {};
   messages.push({ role: 'assistant', content: m.content || '', ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}) });
   const calls = (m.tool_calls || []).map((c) => { let args = {}; try { args = JSON.parse(c.function.arguments || '{}'); } catch { /* bad json */ } return { id: c.id, name: c.function.name, args }; });
@@ -499,7 +525,7 @@ async function chatOnce(ai, system, messages, deadline = Date.now() + 120000) {
     ? await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': ai.apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: ai.model || AI_PROVIDERS.anthropic.model, max_tokens: 8000, system, messages }), signal: AbortSignal.timeout(ms) })
     : await fetch(`${(ai.baseUrl || AI_PROVIDERS.openai.baseUrl).replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ai.apiKey}` }, body: JSON.stringify({ model: ai.model, max_tokens: 8000, temperature: 0.4, messages: [{ role: 'system', content: system }, ...messages] }), signal: AbortSignal.timeout(ms) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`AI provider: ${j.error?.message || j.detail || r.status}`);
+  if (!r.ok) throw new Error(`AI provider: ${plainError(r.status, errMsg(j))}`);
   return anth ? (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('') : j.choices?.[0]?.message?.content || '';
 }
 async function editOnce(ctx, ai, board, request, deadline) {

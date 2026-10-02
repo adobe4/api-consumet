@@ -1,13 +1,14 @@
 // The 🧠 dialog: what the AI should know about you, the built-in daily AI, and links for outside AI agents.
 import { h, clear, setText } from './util.js';
-import { S, notify, saveSettings, runBrain, listAgentKeys, createAgentKey, deleteAgentKey, addAiKeys, updateAiKey, removeAiKey, testAiKey, nvidiaModels } from './store.js';
+import { S, notify, saveSettings, runBrain, listAgentKeys, createAgentKey, deleteAgentKey, addAiKeys, updateAiKey, removeAiKey, testAiKey, nvidiaModels, keyModels } from './store.js';
 import { openModal, field, select, confirmDialog } from './ui-common.js';
 
 const PROVIDERS = [
   { value: 'nvidia', label: 'NVIDIA (free models)', model: 'moonshotai/kimi-k2.6', keyHint: 'Starts with nvapi-. Get one free at build.nvidia.com (API key in your profile).' },
+  { value: 'gemini', label: 'Google Gemini', model: 'gemini-2.5-flash', models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'], keyHint: 'Starts with AIza. Get one free at aistudio.google.com → Get API key.' },
   { value: 'anthropic', label: 'Anthropic (Claude)', model: 'claude-sonnet-5-5', keyHint: 'Starts with sk-ant-. Create one at console.anthropic.com.' },
   { value: 'openai', label: 'OpenAI (ChatGPT models)', model: '', keyHint: 'Create one at platform.openai.com.' },
-  { value: 'compatible', label: 'Other: OpenRouter, Groq, Gemini, DeepSeek…', model: '', keyHint: 'Any provider with an OpenAI-compatible API. Enter its base URL below.' },
+  { value: 'compatible', label: 'Other: OpenRouter, Groq, DeepSeek…', model: '', keyHint: 'Any provider with an OpenAI-compatible API. Enter its base URL below.' },
 ];
 
 function copyButton(getText) {
@@ -45,8 +46,8 @@ export function openBrainSettings() {
   const modelSelect = (value, onPick, mdl) => {
     const rec = mdl?.recommended || [], rest = (mdl?.all || []).filter((m) => !rec.includes(m));
     const sel = h('select', { onchange: (e) => onPick(e.target.value) },
-      h('optgroup', { label: 'Best for the brain (can use tools)' }, rec.map((m) => h('option', { value: m, selected: m === value }, m))),
-      rest.length ? h('optgroup', { label: 'All NVIDIA models' }, rest.map((m) => h('option', { value: m, selected: m === value }, m))) : null);
+      rec.length ? h('optgroup', { label: mdl?.recLabel || 'Best for the brain (can use tools)' }, rec.map((m) => h('option', { value: m, selected: m === value }, m))) : null,
+      rest.length ? h('optgroup', { label: mdl?.allLabel || 'All NVIDIA models' }, rest.map((m) => h('option', { value: m, selected: m === value }, m))) : null);
     if (value && !rec.includes(value) && !rest.includes(value)) sel.prepend(h('option', { value, selected: true }, value));
     // NVIDIA's public list misses many models your key can use: type any model name instead
     const wrap = h('span', { class: 'mpick' }, sel);
@@ -64,6 +65,13 @@ export function openBrainSettings() {
     : t.ok ? h('span', { class: 'kchip warn', title: t.note }, '⚠️ Key works, model can\'t use tools')
     : h('span', { class: 'kchip bad', title: t.note }, `✕ ${t.note.slice(0, 60)}`);
   const keyList = h('div', { class: 'keylist' });
+  // each key's own model list, asked from its provider (Gemini, OpenAI, Claude, others)
+  const keyModelsCache = {};
+  const loadKeyModels = async (id, fix = false) => {
+    const r = await keyModels(id, fix);
+    keyModelsCache[id] = { recommended: r.recommended, all: r.all, recLabel: 'Suggested', allLabel: 'All models for this key' };
+    return r;
+  };
   const testOne = async (id, btn) => {
     if (btn) { btn.disabled = true; setText(btn, 'Testing…'); }
     try { const r = await testAiKey(id); if (!r.result.ok) notify(`${(S.user.aiKeys || []).find((k) => k.id === id)?.label}: ${r.result.note}`, 'error'); } catch (e) { notify(e.message, 'error'); }
@@ -88,7 +96,10 @@ export function openBrainSettings() {
         h('b', null, k.label), h('small', null, ` ${provLabel(k.provider)} · ••••${k.tail}`),
         h('div', { class: 'row', style: 'gap:6px;margin-top:4px;flex-wrap:wrap' },
           k.provider === 'nvidia' ? modelSelect(k.model, async (v) => { await updateAiKey(k.id, { model: v }); paintAiKeys(); }, mdl)
-            : h('input', { type: 'text', value: k.model, placeholder: 'model name', style: 'max-width:240px', onchange: async (e) => { await updateAiKey(k.id, { model: e.target.value.trim() }); paintAiKeys(); } }),
+            : keyModelsCache[k.id] ? modelSelect(k.model, async (v) => { await updateAiKey(k.id, { model: v }); paintAiKeys(); }, keyModelsCache[k.id])
+            : h('span', { class: 'mpick' },
+              h('input', { type: 'text', value: k.model, placeholder: 'model name', style: 'max-width:220px', onchange: async (e) => { await updateAiKey(k.id, { model: e.target.value.trim() }); paintAiKeys(); } }),
+              h('button', { type: 'button', class: 'btn sm', title: 'Show the models this key can use', onclick: async (e) => { const b = e.currentTarget; b.disabled = true; setText(b, 'Loading…'); try { await loadKeyModels(k.id); } catch (err) { notify(err.message, 'error'); } paintAiKeys(); } }, '↻ Models')),
           status(k.test))),
       h('button', { type: 'button', class: 'btn sm', onclick: (e) => testOne(k.id, e.currentTarget) }, 'Test'),
       h('button', { type: 'button', class: 'btn sm danger', title: 'Remove this key', onclick: async () => {
@@ -102,7 +113,7 @@ export function openBrainSettings() {
   const addHost = h('div');
   const paintAdd = async () => {
     const pv = PROVIDERS.find((p) => p.value === add.provider);
-    const mdl = add.provider === 'nvidia' ? await loadModels() : null;
+    const mdl = add.provider === 'nvidia' ? await loadModels() : pv.models ? { recommended: pv.models, all: [], recLabel: 'Suggested (more after adding the key)' } : null;
     const keysBox = h('textarea', { rows: 3, autocomplete: 'off', spellcheck: 'false', class: 'mono', placeholder: 'Paste one key, or several keys (one per line)' });
     const addBtn = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
       const keys = keysBox.value.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
@@ -113,7 +124,11 @@ export function openBrainSettings() {
         keysBox.value = '';
         if (!s.aiActive && r.added[0]) { s.aiActive = r.added[0]; await saveSettings({ aiActive: r.added[0] }); }
         paintAiKeys();
-        for (let i = 0; i < r.added.length; i++) { setText(addBtn, `Testing ${i + 1} of ${r.added.length}…`); await testAiKey(r.added[i]).catch(() => {}); paintAiKeys(); }
+        for (let i = 0; i < r.added.length; i++) {
+          setText(addBtn, `Testing ${i + 1} of ${r.added.length}…`);
+          if (add.provider !== 'nvidia' && add.provider !== 'compatible') await loadKeyModels(r.added[i], true).catch(() => {});
+          await testAiKey(r.added[i]).catch(() => {}); paintAiKeys();
+        }
         const list = (S.user.aiKeys || []).filter((k) => r.added.includes(k.id));
         const good = list.filter((k) => k.test?.ok && k.test?.tools).length;
         notify(`Added ${list.length} key${list.length === 1 ? '' : 's'}: ${good} work${good === 1 ? 's' : ''} with the brain`, good === list.length ? 'good' : 'error');
@@ -121,11 +136,11 @@ export function openBrainSettings() {
       addBtn.disabled = false; setText(addBtn, '＋ Add and test');
     } }, '＋ Add and test');
     clear(addHost).append(
-      h('div', { class: 'grid2' },
+      h('div', { class: 'grid2', style: 'align-items:start' },
         field('Provider', select(PROVIDERS.map(({ value, label }) => ({ value, label })), add.provider, (v) => { add.provider = v; add.model = PROVIDERS.find((p) => p.value === v).model || ''; paintAdd(); })),
-        field('Model', add.provider === 'nvidia' ? modelSelect(add.model, (v) => { add.model = v; }, mdl)
+        field('Model', mdl ? modelSelect(add.model, (v) => { add.model = v; }, mdl)
           : h('input', { type: 'text', value: add.model, placeholder: pv.model || 'model name from your provider', oninput: (e) => { add.model = e.target.value.trim(); } }),
-          add.provider === 'nvidia' ? 'The top group can use tools, which the brain needs. You can change it per key later.' : add.provider === 'anthropic' ? 'Leave empty for Claude Sonnet.' : 'Required.')),
+          add.provider === 'nvidia' ? 'The top group can use tools, which the brain needs. You can change it per key later.' : add.provider === 'gemini' ? 'After adding, ↻ Models shows every Gemini model your key can use.' : add.provider === 'anthropic' ? 'Leave empty for Claude Sonnet.' : 'Required.')),
       add.provider === 'compatible' ? field('Base URL', h('input', { type: 'url', value: add.baseUrl, placeholder: 'https://openrouter.ai/api/v1', oninput: (e) => { add.baseUrl = e.target.value.trim(); } })) : null,
       field('Name (optional)', h('input', { type: 'text', maxLength: 40, value: add.label, placeholder: `e.g. ${provLabel(add.provider)} main`, oninput: (e) => { add.label = e.target.value; } })),
       field('API key(s)', keysBox, `${pv.keyHint} Keys are stored encrypted and never shown again, only their last 4 characters.`),

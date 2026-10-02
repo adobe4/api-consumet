@@ -5,7 +5,7 @@ import { RES, HttpError, fromRow, toCols, readWorld, loadWorld, ownedProjectIds,
 import { simulate, alerts, suggestions } from '../shared/engine.js';
 import { buildTemplate, TEMPLATES } from '../shared/templates.js';
 import { scanProject, scanAll, dayIn } from './sync.js';
-import { handleMcp, runBrain, runBoardAI, runBoardEdit, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey } from './brain.js';
+import { handleMcp, runBrain, runBoardAI, runBoardEdit, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey, listModels, bestModel } from './brain.js';
 import { listBoards, getBoard, boardOut, createBoard, seedBoards, saveBoard, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, sharedFile } from './boards.js';
 import { generateBoard } from '../shared/board.js';
 
@@ -206,6 +206,21 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     const result = await testAi(cfgOfKey(k));
     k.test = { ok: result.ok, tools: result.tools, note: result.note, ms: result.ms, at: result.at };
     return { result, user: await saveKeys(user, sec, keys) };
+  }, { agents: false });
+  // the models this saved key can use, asked from its provider; "fix" also moves the key to an available model
+  route('GET', '/api/me/ai-keys/:id/models', async ({ user, params, query }) => {
+    if (!brainLimit(`aitest:${user.id}`)) throw new HttpError(429, 'Too many requests this hour. Try again later.');
+    const sec = secretsOf(user);
+    const keys = aiKeyList(settingsOf(user), sec);
+    const k = keys.find((x) => x.id === params.id);
+    if (!k) throw new HttpError(404, 'No such key');
+    const cfg = cfgOfKey(k);
+    const out = await listModels(cfg);
+    if (query.get('fix') === '1' && out.all.length && !out.all.includes(cfg.model)) {
+      k.model = bestModel(out.all, cfg.provider); k.test = null;
+      return { ...out, model: k.model, user: await saveKeys(user, sec, keys) };
+    }
+    return { ...out, model: cfg.model };
   }, { agents: false });
   // NVIDIA's own model list (public), so the app can offer every model without typing
   let nvidiaCache = null;

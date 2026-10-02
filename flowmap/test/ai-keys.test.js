@@ -146,3 +146,26 @@ test('the board AI reads the open board and restyles it', async () => {
     assert.ok(d.items.some((i) => i.type === 'clip' && i.data.kind === 'pin'));
   } finally { designer.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('Gemini: errors in Google\'s shape read clearly, models come from the key, the best one is picked', async () => {
+  const { listModels, bestModel, AI_PROVIDERS: P } = await import('../server/brain.js');
+  assert.equal(P.gemini.baseUrl, 'https://generativelanguage.googleapis.com/v1beta/openai');
+  const g = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.headers.authorization !== 'Bearer AIzaGood') { res.statusCode = 400; return res.end(JSON.stringify([{ error: { code: 400, message: 'Please pass a valid API key', status: 'INVALID_ARGUMENT' } }])); }
+    if (req.url.endsWith('/models')) return res.end(JSON.stringify({ object: 'list', data: ['models/gemini-2.0-flash', 'models/gemini-3-flash', 'models/gemini-3-pro', 'models/gemini-3-flash-lite', 'models/text-embedding-004', 'models/imagen-4', 'models/gemini-2.5-flash-preview-tts'].map((id) => ({ id, object: 'model' })) }));
+    let body = ''; req.on('data', (c) => { body += c; });
+    req.on('end', () => res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '', tool_calls: [{ id: 'c', type: 'function', function: { name: JSON.parse(body).tools[0].function.name, arguments: '{"ok":true}' } }] } }] })));
+  });
+  await new Promise((r) => g.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${g.address().port}/v1beta/openai`;
+  try {
+    const bad = await testAi({ provider: 'gemini', model: 'gemini-3-flash', baseUrl: base, apiKey: 'AIzaWrong' });
+    assert.equal(bad.ok, false); assert.match(bad.note, /rejected/);
+    const m = await listModels({ provider: 'gemini', baseUrl: base, apiKey: 'AIzaGood' });
+    assert.deepEqual(m.all, ['gemini-2.0-flash', 'gemini-3-flash', 'gemini-3-flash-lite', 'gemini-3-pro']);
+    assert.equal(bestModel(m.all, 'gemini'), 'gemini-3-flash');
+    const ok = await testAi({ provider: 'gemini', model: 'gemini-3-flash', baseUrl: base, apiKey: 'AIzaGood' });
+    assert.equal(ok.ok, true); assert.equal(ok.tools, true);
+  } finally { g.close(); }
+});

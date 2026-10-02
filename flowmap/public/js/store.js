@@ -286,6 +286,8 @@ export const updateAiKey = (id, data) => api('PATCH', `/api/me/ai-keys/${id}`, d
 export const removeAiKey = (id) => api('DELETE', `/api/me/ai-keys/${id}`).then(withUser);
 export const testAiKey = (id) => api('POST', `/api/me/ai-keys/${id}/test`, {}).then(withUser);
 export const nvidiaModels = () => get('/api/ai-models/nvidia');
+// the models a saved key can use; fix=true moves the key to one that exists when its model does not
+export const keyModels = (id, fix = false) => get(`/api/me/ai-keys/${id}/models${fix ? '?fix=1' : ''}`).then((r) => { if (r.user) S.user = r.user; return r; });
 export const listAgentKeys = () => get('/api/agent-keys');
 export const createAgentKey = (name) => post('/api/agent-keys', { name });
 export const deleteAgentKey = (id) => del(`/api/agent-keys/${id}`);
