@@ -177,7 +177,7 @@ test('AI tools see and change every style: items, clips, restyle, connections, f
   assert.equal(b.floor, 'grid');
   const pill = b.items.find((i) => i.text === 'ChatGPT - Script');
   assert.equal(pill.data.shape, 'pill'); assert.equal(pill.style.weight, 800); assert.equal(pill.style.font, 'l');
-  const clip = b.items.find((i) => i.type === 'clip');
+  const clip = b.items.find((i) => i.type === 'clip' && i.data.kind === 'binder');
   assert.deepEqual([clip.data.kind, clip.data.metal, clip.rot, clip.w], ['binder', 'gold', -6, 96]);
   assert.ok(clip.z > pill.z, 'new items stack on top');
   assert.deepEqual(b.items.find((i) => i.type === 'checklist').data.items.map((x) => x.done), [true, false]);

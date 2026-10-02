@@ -105,21 +105,45 @@ export function bounds(items) {
 export const inside = (a, f) => a.x >= f.x && a.y >= f.y && a.x + a.w <= f.x + f.w && a.y + a.h <= f.y + f.h;
 
 // ---------- generator: turn a plain description into a laid-out board ----------
+// The look: a bold, tactile canvas. Dark label bars with big white text, stacked with even gaps inside a
+// tinted frame; soft pressed-in cards in one warm accent per group; thick tunnel connectors; slight tilts
+// and the odd clip on paper. Never a table of identical boxes.
 // spec.layout: 'slides' | 'workflow' | 'mindmap' | 'kanban' | 'timeline' | 'notes'
 //  slides:    [{ title, points: [string], note, emoji }]          -> 16:9 frames, one per slide, in order
 //  nodes/edges: [{ id, title, text, color, group }], [{ from, to, label }] -> a left-to-right flow
 //  center + branches: [{ title, children: [string] }]              -> a mind map
 //  columns:   [{ title, cards: [string] }]                          -> a kanban
 //  milestones:[{ title, date, text }]                               -> a timeline
+export const INK = '#1c1916';
+export const ACCENTS = ['#2fb4a0', '#e8b86b', '#ff8a5c', '#e07a5f', '#b8e04a', '#ffb020', '#ff6fae', '#c9a27e'];
+const SOFT_TEXT = '#e9dfd2';
 export function generateBoard(spec, { origin = { x: 0, y: 0 }, style = {} } = {}) {
   const s = obj(spec);
   const layout = pick(s.layout, ['slides', 'workflow', 'mindmap', 'kanban', 'timeline', 'notes'], s.slides ? 'slides' : s.nodes ? 'workflow' : s.branches ? 'mindmap' : s.columns ? 'kanban' : s.milestones ? 'timeline' : 'notes');
   const out = { items: [], links: [], order: [] };
   const add = (type, props) => { const it = makeItem(type, props); out.items.push(it); return it; };
   const connect = (a, b, props = {}) => { const l = makeLink({ item: a.id }, { item: b.id }, { ...props, style: { kind: 'line', path: 'curved', dash: 'solid', start: 'none', end: 'arrow', width: 3, ...style.link, ...props.style } }); out.links.push(l); return l; };
-  const color = (i, c) => (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c : PALETTE[i % 9]);
+  const color = (i, c) => (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c : ACCENTS[i % ACCENTS.length]);
   const { x: ox, y: oy } = origin;
   const text = (v, n) => str(typeof v === 'string' ? v : v == null ? '' : String(v), n);
+  // gentle, repeatable tilt so notes look hand-placed
+  const tilt = (i) => [-2.2, 1.6, -1.1, 2.4, -1.8, 0.9][i % 6];
+  const clip = (x, y, kind, i, props = {}) => add('clip', { x, y, w: CLIP_SIZE[kind][0], h: CLIP_SIZE[kind][1], rot: kind === 'tape' ? tilt(i) * 1.5 : -8 + tilt(i) * 2, data: { kind, metal: kind === 'binder' ? 'black' : kind === 'paperclip' ? 'silver' : 'color' }, color: kind === 'pin' ? color(i + 2, null) : kind === 'tape' ? '#f3e3b3' : '', ...props });
+  // a dark label bar: shape underneath, white heading, softer detail beside it, an optional number chip
+  const headW = (head, big) => 40 + head.length * (big === 'l' ? 11.5 : 8.6);
+  const bar = (x, y, w, h, { head, detail = '', num = 0, accent, delay = 0, headWidth = 0 }) => {
+    add('shape', { x, y, w, h, color: INK, data: { shape: 'rect' }, style: { finish: 'solid', shadow: 'raised', radius: 12 }, anim: { in: 'rise', delay } });
+    let tx = x + 24;
+    if (num) {
+      const d = Math.min(38, h - 16);
+      add('shape', { x: x + 14, y: y + (h - d) / 2, w: d, h: d, color: accent, text: String(num), data: { shape: 'ellipse' }, style: { finish: 'solid', shadow: 'flat', font: 'm', weight: 800, textColor: INK }, anim: { in: 'pop', delay: delay + 0.05 } });
+      tx = x + 14 + d + 16;
+    }
+    const big = h >= 60 ? 'l' : 'm';
+    const hw = detail ? Math.max(150, Math.min((w - (tx - x)) * 0.42, headWidth || headW(head, big))) : w - (tx - x) - 20;
+    add('text', { x: tx, y, w: hw, h, text: head, style: { font: big, weight: 800, textColor: '#ffffff', align: 'left' }, anim: { in: 'fade', delay: delay + 0.08 } });
+    if (detail) add('text', { x: tx + hw + 14, y, w: x + w - (tx + hw + 14) - 20, h, text: detail, style: { font: 'm', textColor: SOFT_TEXT, align: 'left' }, anim: { in: 'fade', delay: delay + 0.12 } });
+  };
 
   if (layout === 'slides') {
     const slides = (Array.isArray(s.slides) ? s.slides : []).slice(0, 60);
@@ -127,21 +151,26 @@ export function generateBoard(spec, { origin = { x: 0, y: 0 }, style = {} } = {}
     let prev = null;
     slides.forEach((sl, n) => {
       const o = obj(sl);
+      const c = color(n, o.color);
       const fx = ox + (n % PER_ROW) * (FW + GX), fy = oy + Math.floor(n / PER_ROW) * (FH + GY);
-      const frame = add('frame', { x: fx, y: fy, w: FW, h: FH, title: `${n + 1}. ${text(o.title, 120) || 'Slide'}`, color: color(n, o.color), style: { shadow: 'raised' }, data: { notes: text(o.note, 4000) } });
+      const frame = add('frame', { x: fx, y: fy, w: FW, h: FH, title: `${n + 1}. ${text(o.title, 120) || 'Slide'}`, color: c, style: { shadow: 'raised', finish: 'tinted' }, data: { notes: text(o.note, 4000) } });
       out.order.push(frame.id);
-      add('text', { x: fx + 70, y: fy + 70, w: FW - 240, h: 90, text: text(o.title, 160) || `Slide ${n + 1}`, style: { font: 'xl', weight: 800 }, anim: { in: 'rise' } });
-      if (o.subtitle) add('text', { x: fx + 70, y: fy + 160, w: FW - 240, h: 50, text: text(o.subtitle, 300), style: { font: 'm', muted: true }, anim: { in: 'fade', delay: 0.15 } });
+      add('text', { x: fx + 70, y: fy + 56, w: FW - 260, h: 90, text: text(o.title, 160) || `Slide ${n + 1}`, style: { font: 'xl', weight: 800 }, anim: { in: 'rise' } });
+      if (o.subtitle) add('text', { x: fx + 70, y: fy + 142, w: FW - 260, h: 46, text: text(o.subtitle, 300), style: { font: 'm', muted: true }, anim: { in: 'fade', delay: 0.15 } });
       const pts = (Array.isArray(o.points) ? o.points : []).slice(0, 6).map((p) => text(p, 400)).filter(Boolean);
-      const cols = pts.length <= 3 ? Math.max(1, pts.length) : 3;
-      const rows = Math.ceil(pts.length / cols) || 1;
-      const cw = (FW - 140 - (cols - 1) * 30) / cols, ch = rows > 1 ? 160 : 230;
-      pts.forEach((p, i) => {
-        const [head, ...rest] = p.split(/:\s+/);
-        add('card', { x: fx + 70 + (i % cols) * (cw + 30), y: fy + 240 + Math.floor(i / cols) * (ch + 26), w: cw, h: ch, title: rest.length ? head : '', text: rest.length ? rest.join(': ') : p, color: color(n + i, null), style: { finish: 'soft', font: 'l' }, data: { num: i + 1 }, anim: { in: 'pop', delay: 0.25 + i * 0.12 } });
+      // up to 4 points: one column of wide bars; 5 or 6: two columns
+      const two = pts.length > 4, perCol = two ? Math.ceil(pts.length / 2) : pts.length || 1;
+      const top = fy + (o.subtitle ? 214 : 196), room = fy + FH - 56 - top, gap = 16;
+      const bh = Math.min(two ? 96 : 84, (room - (perCol - 1) * gap) / perCol), bw = two ? (FW - 140 - 24) / 2 : FW - 140;
+      const parts = pts.map((p) => { const [head, ...rest] = p.split(/:\s+/); return rest.length ? [head, rest.join(': ')] : [p, '']; });
+      // one heading width per slide, so every detail starts on the same line
+      const headWidth = Math.max(0, ...parts.filter(([, d]) => d).map(([hd]) => headW(hd, bh >= 60 ? 'l' : 'm')));
+      parts.forEach(([head, detail], i) => {
+        const col = two ? Math.floor(i / perCol) : 0, row = two ? i % perCol : i;
+        bar(fx + 70 + col * (bw + 24), top + row * (bh + gap), bw, bh, { head, detail, num: i + 1, accent: c, delay: 0.25 + i * 0.12, headWidth });
       });
-      if (o.emoji) add('sticker', { x: fx + FW - 150, y: fy + 50, w: 84, h: 84, text: text(o.emoji, 40), anim: { in: 'pop', loop: 'bounce', delay: 0.6 } });
-      if (prev && n % PER_ROW) connect(prev, frame, { style: { dash: 'dashed', width: 3, flow: true } });
+      if (o.emoji) add('sticker', { x: fx + FW - 160, y: fy + 46, w: 92, h: 92, text: text(o.emoji, 40), color: c, anim: { in: 'pop', loop: 'bounce', delay: 0.6 } });
+      if (prev && n % PER_ROW) connect(prev, frame, { style: { kind: 'tunnel', width: 8, end: 'none', color: c, flow: true } });
       prev = frame;
     });
   } else if (layout === 'workflow') {
@@ -158,71 +187,84 @@ export function generateBoard(spec, { origin = { x: 0, y: 0 }, style = {} } = {}
     for (let k = 0; k < nodes.length; k++) for (const [a, b] of fwd) if (layer.get(b) <= layer.get(a)) layer.set(b, layer.get(a) + 1);
     const cols = new Map();
     nodes.forEach((n) => { const l = layer.get(n.key); (cols.get(l) || cols.set(l, []).get(l)).push(n); });
-    const CW = 280, CH = 140, GX = 150, GY = 60;
+    const CW = 300, CH = 150, GX = 170, GY = 70;
     const byKey = new Map();
     [...cols.keys()].sort((a, b) => a - b).forEach((l) => {
       const list = cols.get(l);
       const total = list.length * CH + (list.length - 1) * GY;
       list.forEach((n, i) => {
-        const it = add(n.kind === 'note' ? 'note' : n.kind === 'shape' ? 'shape' : 'card', { x: ox + l * (CW + GX), y: oy - total / 2 + i * (CH + GY), w: CW, h: CH, title: text(n.title, 200), text: text(n.text, 1200), color: color(l + i, n.color), data: n.kind === 'shape' ? { shape: 'round' } : {}, anim: { in: 'pop', delay: l * 0.2 + i * 0.08 } });
+        const c = color(l + i, n.color), x = ox + l * (CW + GX), y = oy - total / 2 + i * (CH + GY);
+        const props = { x, y, w: CW, h: CH, title: text(n.title, 200), text: text(n.text, 1200), color: c, anim: { in: 'pop', delay: l * 0.2 + i * 0.08 } };
+        // a note stays a note; a node with only a title becomes a dark label; the rest are soft pressed cards
+        const it = n.kind === 'note' ? add('note', { ...props, rot: tilt(l + i) })
+          : n.kind === 'shape' || !n.text ? add('shape', { ...props, h: 74, y: y + (CH - 74) / 2, text: props.title || props.text, color: n.kind === 'shape' ? c : INK, data: { shape: n.kind === 'shape' ? 'pill' : 'rect' }, style: { finish: 'solid', shadow: 'raised', radius: 14, font: 'l', weight: 800, ...(n.kind === 'shape' ? {} : { textColor: '#ffffff' }) } })
+          : add('card', { ...props, style: { finish: 'tinted', shadow: 'raised', radius: 18, font: 'l' } });
         byKey.set(n.key, it);
       });
     });
-    for (const e of edges) connect(byKey.get(text(e.from, 60)), byKey.get(text(e.to, 60)), { label: text(e.label, 120), style: { flow: !!e.flow || !!style.flow } });
-    // groups become frames drawn around their members
+    for (const e of edges) { const from = byKey.get(text(e.from, 60)); connect(from, byKey.get(text(e.to, 60)), { label: text(e.label, 120), style: { kind: 'tunnel', width: 8, color: from.color === INK ? '#ff8a5c' : from.color, flow: !!e.flow || !!style.flow } }); }
+    // groups become tinted frames drawn around their members
     const groups = new Map();
     nodes.forEach((n) => { if (n.group) (groups.get(n.group) || groups.set(n.group, []).get(n.group)).push(byKey.get(n.key)); });
     [...groups].forEach(([g, members], i) => {
       const b = bounds(members);
-      const f = add('frame', { x: b.x0 - 50, y: b.y0 - 90, w: b.w + 100, h: b.h + 140, title: text(g, 120), color: color(i, null), style: { shadow: 'sunk' } });
+      const f = add('frame', { x: b.x0 - 50, y: b.y0 - 90, w: b.w + 100, h: b.h + 140, title: text(g, 120), color: color(i, null), style: { shadow: 'raised', finish: 'tinted' } });
       f.z = -10;
     });
   } else if (layout === 'mindmap') {
-    const center = add('shape', { x: ox - 150, y: oy - 80, w: 300, h: 160, text: text(s.center || s.title, 200) || 'Main idea', color: '#ffb020', data: { shape: 'ellipse' }, style: { finish: 'solid', font: 'l' }, anim: { in: 'zoom' } });
+    const center = add('shape', { x: ox - 160, y: oy - 85, w: 320, h: 170, text: text(s.center || s.title, 200) || 'Main idea', color: INK, data: { shape: 'ellipse' }, style: { finish: 'solid', font: 'xl', weight: 800, textColor: '#ffffff', shadow: 'float' }, anim: { in: 'zoom' } });
     const branches = (Array.isArray(s.branches) ? s.branches : []).slice(0, 12).map(obj);
     branches.forEach((br, i) => {
       const a = (i / Math.max(1, branches.length)) * Math.PI * 2 - Math.PI / 2;
       const c = color(i, br.color);
-      const bx = ox + Math.cos(a) * 560, by = oy + Math.sin(a) * 380;
-      const node = add('card', { x: bx - 130, y: by - 60, w: 260, h: 120, title: text(br.title, 200), text: text(br.text, 600), color: c, style: { finish: 'tinted' }, anim: { in: 'pop', delay: 0.2 + i * 0.1 } });
-      connect(center, node, { style: { end: 'none', width: 5, color: c } });
+      const bx = ox + Math.cos(a) * 580, by = oy + Math.sin(a) * 400;
+      const node = add('card', { x: bx - 140, y: by - 62, w: 280, h: 124, title: text(br.title, 200), text: text(br.text, 600), color: c, style: { finish: 'tinted', shadow: 'raised', radius: 18, font: 'l' }, anim: { in: 'pop', delay: 0.2 + i * 0.1 } });
+      connect(center, node, { style: { kind: 'tunnel', end: 'none', width: 10, color: c } });
       const kids = (Array.isArray(br.children) ? br.children : []).slice(0, 8);
       kids.forEach((k, j) => {
         const spread = (j - (kids.length - 1) / 2) * 0.22;
-        const ka = a + spread, kx = ox + Math.cos(ka) * 980, ky = oy + Math.sin(ka) * 700;
-        const kid = add('note', { x: kx - 100, y: ky - 50, w: 200, h: 100, text: text(k, 400), color: c, anim: { in: 'pop', delay: 0.5 + j * 0.06 } });
-        connect(node, kid, { style: { end: 'none', width: 3, color: c } });
+        const ka = a + spread, kx = ox + Math.cos(ka) * 1000, ky = oy + Math.sin(ka) * 720;
+        const kid = add('note', { x: kx - 105, y: ky - 55, w: 210, h: 110, text: text(k, 400), color: c, rot: tilt(i + j), anim: { in: 'pop', delay: 0.5 + j * 0.06 } });
+        connect(node, kid, { style: { end: 'none', width: 3, color: c, kind: 'drawn' } });
       });
     });
   } else if (layout === 'kanban') {
     const cols = (Array.isArray(s.columns) ? s.columns : []).slice(0, 10).map(obj);
     cols.forEach((c, i) => {
       const cards = (Array.isArray(c.cards) ? c.cards : []).slice(0, 30);
-      const h = Math.max(420, 120 + cards.length * 130);
-      add('frame', { x: ox + i * 400, y: oy, w: 360, h, title: text(c.title, 120) || `Column ${i + 1}`, color: color(i, c.color), style: { shadow: 'sunk' } });
-      cards.forEach((t, j) => add('note', { x: ox + i * 400 + 30, y: oy + 80 + j * 130, w: 300, h: 110, text: text(t, 600), color: color(i, c.color) }));
+      const h = Math.max(440, 130 + cards.length * 136);
+      const accent = color(i, c.color), x = ox + i * 420;
+      add('frame', { x, y: oy, w: 370, h, title: text(c.title, 120) || `Column ${i + 1}`, color: accent, style: { shadow: 'raised', finish: 'tinted' } });
+      bar(x + 24, oy + 40, 322, 58, { head: text(c.title, 60) || `Column ${i + 1}`, detail: '', num: cards.length, accent, delay: i * 0.1 });
+      cards.forEach((t, j) => add('note', { x: x + 34, y: oy + 124 + j * 136, w: 302, h: 112, text: text(t, 600), color: accent, rot: tilt(i + j) * 0.6, anim: { in: 'pop', delay: 0.2 + j * 0.06 } }));
+      if (cards.length) clip(x + 260, oy + 108, 'paperclip', i);
     });
   } else if (layout === 'timeline') {
     const ms = (Array.isArray(s.milestones) ? s.milestones : []).slice(0, 40).map(obj);
-    const start = add('shape', { x: ox - 30, y: oy - 30, w: 60, h: 60, data: { shape: 'ellipse' }, color: '#ffb020', style: { finish: 'solid' } });
+    const start = add('shape', { x: ox - 32, y: oy - 32, w: 64, h: 64, data: { shape: 'ellipse' }, color: INK, style: { finish: 'solid', shadow: 'raised' } });
     let last = start;
     ms.forEach((m, i) => {
-      const x = ox + (i + 1) * 340;
-      const dot = add('shape', { x: x - 22, y: oy - 22, w: 44, h: 44, data: { shape: 'ellipse' }, color: color(i, m.color), style: { finish: 'solid' }, anim: { in: 'pop', delay: i * 0.15 } });
-      connect(last, dot, { style: { kind: 'tunnel', end: 'none', width: 14, flow: true, color: '#ff8a3d' } });
+      const x = ox + (i + 1) * 360, c = color(i, m.color);
+      const dot = add('shape', { x: x - 24, y: oy - 24, w: 48, h: 48, data: { shape: 'ellipse' }, color: c, style: { finish: 'solid', shadow: 'raised' }, anim: { in: 'pop', delay: i * 0.15 } });
+      connect(last, dot, { style: { kind: 'tunnel', end: 'none', width: 12, flow: true, color: c } });
       const up = i % 2 === 0;
-      const card = add('card', { x: x - 130, y: up ? oy - 250 : oy + 70, w: 260, h: 170, title: text(m.title, 200), text: [text(m.date, 40), text(m.text, 600)].filter(Boolean).join(' · '), color: color(i, m.color), anim: { in: 'rise', delay: 0.2 + i * 0.15 } });
-      connect(dot, card, { style: { end: 'dot', dash: 'dotted', width: 2, color: color(i, m.color) } });
+      const card = add('card', { x: x - 140, y: up ? oy - 270 : oy + 80, w: 280, h: 180, title: text(m.title, 200), text: [text(m.date, 40), text(m.text, 600)].filter(Boolean).join(' · '), color: c, style: { finish: 'tinted', shadow: 'raised', radius: 18, font: 'l' }, anim: { in: 'rise', delay: 0.2 + i * 0.15 } });
+      if (m.date) bar(x - 90, up ? oy - 330 : oy + 274, 180, 46, { head: text(m.date, 30), accent: c, delay: 0.3 + i * 0.15 });
+      connect(dot, card, { style: { end: 'dot', dash: 'dotted', width: 2, color: c } });
       last = dot;
     });
   } else {
     const notes = (Array.isArray(s.notes) ? s.notes : []).slice(0, 60);
-    notes.forEach((t, i) => add('note', { x: ox + (i % 5) * 250, y: oy + Math.floor(i / 5) * 220, text: text(t, 800), color: color(i, null) }));
+    notes.forEach((t, i) => {
+      const x = ox + (i % 5) * 270, y = oy + Math.floor(i / 5) * 250;
+      add('note', { x, y, w: 220, h: 180, text: text(t, 800), color: color(i, null), rot: tilt(i), anim: { in: 'pop', delay: i * 0.05 } });
+      clip(i % 2 ? x + 70 : x + 85, i % 2 ? y - 22 : y - 18, i % 2 ? 'tape' : 'pin', i, i % 2 ? { w: 90, h: 34 } : {});
+    });
   }
   if (s.title && layout !== 'slides' && layout !== 'mindmap') {
     const b = bounds(out.items) || { x0: ox, y0: oy, w: 600 };
     add('text', { x: b.x0, y: b.y0 - 150, w: Math.max(600, b.w), h: 90, text: text(s.title, 200), style: { font: 'xl', weight: 800 } });
   }
-  out.items.forEach((it, i) => { if (!it.z) it.z = i + 1; });
+  out.items.forEach((it, i) => { if (!it.z) it.z = it.type === 'frame' ? -100 + i : i + 1; });
   return out;
 }

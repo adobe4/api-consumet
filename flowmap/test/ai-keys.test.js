@@ -107,3 +107,40 @@ test('saved AI keys over the API: bulk add, write-only, edit, test, remove', asy
   const models = await call('GET', '/api/ai-models/nvidia');
   assert.ok(models.body.recommended.includes('moonshotai/kimi-k2.6'));
 });
+
+test('the board AI reads the open board and restyles it', async () => {
+  const { runBoardEdit } = await import('../server/brain.js');
+  const { openDb } = await import('../server/db.js');
+  const { createBoard, getBoard } = await import('../server/boards.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowmap-edit-'));
+  const db = await openDb({ dataDir: dir });
+  const uid = (await db.run('INSERT INTO users (email, name, pass, settings) VALUES (?, ?, ?, ?)', 'd@example.com', 'D', 'x', '{}')).lastInsertRowid;
+  const b = await createBoard(db, uid, { name: 'Plain', data: { v: 1, items: [{ id: 'n1', type: 'note', x: 0, y: 0, w: 200, h: 120, text: 'Hi' }], links: [], order: [], settings: {} } });
+  // a scripted designer: read the board, then restyle the note it found, then say what it did
+  const seen = [];
+  const designer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const j = JSON.parse(body);
+      seen.push(j.tools.map((t) => t.function.name));
+      const tools = j.messages.filter((m) => m.role === 'tool');
+      const call = (name, args) => ({ role: 'assistant', content: '', tool_calls: [{ id: `c${tools.length}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+      let msg;
+      if (!tools.length) msg = call('get_board', { board: b.id });
+      else if (tools.length === 1) { const id = JSON.parse(tools[0].content).items[0].id; msg = call('edit_board_items', { board: b.id, floor: 'grid', changes: [{ id, color: '#2fb4a0', rot: -2, style: { finish: 'solid', shadow: 'float', font: 'l' } }] }); }
+      else msg = { role: 'assistant', content: 'Made the note teal and lifted it.' };
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ message: msg }] }));
+    });
+  });
+  await new Promise((r) => designer.listen(0, '127.0.0.1', r));
+  const ai = { id: 'k', provider: 'nvidia', model: 'm', baseUrl: `http://127.0.0.1:${designer.address().port}/v1`, apiKey: 'good' };
+  try {
+    const out = await runBoardEdit({ db, uid }, [ai], { id: b.id, name: b.name }, 'Make it look better');
+    assert.equal(out.summary, 'Made the note teal and lifted it.');
+    assert.ok(seen[0].includes('edit_board_items') && seen[0].includes('get_board'));
+    const d = JSON.parse((await getBoard(db, uid, b.id)).data);
+    assert.deepEqual([d.items[0].color, d.items[0].rot, d.items[0].style.finish, d.items[0].style.shadow, d.settings.ground], ['#2fb4a0', -2, 'solid', 'float', 'grid']);
+  } finally { designer.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
