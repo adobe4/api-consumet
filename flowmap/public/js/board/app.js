@@ -111,7 +111,7 @@ export function createBoards(host) {
   }
   async function aiBuild(text, btn) {
     if (text.trim().length < 4) { notify('Describe the board you want first', 'error'); return; }
-    btn.disabled = true; setText(btn, '✨ Building… (up to a minute)');
+    btn.disabled = true; setText(btn, '✨ Designing… (up to 2 minutes)');
     try {
       const r = await api('POST', '/api/boards/generate', { prompt: text });
       notify(r.summary || 'Board ready', 'good');

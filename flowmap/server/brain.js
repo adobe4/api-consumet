@@ -5,7 +5,7 @@ import { simulate, alerts, suggestions, KIND_KEYS, RESOURCE_KEYS, TASK_TYPES, KI
 import { RES, HttpError, fromRow, toCols, readWorld, insertSql, ownedProjectIds } from './models.js';
 import { scanAll, scanProject, dayIn } from './sync.js';
 import { goalProgress, groupOf } from '../shared/goals.js';
-import { BOARD_TOOLS } from './boards.js';
+import { lintBoard, BOARD_TOOLS } from './boards.js';
 
 const round = (n, d = 0) => (Number.isFinite(n) ? Math.round(n * 10 ** d) / 10 ** d : null);
 const PROJECT_ARG = { type: 'string', description: 'Project id or name' };
@@ -403,62 +403,98 @@ async function brainOnce(ctx, ai, { trigger = 'manual', budgetMs = 50000 } = {})
   return { summary, actions };
 }
 
-// ---------- built-in AI: build a board from a request, or change the board that is open ----------
-const BOARD_LOOK = `Make it look designed, never like a table or a plain list:
-- Breathing room: 40px+ between blocks, align things on clean rows and columns.
-- Group related things inside a frame (style.shadow "sunk") with a short title; use shapes (pill or round) as soft labelled buttons, flip cards for "tap to see more".
-- Warm earthy colours only (#e8b86b, #ff8a5c, #e07a5f, #c9a27e, #b8e04a, #2fb4a0, #ffb020, #ff6fae, #8a7b6d); never blue or purple. One accent colour per group.
-- Big bold titles (style.size 32+, bold), quieter details (style.muted), stickers (i: icons) and the odd paperclip or tape (type clip) to make it feel real; tilt notes and clips a few degrees.
-- Notes are real paper: mix kinds (paper: sticky, lined, spiral, grid, index, kraft, torn, aged), hold some with tape or a pin, use handwriting (style.hand) for personal notes.
-- Curved connections; "tunnel" kind with flow for money or attention moving.`;
-const BOARD_SYSTEM = `You design boards inside FlowMap, a creator's planning and presentation canvas. The owner will present boards full screen and screen-record them for tutorials, strategy videos and courses.
-Read the request, look at the system overview if it helps (get_overview), then call create_board once with a well-structured spec:
-- For a video, lesson or pitch use layout "slides": 5 to 12 slides, each with a short punchy title, 2 to 6 points ("Heading: detail"), an emoji, and speaker notes with what to say.
-- For processes use "workflow" with nodes and edges; for brainstorming "mindmap"; for task boards "kanban"; for plans over time "timeline".
-Then polish it: read it with get_board and use edit_board_items (and add_to_board for extra stickers, clips or notes) so it looks great.
-${BOARD_LOOK}
-Write in the language the owner used. Be concrete and specific to their projects when relevant. Finish with one sentence saying what you built.`;
-const BOARD_AI_TOOLS = ['get_overview', 'list_boards', 'create_board', 'get_board', 'edit_board_items', 'add_to_board'].map((n) => TOOL_BY_NAME.get(n));
+// ---------- built-in AI: design a board, or change the board that is open ----------
+// The AI designs every item itself (positions, sizes, styles) from the whole toolkit, then FlowMap checks the
+// result (overlaps, things sticking out of frames, text that will not fit) and gives it one round to fix them.
+const DESIGN_GUIDE = `CANVAS: x grows right, y grows down, in px. A slide is a frame of 1100x620 (16:9). Lay slides in a row with 180px gaps (x = 0, 1280, 2560, ...), a second row 820px lower. Free content (notes, maps, menus) can sit anywhere.
+TEXT SIZES (style.size, px): 64-80 hero title · 40-48 slide title · 28-32 heading · 20-24 big body · 15-17 body · 12-13 label. Bold headings (style.bold). Budget the box: a line needs about size x 1.4 px of height and holds about width / (size x 0.56) characters.
+TOOLKIT, pick what the content needs (use many kinds, not only cards):
+- frame: a slide or a section (style.finish "tinted", one accent colour, style.shadow "raised"). Keep its content 50-70px inside its edges. Add it to "slides" to present it.
+- text: titles and body (no background). Left-align body text (style.align "left").
+- shape: rect/round/pill bars and buttons; dark bars (#1c1916, style.textColor "#ffffff") for steps; ellipse number chips 40-56px; arrow, star, hexagon, diamond for emphasis; bubble for a quote.
+- card: title + details (style.finish "tinted" or "soft", style.radius 18).
+- note: real paper (paper: sticky, lined, spiral, grid, index, kraft, torn, aged; pin: tape, pin or clip; rot -3..3; style.hand for handwriting). Great for ideas, tips, reminders.
+- flip: front title, back lines (tap to reveal more). checklist: actionable steps (items). hide: a cover over an answer or price, tapped away while presenting.
+- sticker: a line icon "i:name" (rocket, target, flame, lightbulb, trophy, banknote, clock, check, x, star, zap, heart, megaphone, flag, gift, crown, sparkles, trending-up, arrow-right, arrow-down), 64-110px, in the accent colour.
+- clip: paperclip, binder, pin or tape laid over the top edge of a note, card or photo (rot -10..10). prompt: a copyable AI prompt with a Copy button. link: a web link card. image: a picture from a URL.
+- jump (on any item): tapping glides to another item. Build menus, "next" buttons, "back to start".
+- connect: arrows between items. kind "tunnel" + flow for money or attention moving, "drawn" for sketchy, curved paths.
+COMPOSITION: one focal point per slide; a clear reading order; align edges on a 20px grid; even gaps (24, 40 or 60); 3-7 elements per slide; give every slide a different layout (hero statement, numbered steps, two columns, card grid, comparison, quote, checklist, timeline, big number); never let things overlap except on purpose (text on its shape, a chip on its bar, a clip or tape on paper, a cover over an answer); nothing sticks out of its frame.
+COLOUR: warm and earthy only: #e8b86b, #ff8a5c, #e07a5f, #c9a27e, #b8e04a, #2fb4a0, #ffb020, #ff6fae, #8a7b6d, ink #1c1916, paper #f5f1ea. Never blue or purple. One accent per slide or section; dark shapes get white text.`;
+const DESIGN_EXAMPLE = `EXAMPLE of one designed slide (shape of the JSON only, never copy its words):
+{"ref":"s1","type":"frame","x":0,"y":0,"w":1100,"h":620,"title":"Why this works","color":"#2fb4a0","style":{"finish":"tinted","shadow":"raised"}},
+{"type":"text","x":70,"y":60,"w":640,"h":130,"text":"3 moves that doubled my views","style":{"size":46,"bold":true,"align":"left"}},
+{"type":"sticker","x":930,"y":56,"w":96,"h":96,"emoji":"i:trending-up","color":"#2fb4a0"},
+{"type":"shape","shape":"rect","x":70,"y":230,"w":560,"h":76,"color":"#1c1916","style":{"finish":"solid","radius":14}},
+{"type":"shape","shape":"ellipse","x":88,"y":246,"w":44,"h":44,"text":"1","color":"#2fb4a0","style":{"finish":"solid","size":18,"bold":true,"textColor":"#1c1916"}},
+{"type":"text","x":150,"y":230,"w":460,"h":76,"text":"Hook in the first 3 seconds","style":{"size":22,"bold":true,"textColor":"#ffffff","align":"left"}},
+{"type":"note","paper":"lined","pin":"tape","x":700,"y":250,"w":320,"h":280,"rot":2,"text":"Tip: say the result first, then show how.","style":{"size":24,"hand":true}},
+{"type":"clip","clip":"paperclip","x":960,"y":226,"w":46,"h":128,"rot":-8}`;
+const PLAN_ITEM_FIELDS = `Item fields: type, ref (your name for it), x, y, w, h (absolute px), title, text, color (#hex), rot, z, locked,
+ style: { finish: soft|tinted|solid|glass|flat|none, shadow: sunk|flat|raised|float, radius: 0-60, size: text px, align: left|center|right, bold, muted, textColor: #hex, hand },
+ anim: { in: none|pop|fade|rise|zoom|draw|slide, loop: none|bounce|pulse|wiggle|float|glow, delay: seconds },
+ shape (rect|round|pill|ellipse|diamond|triangle|hexagon|star|arrow|bubble), emoji (stickers: i:icon), paper/lift/pin (notes), clip/metal (clips), items (checklist rows, "[x] row" = ticked), back (flip back lines), cover (hide: blur|frost|solid|curtain), url (image, link), jump (id or ref to glide to), jumpLabel.`;
+const CREATE_SYSTEM = `You are the designer of boards inside FlowMap, a creator's planning and presentation canvas. The owner presents boards full screen and screen-records them for tutorials, strategy videos and courses. Design the board yourself, item by item, like a skilled presentation designer: real content, real hierarchy, varied layouts, using the whole toolkit. Do not produce a template.
+${DESIGN_GUIDE}
+${DESIGN_EXAMPLE}
+For a video, lesson or pitch: 5 to 10 slides, each a frame with its own layout, plus speaker notes in the frame's "text" (the presenter sees it). For plans, maps and brainstorms: lay sections out freely on the canvas with frames, notes, cards, connections and jump links.
+Write in the language the owner used. Be concrete and specific to their projects when relevant. Keep the whole design under about 120 items.
+Answer with ONE JSON object and nothing else:
+{"name":"board name","icon":"one emoji","floor":"dots|grid|plain","summary":"one sentence about what you built","items":[ ...in drawing order, later items on top... ],"connect":[{"from":"ref","to":"ref","label":"","kind":"line|tunnel|raised|drawn","flow":true}],"slides":["frame refs in presenting order"]}
+${PLAN_ITEM_FIELDS}`;
+const FIX_ASK = (issues) => `FlowMap checked the board and found these problems:\n- ${issues.join('\n- ')}\nFix every one of them (move, resize, shrink text, delete or re-add) while keeping the design. Answer with ONE JSON plan: {"summary":"...","changes":[{"id":"...", ...}],"add":[...],"connect":[...]}. Use the real ids from the board above.`;
 
-// one tool-using conversation; returns the final text and the tools that ran
-async function boardTurns(ctx, ai, system, tools, request, { steps = 8, onCall } = {}) {
+// the owner's projects in a few lines, so a board can be specific to them
+async function projectBrief(bctx) {
+  try {
+    const o = await callTool(bctx, 'get_overview', {});
+    const ps = (o.projects || []).slice(0, 20).map((p) => `${p.name} (${p.kind}${p.moneyPerDay ? `, ~${Math.round(p.moneyPerDay)} TZS/day` : ''}${p.note ? `: ${String(p.note).slice(0, 90)}` : ''})`);
+    return `${o.aboutTheOwner && !/not written/.test(o.aboutTheOwner) ? `About the owner: ${String(o.aboutTheOwner).slice(0, 600)}\n` : ''}${ps.length ? `Their projects: ${ps.join('; ')}` : ''}`;
+  } catch { return ''; }
+}
+
+export async function runBoardAI(ctx, chain, request) {
+  const deadline = Date.now() + 230000;
+  return withFallback(chain, (ai) => designOnce(ctx, ai, request, deadline));
+}
+async function designOnce(ctx, ai, request, deadline) {
   if (!ai?.apiKey) throw new HttpError(400, 'Add an AI key in the 🧠 Brain settings first, or connect your own AI agent over MCP');
   if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in the 🧠 Brain settings');
   const bctx = { ...ctx, source: 'ai' };
-  const turn = ai.provider === 'anthropic' ? anthropicTurn : openaiTurn;
-  const messages = [{ role: 'user', content: String(request).slice(0, 6000) }];
-  let text = '';
-  const ran = [];
-  const start = Date.now();
-  for (let step = 0; step < steps; step++) {
-    let t;
-    try { t = await turn(ai, system, messages, tools); } catch (e) {
-      if (!ran.length) throw new HttpError(502, e.name === 'TimeoutError' ? 'The AI provider took too long to answer' : e.message);
-      break;
-    }
-    text = t.text || text;
-    if (!t.calls.length) break;
-    const results = [];
-    for (const c of t.calls) {
-      try {
-        const out = await callTool(bctx, c.name, c.args);
-        onCall?.(c.name, out);
-        ran.push(c.name);
-        results.push({ id: c.id, content: JSON.stringify(out).slice(0, 24000) });
-      } catch (e) { results.push({ id: c.id, content: e.message, isError: true }); }
-    }
-    t.answer(results);
-    if (Date.now() - start > 50000) break;
-  }
-  return { text: (text || '').trim().slice(0, 600), ran };
+  const brief = await projectBrief(bctx);
+  const plan = await askPlan(ai, CREATE_SYSTEM, [{ role: 'user', content: `${brief ? `${brief}\n\n` : ''}THE OWNER ASKS FOR: ${String(request).slice(0, 4000)}` }], deadline, 'design');
+  const items = Array.isArray(plan.items) ? plan.items : [];
+  if (!items.length) throw new HttpError(502, 'The AI did not design anything. Try describing the board differently.');
+  const made = await callTool(bctx, 'create_board', { name: String(plan.name || 'New board').slice(0, 80), icon: typeof plan.icon === 'string' ? plan.icon.slice(0, 8) : '', floor: plan.floor, items, connections: plan.connect || plan.connections || [], slides: plan.slides || [] });
+  const id = made.created.id;
+  const summary = await reviewRound(bctx, ai, id, new Set(made.ids), String(plan.summary || ''), deadline);
+  return { board: made.created, summary: summary || 'Board ready' };
 }
-
-export async function runBoardAI(ctx, chain, request) { return withFallback(chain, (ai) => boardOnce(ctx, ai, request)); }
-async function boardOnce(ctx, ai, request) {
-  let created = null;
-  const { text } = await boardTurns(ctx, ai, BOARD_SYSTEM, BOARD_AI_TOOLS, request, { onCall: (name, out) => { if (name === 'create_board' && !created) created = out.created; } });
-  if (!created) throw new HttpError(502, text ? `The AI did not build a board: ${text.slice(0, 300)}` : 'The AI did not build a board. Try describing it differently.');
-  return { board: created, summary: text };
+// one look at the result: if the design check finds problems and there is time, the AI fixes them
+async function reviewRound(bctx, ai, boardId, focus, summary, deadline) {
+  const view = await callTool(bctx, 'get_board', { board: boardId });
+  const issues = lintBoard({ items: view.items.map((i) => ({ ...i })) }, focus);
+  if (!issues.length || deadline - Date.now() < 60000) return summary;
+  try {
+    const fix = await askPlan(ai, EDIT_PLAN_SYSTEM(view.name), [{ role: 'user', content: `${compactBoard(view)}\n\n${FIX_ASK(issues)}` }], deadline, 'fix');
+    await applyPlan(bctx, boardId, fix).catch(() => {});
+    return `${summary}${summary ? ' ' : ''}Checked and tidied ${issues.length} spot${issues.length === 1 ? '' : 's'}.`;
+  } catch { return summary; }
+}
+// ask for a JSON plan; one retry when the answer is not readable
+async function askPlan(ai, system, messages, deadline, what) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let text;
+    try { text = await chatOnce(ai, system, messages, deadline); } catch (e) {
+      throw new HttpError(502, e.name === 'TimeoutError' ? 'The AI took too long. Try a faster model in 🧠 Brain, or ask for something smaller.' : e.message);
+    }
+    try { return readPlan(text); } catch (e) {
+      lastErr = e;
+      messages.push({ role: 'assistant', content: String(text).slice(0, 4000) }, { role: 'user', content: `That was not usable (${e.message}). Reply again with ONLY the JSON object${e.message.includes('cut off') ? ', shorter this time' : ''}.` });
+    }
+  }
+  throw new HttpError(502, `The AI answered in a way FlowMap could not read (${lastErr?.message}). Try again, or pick another model in 🧠 Brain.${what === 'design' ? '' : ''}`);
 }
 export async function runBoardEdit(ctx, chain, board, request) {
   // one shared deadline across fallback keys, well inside the 300 s function limit
@@ -477,7 +513,8 @@ const PLAN_SPEC = `Answer with ONE JSON object and nothing else:
  "restyle": [ { "ids": [...] or "types": [...], "color": "#hex", "style": {...}, "rot": n } ],   (optional; same look on many items)
  "add": [ { "type": "note|card|text|shape|frame|flip|sticker|checklist|clip|hide|image|link|prompt", "ref": "name", "x": n, "y": n, "w": n, "h": n, ...fields } ],   (optional; x/y are absolute)
  "connect": [ { "from": "<id or ref>", "to": "<id or ref>", "label": "", "kind": "line|tunnel|raised|drawn", "flow": true } ],   (optional)
- "connections": [ { "id": "<connection id>", "delete": true | "kind"/"dash"/"color"/"width"/"flow"/"label"... } ]   (optional)
+ "connections": [ { "id": "<connection id>", "delete": true | "kind"/"dash"/"color"/"width"/"flow"/"label"... } ],   (optional)
+ "slides": [ "<frame id or ref>" ]   (optional; frames to add to the presenting order)
 }
 Item fields: title, text, color (#hex), x, y, w, h, rot (degrees), z (higher = on top), locked,
  style: { finish: soft|tinted|solid|glass|flat|none, shadow: sunk|flat|raised|float, radius: 0-60, size: text px 8-200, align: left|center|right, bold: true|false, muted: true|false, textColor: #hex, hand: true|false (handwriting) },
@@ -487,10 +524,10 @@ Item fields: title, text, color (#hex), x, y, w, h, rot (degrees), z (higher = o
  jump (id or ref of another item: tapping glides there), jumpLabel (optional button text),
  clip (for clips: paperclip|binder|pin|tape), metal (silver|gold|copper|black|color), items (checklist rows; "[x] row" = ticked), back (flip card back text), cover (hide: blur|frost|solid|curtain).
 Only include what changes. Use the real ids from the board.`;
-const EDIT_PLAN_SYSTEM = (name) => `You edit one board inside FlowMap, a creator's planning and presentation canvas: "${name}". The owner is looking at it right now and asked for a change.
-Do exactly what the owner asks. Keep everything they did not ask to change. Keep things inside their frames.
-When asked to make it look better, keep the content and improve the design:
-${BOARD_LOOK}
+const EDIT_PLAN_SYSTEM = (name) => `You are the designer of one board inside FlowMap, a creator's planning and presentation canvas: "${name}". The owner is looking at it right now.
+Do exactly what the owner asks; keep what they did not ask to change. Work item by item AND look at the whole: positions, sizes, text sizes, alignment, gaps, colour, hierarchy.
+When asked to improve, redesign, perfect, fix or add more: really design. Move and resize things into clean layouts, set proper text sizes, replace plain boxes with the right tool (paper notes, number chips on dark bars, flip cards, checklists, stickers, clips, covers, connections, jump links), add missing pieces, and give each slide its own layout. Nothing may overlap by accident or stick out of its frame, and all text must fit its box.
+${DESIGN_GUIDE}
 Write any new text in the language the owner used.
 ${PLAN_SPEC}`;
 
@@ -517,14 +554,21 @@ export function readPlan(text) {
   }
   throw new Error('the JSON answer was cut off');
 }
-async function chatOnce(ai, system, messages, deadline = Date.now() + 120000) {
+async function chatOnce(ai, system, messages, deadline = Date.now() + 120000, maxTokens = 12000) {
+  try { return await chatCall(ai, system, messages, deadline, maxTokens); } catch (e) {
+    // some models allow fewer output tokens: ask again with a smaller budget
+    if (maxTokens > 4096 && /max_tokens|max_completion_tokens|maximum.*tokens|too large|output.*tokens/i.test(e.message)) return chatCall(ai, system, messages, deadline, 4096);
+    throw e;
+  }
+}
+async function chatCall(ai, system, messages, deadline, maxTokens) {
   const left = deadline - Date.now();
   if (left < 8000) { const e = new Error('out of time'); e.name = 'TimeoutError'; throw e; }
   const ms = Math.min(120000, left);
   const anth = ai.provider === 'anthropic';
   const r = anth
-    ? await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': ai.apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: ai.model || AI_PROVIDERS.anthropic.model, max_tokens: 8000, system, messages }), signal: AbortSignal.timeout(ms) })
-    : await fetch(`${(ai.baseUrl || AI_PROVIDERS.openai.baseUrl).replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ai.apiKey}` }, body: JSON.stringify({ model: ai.model, max_tokens: 8000, temperature: 0.4, messages: [{ role: 'system', content: system }, ...messages] }), signal: AbortSignal.timeout(ms) });
+    ? await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': ai.apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: ai.model || AI_PROVIDERS.anthropic.model, max_tokens: maxTokens, system, messages }), signal: AbortSignal.timeout(ms) })
+    : await fetch(`${(ai.baseUrl || AI_PROVIDERS.openai.baseUrl).replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ai.apiKey}` }, body: JSON.stringify({ model: ai.model, max_tokens: maxTokens, temperature: 0.5, messages: [{ role: 'system', content: system }, ...messages] }), signal: AbortSignal.timeout(ms) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`AI provider: ${plainError(r.status, errMsg(j))}`);
   return anth ? (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('') : j.choices?.[0]?.message?.content || '';
@@ -534,21 +578,12 @@ async function editOnce(ctx, ai, board, request, deadline) {
   if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in the 🧠 Brain settings');
   const bctx = { ...ctx, source: 'ai' };
   const view = await callTool(bctx, 'get_board', { board: board.id });
-  const system = EDIT_PLAN_SYSTEM(view.name);
-  const messages = [{ role: 'user', content: `${compactBoard(view)}\n\nTHE OWNER ASKS: ${String(request).slice(0, 4000)}` }];
-  let plan = null, lastErr = null;
-  for (let attempt = 0; attempt < 2 && !plan; attempt++) {
-    let text;
-    try { text = await chatOnce(ai, system, messages, deadline); } catch (e) {
-      throw new HttpError(502, e.name === 'TimeoutError' ? 'The AI took too long. Try a faster model in 🧠 Brain, or ask for a smaller change.' : e.message);
-    }
-    try { plan = readPlan(text); } catch (e) {
-      lastErr = e;
-      messages.push({ role: 'assistant', content: String(text).slice(0, 4000) }, { role: 'user', content: `That was not usable (${e.message}). Reply again with ONLY the JSON object.` });
-    }
-  }
-  if (!plan) throw new HttpError(502, `The AI answered in a way FlowMap could not read (${lastErr?.message}). Try again, or pick another model in 🧠 Brain.`);
-  return applyPlan(bctx, view.id, plan);
+  const plan = await askPlan(ai, EDIT_PLAN_SYSTEM(view.name), [{ role: 'user', content: `${compactBoard(view)}\n\nTHE OWNER ASKS: ${String(request).slice(0, 4000)}` }], deadline, 'edit');
+  const out = await applyPlan(bctx, view.id, plan);
+  // check only what the AI touched, so the owner's own choices are never "fixed"
+  const touched = new Set([...(Array.isArray(plan.changes) ? plan.changes.map((c) => String(c?.id)) : []), ...(out.added || [])]);
+  out.summary = await reviewRound(bctx, ai, view.id, touched, out.summary, deadline);
+  return out;
 }
 // apply a plan with the same tools agents use, so the rules (valid colours, sizes, kinds) are the same
 export async function applyPlan(bctx, boardId, plan) {
@@ -560,12 +595,13 @@ export async function applyPlan(bctx, boardId, plan) {
     const r = await callTool(bctx, 'edit_board_items', { board: boardId, changes, restyle, connections: conns, floor: p.floor });
     edits += r.changed + r.deleted + r.connections + (p.floor ? 1 : 0);
   }
-  if (arr(p.add).length || arr(p.connect).length) {
-    const r = await callTool(bctx, 'add_to_board', { board: boardId, at: { x: 0, y: 0 }, items: arr(p.add), connections: arr(p.connect) });
-    edits += r.added + r.connections;
+  let added = [];
+  if (arr(p.add).length || arr(p.connect).length || arr(p.slides).length) {
+    const r = await callTool(bctx, 'add_to_board', { board: boardId, at: { x: 0, y: 0 }, items: arr(p.add), connections: arr(p.connect), slides: arr(p.slides) });
+    edits += r.added + r.connections; added = r.ids || [];
   }
   if (!edits) throw new HttpError(502, `The AI did not change anything${p.summary ? `: ${String(p.summary).slice(0, 200)}` : ''}. Try saying exactly what to change.`);
-  return { summary: String(p.summary || 'Done').slice(0, 400), edits };
+  return { summary: String(p.summary || 'Done').slice(0, 400), edits, added };
 }
 
 export { addNote, addDays };

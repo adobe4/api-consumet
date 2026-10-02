@@ -1243,7 +1243,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const chip = (t) => h('button', { type: 'button', class: 'chip', onclick: () => { box.value = t; box.focus(); } }, t);
     async function run(text) {
       if (text.trim().length < 3) { notify('Say what to change first', 'error'); return; }
-      go.disabled = true; setText(go, '✨ Working… (up to a minute)');
+      go.disabled = true; setText(go, '✨ Designing… (up to 2 minutes)');
       try {
         await flushSave();
         const r = await api('POST', `/api/boards/${board.id}/ai`, { prompt: text });
@@ -1263,7 +1263,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     }
     openPop({ anchor: btn, title: '✨ Ask AI to change this board', width: 420, body: h('div', { class: 'pgrid' },
       box,
-      h('div', { class: 'chips' }, chip('Make it look better'), chip('Tidy and align everything'), chip('Add paperclips and tape to the notes'), chip('Use warm colours only')),
+      h('div', { class: 'chips' }, chip('Redesign it properly: give every slide its own layout and use the whole toolkit'), chip('Fix overlaps, alignment and text sizes'), chip('Add more: tips on paper notes, stickers, a checklist and a menu with jump links'), chip('Make it look better')),
       h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, h('small', { class: 'phint' }, S.user?.hasAiKey ? 'Uses the AI from your 🧠 Brain settings' : 'Add an AI key in 🧠 Brain first'), go)) });
     setTimeout(() => box.focus(), 50);
   }

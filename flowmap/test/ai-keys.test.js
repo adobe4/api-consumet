@@ -169,3 +169,54 @@ test('Gemini: errors in Google\'s shape read clearly, models come from the key, 
     assert.equal(ok.ok, true); assert.equal(ok.tools, true);
   } finally { g.close(); }
 });
+
+test('board design: the AI places every item, FlowMap checks it, the AI fixes what the check found', async () => {
+  const { runBoardAI } = await import('../server/brain.js');
+  const { openDb } = await import('../server/db.js');
+  const { getBoard } = await import('../server/boards.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowmap-design-'));
+  const db = await openDb({ dataDir: dir });
+  const uid = (await db.run('INSERT INTO users (email, name, pass, settings) VALUES (?, ?, ?, ?)', 'e@example.com', 'E', 'x', '{}')).lastInsertRowid;
+  const asks = [];
+  const designer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const j = JSON.parse(body);
+      asks.push(j.messages.at(-1).content);
+      let plan;
+      if (asks.length === 1) plan = { name: 'Growth talk', icon: '🚀', floor: 'grid', summary: 'Two slides.', slides: ['s1', 's2'], items: [
+        { ref: 's1', type: 'frame', x: 0, y: 0, w: 1100, h: 620, title: 'Hook', color: '#2fb4a0', style: { finish: 'tinted' } },
+        { ref: 't1', type: 'text', x: 70, y: 60, w: 300, h: 40, text: 'A very long title that cannot possibly fit in this tiny box at this size', style: { size: 48, bold: true } },
+        { ref: 'n1', type: 'note', paper: 'lined', pin: 'tape', x: 600, y: 200, w: 300, h: 240, text: 'Tip' },
+        { ref: 'c1', type: 'card', x: 650, y: 260, w: 300, h: 200, title: 'Overlaps the note' },
+        { ref: 's2', type: 'frame', x: 1280, y: 0, w: 1100, h: 620, title: 'Steps', color: '#ff8a5c', style: { finish: 'tinted' } },
+        { type: 'sticker', emoji: 'i:rocket', x: 2200, y: 60, w: 90, h: 90, jump: 's1' },
+      ] };
+      else {
+        // the fix round: it must have been told about the overlap and the text, with real ids
+        const ids = [...asks[1].matchAll(/^\{"id":"([^"]+)","type":"(\w+)"/gm)].map((m) => ({ id: m[1], type: m[2] }));
+        const text = ids.find((i) => i.type === 'text').id, card = ids.find((i) => i.type === 'card').id;
+        plan = { summary: 'Fixed.', changes: [{ id: text, w: 900, h: 140 }, { id: card, x: 70, y: 260 }] };
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(plan) } }] }));
+    });
+  });
+  await new Promise((r) => designer.listen(0, '127.0.0.1', r));
+  const ai = { id: 'k', provider: 'nvidia', model: 'm', baseUrl: `http://127.0.0.1:${designer.address().port}/v1`, apiKey: 'good' };
+  try {
+    const out = await runBoardAI({ db, uid }, [ai], 'Slides for a talk about growth');
+    assert.equal(asks.length, 2, 'one design, one fix round');
+    assert.match(asks[1], /overlap/); assert.match(asks[1], /text does not fit/);
+    assert.match(out.summary, /Checked and tidied/);
+    const d = JSON.parse((await getBoard(db, uid, out.board.id)).data);
+    assert.equal(d.settings.ground, 'grid');
+    assert.equal(d.order.length, 2);
+    const t = d.items.find((i) => i.type === 'text'), c = d.items.find((i) => i.type === 'card'), n = d.items.find((i) => i.type === 'note');
+    assert.equal(t.w, 900); assert.equal(c.x, 70);
+    assert.deepEqual([n.data.paper, n.data.pin], ['lined', 'tape']);
+    assert.equal(d.items.find((i) => i.type === 'sticker').data.jump, d.order[0], 'jump refs become real ids');
+    assert.ok(d.items.find((i) => i.type === 'frame').z < t.z, 'frames stay underneath');
+  } finally { designer.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});

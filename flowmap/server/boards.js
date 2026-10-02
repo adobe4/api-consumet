@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import { HttpError } from './models.js';
 import { hashPassword, verifyPassword } from './auth.js';
-import { sanitizeBoard, generateBoard, BoardError, emptyBoard, bounds, makeItem, makeLink, newId, ITEM_TYPES, SHAPES, LINK_KINDS, LINK_PATHS, LINK_DASH, LINK_ENDS, FINISHES, SHADOWS, ANIM_IN, ANIM_LOOP, FONT_SIZES, ALIGNS, GROUNDS, CLIP_KINDS, CLIP_METALS, CLIP_SIZE, PAPERS, LIFTS, NOTE_PINS } from '../shared/board.js';
+import { sanitizeBoard, generateBoard, BoardError, emptyBoard, bounds, makeItem, makeLink, newId, ITEM_TYPES, SHAPES, LINK_KINDS, LINK_PATHS, LINK_DASH, LINK_ENDS, FINISHES, SHADOWS, ANIM_IN, ANIM_LOOP, FONT_SIZES, ALIGNS, GROUNDS, CLIP_KINDS, CLIP_METALS, CLIP_SIZE, PAPERS, LIFTS, NOTE_PINS, FONT_PX } from '../shared/board.js';
 
 const HIDE_COVERS = ['blur', 'frost', 'solid', 'curtain'];
 
@@ -277,7 +277,74 @@ function applyLinkStyle(l, c) {
   l.style = s;
   if (typeof c.label === 'string') l.label = c.label.slice(0, 200);
 }
-const DESIGN_TIPS = 'Design like a polished, tactile canvas, not a table: give each block breathing room (40px+ gaps), group related things inside a frame (style.shadow "sunk"), use shapes (pill or round) as soft labelled buttons, one accent colour per group from warm earthy tones (#e8b86b, #ff8a5c, #e07a5f, #c9a27e, #b8e04a, #2fb4a0, #ffb020; never blue or purple), big bold titles (style.font "xl", bold), quieter details (style.muted), a few stickers or clips, slight rotation on notes, and curved connections.';
+const DESIGN_TIPS = 'Design every item yourself instead of relying on preset layouts; get_board returns a designCheck list of overlaps, items sticking out of frames and text that does not fit, so fix those. Design like a polished, tactile canvas, not a table: give each block breathing room (40px+ gaps), group related things inside a frame (style.shadow "sunk"), use shapes (pill or round) as soft labelled buttons, one accent colour per group from warm earthy tones (#e8b86b, #ff8a5c, #e07a5f, #c9a27e, #b8e04a, #2fb4a0, #ffb020; never blue or purple), big bold titles (style.font "xl", bold), quieter details (style.muted), a few stickers or clips, slight rotation on notes, and curved connections.';
+
+const CONN_SCHEMA = { type: 'object', properties: { from: { type: 'string', description: 'Item id or ref' }, to: { type: 'string' }, label: { type: 'string' }, ...LINK_STYLE_PROPS } };
+const SLIDES_SCHEMA = { type: 'array', items: { type: 'string' }, description: 'Ids or refs of frames to add to the slide order, in order' };
+// put a design onto a board: a preset block (spec) and/or freely placed items, connections and slides
+function addInto(d, a, origin) {
+  const refs = new Map(d.items.map((i) => [i.id, i]));
+  const ids = [], named = {};
+  if (a.spec) {
+    const g = generateBoard(a.spec, { origin });
+    d.items.push(...g.items); d.links.push(...g.links); d.order.push(...g.order); ids.push(...g.items.map((i) => i.id));
+  }
+  const top = d.items.reduce((m, i) => Math.max(m, i.z || 0), 0);
+  for (const spec of Array.isArray(a.items) ? a.items.slice(0, 300) : []) {
+    const it = itemFromSpec(spec, a.spec ? { x: origin.x, y: origin.y + 900 } : origin);
+    // drawing order: later items sit on top; frames stay underneath
+    if (!finite(spec?.z)) it.z = it.type === 'frame' ? -1000 + ids.length : top + ids.length + 1;
+    d.items.push(it); refs.set(it.id, it); ids.push(it.id);
+    if (spec?.ref) { refs.set(String(spec.ref), it); named[String(spec.ref)] = it.id; }
+  }
+  for (const id of ids) { const it = refs.get(id); const j = it?.data?.jump; if (j && refs.has(j)) it.data.jump = refs.get(j).id; }
+  let connections = 0;
+  for (const c of Array.isArray(a.connections) ? a.connections.slice(0, 300) : []) {
+    const f = refs.get(String(c?.from)), t = refs.get(String(c?.to));
+    if (!f || !t || f === t) continue;
+    const l = makeLink({ item: f.id }, { item: t.id }, { style: { kind: 'line', path: 'curved', dash: 'solid', start: 'none', end: 'arrow', width: 3, flow: false } });
+    applyLinkStyle(l, c); d.links.push(l); connections++;
+  }
+  for (const ref of Array.isArray(a.slides) ? a.slides : []) { const f = refs.get(String(ref)); if (f?.type === 'frame' && !d.order.includes(f.id)) d.order.push(f.id); }
+  return { ids, refs: named, connections };
+}
+
+// ---------- design check: what a careful designer would fix before showing it ----------
+const rectOverlap = (a, b) => { const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y); return w > 0 && h > 0 ? w * h : 0; };
+const holds = (big, small, slack = 4) => small.x >= big.x - slack && small.y >= big.y - slack && small.x + small.w <= big.x + big.w + slack && small.y + small.h <= big.y + big.h + slack;
+export function lintBoard(d, focus = null) {
+  const items = (d.items || []).filter((i) => i.type !== 'ink');
+  const mine = (i) => !focus || focus.has(i.id);
+  const frames = items.filter((i) => i.type === 'frame');
+  const solid = items.filter((i) => !['frame', 'clip', 'sticker', 'hide'].includes(i.type));
+  const issues = [];
+  for (let x = 0; x < solid.length; x++) for (let y = x + 1; y < solid.length; y++) {
+    const A = solid[x], B = solid[y];
+    if (!mine(A) && !mine(B)) continue;
+    const ov = rectOverlap(A, B);
+    if (!ov) continue;
+    const [small, big] = A.w * A.h <= B.w * B.h ? [A, B] : [B, A];
+    // text or a number chip laid on a shape, card or note is on purpose
+    if ((small.type === 'text' || (small.type === 'shape' && small.w <= 80)) && holds(big, small)) continue;
+    if (ov / (small.w * small.h) > 0.1) issues.push(`${A.id} (${A.type}) and ${B.id} (${B.type}) overlap`);
+  }
+  for (const i of items) {
+    if (i.type === 'frame' || !mine(i) || i.type === 'clip') continue;
+    for (const f of frames) { const ov = rectOverlap(i, f); if (ov && !holds(f, i, 2) && ov > i.w * i.h * 0.05) issues.push(`${i.id} (${i.type}) sticks out of frame ${f.id}: move it inside (frame is x ${Math.round(f.x)}..${Math.round(f.x + f.w)}, y ${Math.round(f.y)}..${Math.round(f.y + f.h)}) or resize`); }
+  }
+  for (const i of items) {
+    if (!mine(i) || !['text', 'note', 'card', 'shape', 'flip'].includes(i.type)) continue;
+    const t = [i.title, i.text].filter(Boolean).join('\n').trim();
+    if (!t) continue;
+    const px = typeof i.style?.size === 'number' ? i.style.size : FONT_PX[i.style?.font || (i.type === 'text' ? 'l' : 'm')] || 14.5;
+    const pad = i.type === 'text' ? 12 : Math.min(40, Math.min(i.w, i.h) * 0.3);
+    const perLine = Math.max(1, Math.floor(Math.max(20, i.w - pad) / (px * 0.56)));
+    const lines = t.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / perLine)), 0);
+    const need = lines * px * 1.38 + pad;
+    if (need > i.h * 1.12) issues.push(`${i.id} (${i.type}): text does not fit; it needs about ${Math.round(need)}px of height at ${px}px but the box is ${Math.round(i.h)}px. Make the box taller/wider, the text smaller, or the words fewer`);
+  }
+  return issues.slice(0, 30);
+}
 
 export const BOARD_TOOLS = [
   { name: 'list_boards', description: 'List the owner\'s boards (free canvases for plans, workflows, courses and presentations).',
@@ -290,43 +357,26 @@ export const BOARD_TOOLS = [
       return { id: r.id, name: r.name, icon: r.icon, floor: d.settings?.ground || 'dots', slides: d.order,
         items: d.items.filter((i) => i.type !== 'ink').map(itemView),
         drawings: d.items.filter((i) => i.type === 'ink').length,
+        designCheck: lintBoard(d),
         connections: d.links.map((l) => ({ id: l.id, from: l.from.item || { x: l.from.x, y: l.from.y }, to: l.to.item || { x: l.to.x, y: l.to.y }, ...(l.label ? { label: l.label } : {}), style: l.style })) };
     } },
-  { name: 'create_board', description: `Create a new board, laid out automatically from a plain description: a slide deck for a tutorial or strategy video, a workflow, a mind map, a kanban, a timeline or a wall of notes. The owner can present slides full screen and screen-record them. Afterwards you can polish it with edit_board_items. ${DESIGN_TIPS}`,
-    input_schema: { type: 'object', properties: { name: { type: 'string' }, icon: { type: 'string', description: 'One emoji' }, floor: { type: 'string', enum: GROUNDS }, spec: SPEC_SCHEMA }, required: ['name', 'spec'] },
+  { name: 'create_board', description: `Create a new board. Design it yourself: pass items (every type, absolute x/y, full styling), connections and the slide order, so each board fits its content. A spec (preset layout: slides, workflow, mindmap, kanban, timeline, notes) is optional and only a quick start. The owner can present frames as slides full screen. ${DESIGN_TIPS}`,
+    input_schema: { type: 'object', properties: { name: { type: 'string' }, icon: { type: 'string', description: 'One emoji' }, floor: { type: 'string', enum: GROUNDS }, items: { type: 'array', items: ITEM_SCHEMA, description: 'Your own design, in drawing order (later items on top); x/y are absolute' }, connections: { type: 'array', items: CONN_SCHEMA }, slides: SLIDES_SCHEMA, spec: SPEC_SCHEMA }, required: ['name'] },
     run: async ({ db, uid }, a) => {
-      const g = generateBoard(a.spec);
-      const b = await createBoard(db, uid, { name: a.name, icon: a.icon || '', data: { v: 1, items: g.items, links: g.links, order: g.order, settings: GROUNDS.includes(a.floor) ? { ground: a.floor } : {} } });
-      return { created: { id: b.id, name: b.name, items: b.items, slides: b.slides } };
+      const d = { v: 1, items: [], links: [], order: [], settings: GROUNDS.includes(a.floor) ? { ground: a.floor } : {} };
+      const out = addInto(d, a, { x: 0, y: 0 });
+      const b = await createBoard(db, uid, { name: a.name, icon: a.icon || '', data: d });
+      return { created: { id: b.id, name: b.name, items: b.items, slides: b.slides }, ids: out.ids, refs: out.refs, connections: out.connections };
     } },
-  { name: 'add_to_board', description: `Add to an existing board: a laid-out block (spec, same as create_board) placed beside what is there, and/or individual items (any type, with full styling) and connections. Item x/y are relative to the block's top-left corner, which is placed to the right of the board (or at "at" if given). ${DESIGN_TIPS}`,
-    input_schema: { type: 'object', properties: { board: BOARD_ARG, spec: SPEC_SCHEMA, at: { type: 'object', description: 'Absolute board position for the top-left of what you add', properties: { x: { type: 'number' }, y: { type: 'number' } } }, items: { type: 'array', items: ITEM_SCHEMA }, connections: { type: 'array', items: { type: 'object', properties: { from: { type: 'string', description: 'Item id or ref' }, to: { type: 'string' }, label: { type: 'string' }, ...LINK_STYLE_PROPS } } } }, required: ['board'] },
+  { name: 'add_to_board', description: `Add to an existing board: your own items (any type, full styling) and connections, placed at "at" (absolute; default: to the right of what is there) with item x/y relative to it, plus frames to append to the slide order. A spec (preset layout block) is optional. ${DESIGN_TIPS}`,
+    input_schema: { type: 'object', properties: { board: BOARD_ARG, spec: SPEC_SCHEMA, at: { type: 'object', description: 'Board position of the top-left of what you add. Use {"x":0,"y":0} to give items absolute positions.', properties: { x: { type: 'number' }, y: { type: 'number' } } }, items: { type: 'array', items: ITEM_SCHEMA }, connections: { type: 'array', items: CONN_SCHEMA }, slides: SLIDES_SCHEMA }, required: ['board'] },
     run: async ({ db, uid }, a) => {
       const r = await findBoard(db, uid, a.board), d = parse(r.data);
       const b = bounds(d.items);
       const origin = a.at && finite(a.at.x) && finite(a.at.y) ? { x: a.at.x, y: a.at.y } : { x: b ? b.x1 + 300 : 0, y: b ? b.y0 : 0 };
-      const refs = new Map(d.items.map((i) => [i.id, i]));
-      const added = [];
-      if (a.spec) {
-        const g = generateBoard(a.spec, { origin });
-        d.items.push(...g.items); d.links.push(...g.links); d.order.push(...g.order); added.push(...g.items.map((i) => i.id));
-      }
-      const top = d.items.reduce((m, i) => Math.max(m, i.z || 0), 0);
-      for (const spec of Array.isArray(a.items) ? a.items.slice(0, 200) : []) {
-        const it = itemFromSpec(spec, a.spec ? { x: origin.x, y: origin.y + 900 } : origin);
-        if (!finite(spec?.z)) it.z = it.type === 'frame' ? -1 - added.length : Math.max(it.z || 0, top + added.length + 1);
-        d.items.push(it); refs.set(it.id, it); if (spec?.ref) refs.set(String(spec.ref), it); added.push(it.id);
-      }
-      for (const id of added) { const it = refs.get(id); const j = it?.data?.jump; if (j && refs.has(j)) it.data.jump = refs.get(j).id; }
-      let linked = 0;
-      for (const c of Array.isArray(a.connections) ? a.connections.slice(0, 300) : []) {
-        const f = refs.get(String(c?.from)), t = refs.get(String(c?.to));
-        if (!f || !t || f === t) continue;
-        const l = makeLink({ item: f.id }, { item: t.id }, { style: { kind: 'line', path: 'curved', dash: 'solid', start: 'none', end: 'arrow', width: 3, flow: false } });
-        applyLinkStyle(l, c); d.links.push(l); linked++;
-      }
+      const out = addInto(d, a, origin);
       await saveBoard(db, uid, r.id, { data: d });
-      return { board: r.id, added: added.length, ids: added.slice(0, 300), connections: linked };
+      return { board: r.id, added: out.ids.length, ids: out.ids.slice(0, 300), refs: out.refs, connections: out.connections };
     } },
   { name: 'edit_board_items', description: `Change anything on a board: move, resize, rotate, restack, recolour, rewrite, restyle (finish, shadow, corners, font size, alignment, bold, text colour), animate, change a shape, sticker, checklist, flip back, cover or clip, or delete items. Also restyle or delete connections, restyle many items at once (restyle), and change the floor or board name. Read the board with get_board first so you use real ids. ${DESIGN_TIPS}`,
     input_schema: { type: 'object', properties: {
