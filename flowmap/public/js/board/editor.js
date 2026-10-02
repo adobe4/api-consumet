@@ -312,6 +312,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (its.length === 1 && first.type === 'flip') kids.push(b(() => flip(first), '🂠', 'Flip'));
       if (its.some((i) => i.type === 'hide')) kids.push(b(hidePop, '🙈', 'Cover style and what a tap does'));
       if (its.some((i) => i.type === 'clip')) kids.push(b(clipPop, '📎', 'Clip: kind, metal and colour'));
+      if (its.length === 1 && first.type !== 'ink') kids.push(h('button', { type: 'button', class: `cb${first.data?.jump ? ' on' : ''}`, title: 'Jump link: tap it to glide to another place on the board', onclick: (e) => { e.stopPropagation(); jumpPop(e.currentTarget); } }, '⌖'));
       kids.push(h('button', { type: 'button', class: `cb${its.every((i) => i.data?.movable) ? ' on' : ''}`, title: 'Movable when the board is locked or presenting', onclick: (e) => { e.stopPropagation(); toggleMovable(its); } }, '✋'));
       if (its.length === 1 && first.type === 'frame') kids.push(b(() => toggleSlide(first), data.order.includes(first.id) ? '★' : '☆', data.order.includes(first.id) ? 'Remove from slides' : 'Add to slides'));
       kids.push(b(() => change(() => its.forEach((i) => { i.locked = !i.locked; })), its.every((i) => i.locked) ? '🔒' : '🔓', 'Lock / unlock'));
@@ -335,7 +336,10 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
 
   // ---------- pointer ----------
   function pointerDown(e, w) {
-    if (e.target.closest('.bd-top, .bd-tools, .bctx, .bd-zoom')) return 'handled';
+    if (e.target.closest('.bd-top, .bd-tools, .bctx, .bd-zoom, .bd-back, .pick-hint')) return 'handled';
+    if (picking) { const id = hitItem(e); if (!id) return 'pan'; if (id !== picking && e.button === 0) finishPick(id); return 'handled'; }
+    const jb = e.target.closest('[data-act="jump"]');
+    if (jb && e.button === 0) { itemAction(jb, e); return 'handled'; }
     if (staged()) return stageDown(e, w);
     // copy buttons and flip cards answer a tap in every mode, including view-only links and the hand tool
     const copyBtn = e.target.closest('[data-act="copy"]');
@@ -396,6 +400,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (!it || e.button !== 0) return 'pan';
     const tap = it.type === 'hide' ? it.data?.tap || 'reveal' : null;
     if (tap === 'reveal') { reveal(it, el); return 'handled'; }
+    if (it.data?.jump && !it.data?.movable && it.type !== 'flip') { onTap(e, () => jumpFrom(it)); return 'handled'; }
     if (it.type === 'flip') { flip(it, true); return 'handled'; }
     if (tap === 'move' || it.data?.movable) { stageMove(e, w, it); return 'handled'; }
     if (it.type !== 'frame' && tap !== 'none') tapEl = el;
@@ -682,6 +687,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
         const text = it.text || '';
         const done = () => { setText(btn, '✓ Copied'); setTimeout(() => { setText(btn, '⧉ Copy'); }, 1400); };
         navigator.clipboard?.writeText(text).then(done).catch(() => { const r = document.createRange(); const t = el.querySelector('.txt'); if (t) { r.selectNodeContents(t); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } });
+      } else if (act === 'jump') {
+        jumpFrom(it);
       } else if (act === 'check') {
         const i = Number(btn.dataset.i);
         if (!it.data.items?.[i]) return;
@@ -873,6 +880,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   function pasteItems(payload, offset = 40) {
     const map = new Map();
     const items = (payload.items || []).map((i) => { const n = { ...JSON.parse(JSON.stringify(i)), id: newId(), x: i.x + offset, y: i.y + offset, z: maxZ() + 1 + (i.z || 0) }; map.set(i.id, n.id); return n; });
+    for (const n of items) if (n.data?.jump && map.has(n.data.jump)) n.data.jump = map.get(n.data.jump);
     const links = (payload.links || []).map((l) => ({ ...JSON.parse(JSON.stringify(l)), id: newId('l'), from: l.from.item ? { item: map.get(l.from.item) } : l.from, to: l.to.item ? { item: map.get(l.to.item) } : l.to }));
     change(() => { data.items.push(...items); data.links.push(...links); });
     select(items.map((i) => i.id));
@@ -975,6 +983,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
         its.length > 1 ? ['⫷', 'Align left', () => align('left')] : null, its.length > 1 ? ['⫿', 'Align centres', () => align('hcenter')] : null, its.length > 1 ? ['⫠', 'Align tops', () => align('top')] : null,
         its.length > 2 ? ['↔', 'Space evenly across', () => align('hspread')] : null, its.length > 2 ? ['↕', 'Space evenly down', () => align('vspread')] : null,
         its.length > 1 ? ['▦', 'Put in a frame', () => wrapInFrame(its)] : null,
+        its.length === 1 ? ['⌖', its[0].data?.jump ? 'Jump link…' : 'Add a jump link…', () => { select([its[0].id]); jumpPop(null, { x: e.clientX, y: e.clientY }); }] : null,
         [its.every((i) => i.locked) ? '🔓' : '🔒', its.every((i) => i.locked) ? 'Unlock' : 'Lock', () => change(() => { const v = !its.every((i) => i.locked); its.forEach((i) => { i.locked = v; }); })],
         '-', ['🗑', 'Delete', () => removeSel(), 'danger', 'Del'],
       ], e.clientX, e.clientY);
@@ -1137,6 +1146,96 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     openPop({ ...anchorFor(btn), title: '📎 Clip', width: 400, body: holder });
   }
 
+  // ---------- jump links: tap to glide to another place on the board ----------
+  let picking = null;
+  const backStack = [];
+  const backBar = h('div', { class: 'bd-back', hidden: true },
+    h('button', { type: 'button', class: 'btn primary', title: 'Glide back to where you were', onclick: () => jumpBack() }, 'i:undo-2', ' Back'));
+  root.append(backBar);
+  const itemName = (i) => {
+    const n = data.order.indexOf(i.id);
+    const t = String(i.title || i.text || TYPE_LABEL[i.type] || i.type).split('\n')[0].trim().slice(0, 42);
+    return n >= 0 ? `Slide ${n + 1} · ${t.replace(/^\d+\.\s*/, '')}` : t;
+  };
+  // run fn on a tap (not a drag) that started at pointer event e
+  function onTap(e, fn) {
+    const x = e.clientX, y = e.clientY;
+    const up = (ev) => { window.removeEventListener('pointerup', up, true); if (Math.hypot(ev.clientX - x, ev.clientY - y) < 8) fn(); };
+    window.addEventListener('pointerup', up, true);
+  }
+  function viewOf(t) {
+    const pad = t.type === 'frame' ? 36 : Math.max(90, Math.min(220, Math.max(t.w, t.h) * 0.6));
+    return sf.frameFor({ x: t.x, y: t.y, w: t.w, h: t.h }, { pad, maxZoom: t.type === 'frame' ? 2 : 1.35, insets: { top: root.classList.contains('presenting') ? 0 : 64, left: staged() ? 0 : 64 } });
+  }
+  function glide(view) {
+    const c = sf.cam, { W, H } = sf.size;
+    const from = { x: (W / 2 - c.tx) / c.k, y: (H / 2 - c.ty) / c.k }, to = { x: (W / 2 - view.tx) / view.k, y: (H / 2 - view.ty) / view.k };
+    const far = Math.hypot(to.x - from.x, to.y - from.y) * Math.min(c.k, view.k);
+    sf.flyTo(view, Math.round(Math.min(1500, 620 + far * 0.35)), { arc: true });
+    return Math.min(1500, 620 + far * 0.35);
+  }
+  function jumpFrom(it) {
+    const t = byId(it?.data?.jump);
+    if (!t) { notify('The place this links to was removed. Pick a new one with ⌖.', 'error'); return; }
+    if (sel.size) select([]); // the selection's toolbar would be left floating where you came from
+    backStack.push({ k: sf.cam.k, tx: sf.cam.tx, ty: sf.cam.ty }); if (backStack.length > 20) backStack.shift();
+    backBar.hidden = false;
+    const ms = glide(viewOf(t));
+    const el = els.get(t.id);
+    if (el) setTimeout(() => { el.classList.remove('jump-arrive'); void el.offsetWidth; el.classList.add('jump-arrive'); setTimeout(() => el.classList.remove('jump-arrive'), 1500); }, ms - 120);
+  }
+  function jumpBack() {
+    const v = backStack.pop();
+    if (v) glide(v);
+    backBar.hidden = !backStack.length;
+  }
+  const pickHint = h('div', { class: 'pick-hint', hidden: true }, h('span', null, '⌖ Tap the place to jump to. Move around freely.'), h('button', { type: 'button', class: 'btn sm', onclick: () => endPick() }, 'Cancel'));
+  root.append(pickHint);
+  function startPick(src) { closePop(); picking = src.id; root.classList.add('picking'); pickHint.hidden = false; }
+  function endPick() { picking = null; root.classList.remove('picking'); pickHint.hidden = true; }
+  function setJump(src, id) { change(() => { src.data = { ...src.data, jump: id }; }); }
+  function finishPick(id) {
+    const src = byId(picking);
+    endPick();
+    if (!src) return;
+    setJump(src, id);
+    notify(`Linked to “${itemName(byId(id))}”. Tap ➜ to glide there.`, 'good');
+    select([src.id]);
+  }
+  function jumpPop(btn, pt) {
+    const src = [...sel].map(byId).filter(Boolean)[0];
+    if (!src) return;
+    const holder = h('div');
+    const paint = () => {
+      const target = byId(src.data?.jump);
+      const search = h('input', { type: 'search', placeholder: 'Find a slide, frame or item…', oninput: () => fill() });
+      const list = h('div', { class: 'jump-list' });
+      const fill = () => {
+        const q = search.value.trim().toLowerCase();
+        const cands = data.items.filter((i) => i.id !== src.id && i.type !== 'ink' && i.type !== 'clip')
+          .sort((a, b) => (a.type === 'frame' ? 0 : 1) - (b.type === 'frame' ? 0 : 1) || (data.order.indexOf(a.id) + 1 || 999) - (data.order.indexOf(b.id) + 1 || 999))
+          .filter((i) => !q || itemName(i).toLowerCase().includes(q)).slice(0, 80);
+        clear(list).append(...cands.map((i) => h('button', { type: 'button', class: i.id === target?.id ? 'on' : '', onclick: () => { setJump(src, i.id); paint(); } }, raw(itemName(i)), h('small', null, TYPE_LABEL[i.type] || i.type))));
+        if (!cands.length) list.append(h('p', { class: 'phint' }, 'Nothing matches.'));
+      };
+      fill();
+      const label = h('input', { type: 'text', maxLength: 40, value: src.data?.jumpLabel || '', placeholder: 'Button text (optional), e.g. See the plan',
+        onchange: (e) => change(() => { const v = e.target.value.trim(); src.data = { ...src.data }; if (v) src.data.jumpLabel = v; else delete src.data.jumpLabel; }) });
+      clear(holder).append(h('div', { class: 'pgrid' },
+        h('div', { class: 'row', style: 'gap:8px;align-items:center;flex-wrap:wrap' },
+          h('b', null, target ? `Goes to: ${itemName(target)}` : 'Not linked yet'),
+          target ? h('button', { type: 'button', class: 'btn sm', onclick: () => { closePop(); jumpFrom(src); } }, '▶ Try it') : null),
+        h('button', { type: 'button', class: 'btn primary', onclick: () => startPick(src) }, '⌖ Pick it on the board'),
+        search, list,
+        label,
+        toggleRow('Show the jump button', !src.data?.jumpHide, (v) => change(() => { src.data = { ...src.data }; if (v) delete src.data.jumpHide; else src.data.jumpHide = true; })),
+        h('p', { class: 'phint' }, 'Tap ➜ to glide there; ↩ Back brings you home. While locked, presenting or on a shared link, tapping the item itself also jumps.'),
+        target ? h('button', { type: 'button', class: 'btn sm danger', onclick: () => { change(() => { src.data = { ...src.data }; delete src.data.jump; delete src.data.jumpLabel; delete src.data.jumpHide; }); closePop(); } }, 'Remove the link') : null));
+    };
+    paint();
+    openPop({ ...(btn ? anchorFor(btn) : pt), title: '⌖ Jump link', width: 380, body: holder });
+  }
+
   // ---------- ask AI to change this board ----------
   function aiPop(btn) {
     const box = h('textarea', { class: 'ai-in', rows: 4, placeholder: 'What should change? “Make it look like a polished slide”, “Turn the boxes into pills with soft shadows”, “Add paperclips to the notes”, “Translate everything to Swahili”…' });
@@ -1236,6 +1335,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   const onKey = (e) => {
     if (destroyed || !root.isConnected || root.closest('[hidden]') || e.target.closest?.('input, textarea, [contenteditable="true"]') || document.querySelector('.scrim, .pres')) return;
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    if (k === 'escape' && picking) { endPick(); return; }
     if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
     if (mod && k === 'y') { e.preventDefault(); doRedo(); return; }
     if (readonly) { if (k === 'x') setTool(tool === 'laser' ? 'hand' : 'laser'); return; }

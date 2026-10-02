@@ -484,6 +484,7 @@ Item fields: title, text, color (#hex), x, y, w, h, rot (degrees), z (higher = o
  anim: { in: none|pop|fade|rise|zoom|draw|slide, loop: none|bounce|pulse|wiggle|float|spin|glow, delay: seconds },
  shape (for shapes: rect|round|pill|ellipse|diamond|triangle|hexagon|star|arrow|bubble), emoji (for stickers, prefer i:icon-name),
  paper (for notes: sticky|lined|spiral|grid|index|kraft|torn|aged), lift (for notes: flat|lifted|curled), pin (for notes: none|tape|pin|clip),
+ jump (id or ref of another item: tapping glides there), jumpLabel (optional button text),
  clip (for clips: paperclip|binder|pin|tape), metal (silver|gold|copper|black|color), items (checklist rows; "[x] row" = ticked), back (flip card back text), cover (hide: blur|frost|solid|curtain).
 Only include what changes. Use the real ids from the board.`;
 const EDIT_PLAN_SYSTEM = (name) => `You edit one board inside FlowMap, a creator's planning and presentation canvas: "${name}". The owner is looking at it right now and asked for a change.

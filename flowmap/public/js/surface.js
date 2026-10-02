@@ -10,6 +10,7 @@ export const svgEl = (tag, attrs = {}, parent) => {
 };
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const ease = (t) => 1 - Math.pow(1 - t, 3);
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 export const GRID = 22; // floor pattern pitch in world units
 
 let uid = 0;
@@ -74,17 +75,28 @@ export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onCon
     apply();
   }
   // smooth camera moves (focus, fit, presenting)
-  function flyTo(target, ms = 650) {
+  // arc: for long trips, glide through the world centre to centre and ease out a little mid-way, like a
+  // camera pulling back and settling in, so you see where you are going
+  function flyTo(target, ms = 650, { arc = false } = {}) {
     cancelAnimationFrame(anim);
     if (calmMotion()) ms = 0; // animations off: jump straight there
     const from = { ...cam }, t0 = performance.now();
+    const c0 = { x: (W / 2 - from.tx) / from.k, y: (H / 2 - from.ty) / from.k }, c1 = { x: (W / 2 - target.tx) / target.k, y: (H / 2 - target.ty) / target.k };
+    const far = Math.hypot(c1.x - c0.x, c1.y - c0.y) * Math.min(from.k, target.k);
+    const dip = arc ? Math.min(0.55, far / (W * 3)) : 0;
     const step = (now) => {
-      const t = Math.min(1, (now - t0) / ms), e = ease(t);
-      cam.k = from.k + (target.k - from.k) * e;
-      cam.tx = from.tx + (target.tx - from.tx) * e;
-      cam.ty = from.ty + (target.ty - from.ty) * e;
+      const t = Math.min(1, (now - t0) / ms), e = arc ? easeInOut(t) : ease(t);
+      if (arc) {
+        const k = (from.k + (target.k - from.k) * e) * (1 - dip * Math.sin(Math.PI * e));
+        const cx = c0.x + (c1.x - c0.x) * e, cy = c0.y + (c1.y - c0.y) * e;
+        cam.k = k; cam.tx = W / 2 - cx * k; cam.ty = H / 2 - cy * k;
+      } else {
+        cam.k = from.k + (target.k - from.k) * e;
+        cam.tx = from.tx + (target.tx - from.tx) * e;
+        cam.ty = from.ty + (target.ty - from.ty) * e;
+      }
       apply();
-      if (t < 1) anim = requestAnimationFrame(step);
+      if (t < 1) anim = requestAnimationFrame(step); else if (arc) Object.assign(cam, target), apply();
     };
     if (ms <= 0) { Object.assign(cam, target); apply(); return; }
     anim = requestAnimationFrame(step);

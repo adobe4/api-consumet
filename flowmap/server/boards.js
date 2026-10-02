@@ -162,6 +162,8 @@ const LOOK_PROPS = {
   paper: { type: 'string', enum: PAPERS, description: 'For type=note: the kind of paper. sticky = classic sticky note, lined = notebook page, spiral = page torn from a spiral notebook, grid = graph paper, index = index card, kraft = brown paper, torn = ripped scrap, aged = old yellowed paper' },
   lift: { type: 'string', enum: LIFTS, description: 'For type=note: how the paper sits. flat, lifted (soft shadow), curled (corner peels up)' },
   pin: { type: 'string', enum: NOTE_PINS, description: 'For type=note: what holds it: none, tape, pin or clip' },
+  jump: { type: 'string', description: 'Make this a jump link: the id (or ref) of another item. Tapping it glides the board there. Great for a menu slide, "see the details" buttons, or going back to the start. Empty string removes it.' },
+  jumpLabel: { type: 'string', description: 'Optional text on the jump button (otherwise just an arrow)' },
   movable: { type: 'boolean', description: 'Can be dragged while the board is locked or presented' },
   locked: { type: 'boolean' },
 };
@@ -233,6 +235,8 @@ function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
     if (CLIP_METALS.includes(o.metal)) d.metal = o.metal;
   }
   if (typeof o.movable === 'boolean') { if (o.movable) d.movable = true; else delete d.movable; }
+  if (typeof o.jump === 'string') { if (/^[A-Za-z0-9_-]{1,48}$/.test(o.jump)) d.jump = o.jump; else if (!o.jump) { delete d.jump; delete d.jumpLabel; } }
+  if (typeof o.jumpLabel === 'string') { if (o.jumpLabel.trim()) d.jumpLabel = o.jumpLabel.trim().slice(0, 40); else delete d.jumpLabel; }
   it.data = d;
   return it;
 }
@@ -250,7 +254,7 @@ function itemFromSpec(a, origin) {
   return it;
 }
 // what an AI sees of an item: everything that shapes how it looks, nothing bulky
-const DATA_KEYS = ['paper', 'lift', 'pin', 'shape', 'cover', 'tap', 'back', 'items', 'url', 'movable', 'kind', 'metal', 'notes', 'num', 'flipped', 'projectId', 'name'];
+const DATA_KEYS = ['jump', 'jumpLabel', 'paper', 'lift', 'pin', 'shape', 'cover', 'tap', 'back', 'items', 'url', 'movable', 'kind', 'metal', 'notes', 'num', 'flipped', 'projectId', 'name'];
 function itemView(i) {
   const data = {};
   for (const k of DATA_KEYS) if (i.data?.[k] !== undefined) data[k] = k === 'notes' || k === 'back' ? String(i.data[k]).slice(0, 600) : i.data[k];
@@ -313,6 +317,7 @@ export const BOARD_TOOLS = [
         if (!finite(spec?.z)) it.z = it.type === 'frame' ? -1 - added.length : Math.max(it.z || 0, top + added.length + 1);
         d.items.push(it); refs.set(it.id, it); if (spec?.ref) refs.set(String(spec.ref), it); added.push(it.id);
       }
+      for (const id of added) { const it = refs.get(id); const j = it?.data?.jump; if (j && refs.has(j)) it.data.jump = refs.get(j).id; }
       let linked = 0;
       for (const c of Array.isArray(a.connections) ? a.connections.slice(0, 300) : []) {
         const f = refs.get(String(c?.from)), t = refs.get(String(c?.to));

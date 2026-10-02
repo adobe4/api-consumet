@@ -202,3 +202,23 @@ test('AI tools see and change every style: items, clips, restyle, connections, f
   const pill3 = b.items.find((i) => i.id === pill.id);
   assert.deepEqual([pill3.color, pill3.style.finish, pill3.style.font], ['#e8b86b', 'glass', 'l']);
 });
+
+test('jump links: added by ref, read back, removed', async () => {
+  const key = (await call('POST', '/api/agent-keys', { name: 'Jumper' }, A)).body.key;
+  const tool = async (name, args) => {
+    const r = await fetch(`${BASE}/api/mcp/${key}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+    return JSON.parse((await r.json()).result.content[0].text);
+  };
+  const made = await tool('create_board', { name: 'Menu', spec: { layout: 'notes', notes: ['Start'] } });
+  await tool('add_to_board', { board: made.created.id, at: { x: 0, y: 0 }, items: [
+    { type: 'shape', shape: 'pill', ref: 'go', text: 'See details', jump: 'far', jumpLabel: 'Details' },
+    { type: 'card', ref: 'far', title: 'Details', x: 6000, y: 0, jump: 'go' },
+  ] });
+  let b = await tool('get_board', { board: made.created.id });
+  const go = b.items.find((i) => i.text === 'See details'), far = b.items.find((i) => i.title === 'Details');
+  assert.equal(go.data.jump, far.id); assert.equal(go.data.jumpLabel, 'Details'); assert.equal(far.data.jump, go.id);
+  await tool('edit_board_items', { board: b.id, changes: [{ id: go.id, jump: '' }] });
+  b = await tool('get_board', { board: b.id });
+  const go2 = b.items.find((i) => i.id === go.id);
+  assert.equal(go2.data?.jump, undefined); assert.equal(go2.data?.jumpLabel, undefined);
+});

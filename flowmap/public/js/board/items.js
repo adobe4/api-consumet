@@ -21,6 +21,13 @@ const ellipsis = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 // ctx: { share, onCheck(item, i), onCopy(item), onFlip(item), onOpenFile(item), onPickVideo(item), readonly }
 export function buildItem(it, ctx) {
+  const kids = buildInner(it, ctx);
+  // a jump link: a small button that glides the board to the linked item (a label is optional)
+  const d = it.data || {};
+  if (d.jump && !d.jumpHide && it.type !== 'ink') kids.push(h('button', { type: 'button', class: `jumpb${d.jumpLabel ? '' : ' bare'}`, 'data-act': 'jump', title: d.jumpLabel ? `Jump to: ${d.jumpLabel}` : 'Jump there' }, icon('arrow-right'), d.jumpLabel ? h('span', null, raw(d.jumpLabel)) : null));
+  return kids;
+}
+function buildInner(it, ctx) {
   const d = it.data || {};
   switch (it.type) {
     case 'note': return [h('div', { class: 'paper' }), notePin(it), ed('txt', it.text, 'text', 'Write something…')];
