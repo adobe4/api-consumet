@@ -6,6 +6,8 @@ import { simulate, alerts, suggestions } from '../shared/engine.js';
 import { buildTemplate, TEMPLATES } from '../shared/templates.js';
 import { scanProject, scanAll, dayIn } from './sync.js';
 import { designStep, DIRECTIONS } from './design.js';
+import { linkPreview } from './preview.js';
+import { sanitizeBoard } from '../shared/board.js';
 import { handleMcp, runBrain, runBoardAI, runBoardEdit, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey, listModels, bestModel, withFallback } from './brain.js';
 import { listBoards, getBoard, boardOut, createBoard, seedBoards, saveBoard, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, sharedFile } from './boards.js';
 import { generateBoard } from '../shared/board.js';
@@ -17,6 +19,7 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
   const authLimit = makeLimiter(12, 10 * 60 * 1000);
   const brainLimit = makeLimiter(20, 60 * 60 * 1000);
   const designLimit = makeLimiter(160, 60 * 60 * 1000); // one design session is several short steps
+  const previewLimit = makeLimiter(300, 60 * 60 * 1000);
 
   // ---------- helpers ----------
   const secretsOf = (u) => decryptJson(secret, u.secrets);
@@ -322,6 +325,37 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
   }, { agents: false });
   // ---------- boards ----------
   const aiOf = (user) => aiChain(settingsOf(user), secretsOf(user));
+  // ---------- link previews and research cards ----------
+  route('GET', '/api/preview', async ({ user, query }) => {
+    if (!previewLimit(`preview:${user.id}`)) throw new HttpError(429, 'Too many previews this hour. Try again later.');
+    return linkPreview(query.get('url'), { youtubeKey: secretsOf(user).youtubeKey || youtubeKey, fresh: query.get('fresh') === '1' });
+  }, { agents: false });
+  // ---------- assets: designs saved to reuse on any board ----------
+  const assetOut = (r) => ({ id: r.id, name: r.name, thumb: r.thumb, createdAt: r.created_at, ...(r.data ? { data: JSON.parse(r.data) } : {}) });
+  route('GET', '/api/assets', async ({ user }) => (await db.all('SELECT id, name, thumb, created_at FROM board_assets WHERE user_id = ? ORDER BY id DESC', user.id)).map(assetOut), { agents: false });
+  route('GET', '/api/assets/:id', async ({ user, params }) => {
+    const r = await db.get('SELECT * FROM board_assets WHERE id = ? AND user_id = ?', Number(params.id), user.id);
+    if (!r) throw new HttpError(404, 'No such asset');
+    return assetOut(r);
+  }, { agents: false });
+  route('POST', '/api/assets', async ({ user, body }) => {
+    if ((await db.get('SELECT COUNT(*) AS n FROM board_assets WHERE user_id = ?', user.id)).n >= 300) throw new HttpError(400, 'You can keep up to 300 assets');
+    let data;
+    try { data = sanitizeBoard({ items: body.data?.items, links: body.data?.links }); } catch (e) { throw new HttpError(400, e.message); }
+    if (!data.items.length) throw new HttpError(400, 'Select something to save');
+    if (JSON.stringify(data).length > 600000) throw new HttpError(400, 'That is too big for one asset (over 600 KB). Save a smaller part.');
+    const thumb = typeof body.thumb === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(body.thumb) && body.thumb.length < 120000 ? body.thumb : '';
+    const name = String(body.name || '').trim().slice(0, 60) || 'Asset';
+    const id = (await db.run('INSERT INTO board_assets (user_id, name, thumb, data) VALUES (?, ?, ?, ?)', user.id, name, thumb, JSON.stringify({ items: data.items, links: data.links }))).lastInsertRowid;
+    return assetOut(await db.get('SELECT id, name, thumb, created_at FROM board_assets WHERE id = ?', id));
+  }, { agents: false });
+  route('PATCH', '/api/assets/:id', async ({ user, params, body }) => {
+    const name = String(body.name || '').trim().slice(0, 60);
+    if (!name) throw new HttpError(400, 'Give it a name');
+    await db.run('UPDATE board_assets SET name = ? WHERE id = ? AND user_id = ?', name, Number(params.id), user.id);
+    return { ok: true };
+  }, { agents: false });
+  route('DELETE', '/api/assets/:id', async ({ user, params }) => { await db.run('DELETE FROM board_assets WHERE id = ? AND user_id = ?', Number(params.id), user.id); return { ok: true }; }, { agents: false });
   route('GET', '/api/boards', async ({ user }) => listBoards(db, user.id));
   route('POST', '/api/boards', async ({ user, body }) => {
     let data = body.data;

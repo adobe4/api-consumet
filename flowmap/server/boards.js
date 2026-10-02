@@ -143,6 +143,7 @@ const STYLE_SCHEMA = {
     size: { type: 'number', description: 'Text size in px, 8 to 200 (14 normal, 20 large, 32 heading, 52 huge)' },
     font: { type: 'string', enum: FONT_SIZES, description: 'Older size names; prefer size' }, align: { type: 'string', enum: ALIGNS },
     hand: { type: 'boolean', description: 'Handwritten lettering' },
+    strokeW: { type: 'number', description: 'A line around the item, px (0 = none)' }, strokeC: HEX, strokeD: { type: 'string', enum: ['solid', 'dashed', 'dotted'] },
     bold: { type: 'boolean' }, muted: { type: 'boolean', description: 'Softer, quieter text' }, textColor: HEX,
   },
 };
@@ -162,6 +163,8 @@ const LOOK_PROPS = {
   paper: { type: 'string', enum: PAPERS, description: 'For type=note: the kind of paper. sticky = classic sticky note, lined = notebook page, spiral = page torn from a spiral notebook, grid = graph paper, index = index card, kraft = brown paper, torn = ripped scrap, aged = old yellowed paper' },
   lift: { type: 'string', enum: LIFTS, description: 'For type=note: how the paper sits. flat, lifted (soft shadow), curled (corner peels up)' },
   pin: { type: 'string', enum: NOTE_PINS, description: 'For type=note: what holds it: none, tape, pin or clip' },
+  head: { type: 'string', enum: ['triangle', 'wide', 'thin', 'round', 'bar', 'none'], description: 'For type=arrow: the arrow head' }, tail: { type: 'string', enum: ['triangle', 'wide', 'thin', 'round', 'bar', 'none'], description: 'For type=arrow: the start' },
+  thickness: { type: 'number', description: 'For type=arrow: body thickness px (6-80)' }, bend: { type: 'number', description: 'For type=arrow: -0.5..0.5, how much it curves (0 straight)' },
   jump: { type: 'string', description: 'Make this a jump link: the id (or ref) of another item. Tapping it glides the board there. Great for a menu slide, "see the details" buttons, or going back to the start. Empty string removes it.' },
   jumpLabel: { type: 'string', description: 'Optional text on the jump button (otherwise just an arrow)' },
   movable: { type: 'boolean', description: 'Can be dragged while the board is locked or presented' },
@@ -201,6 +204,9 @@ function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
     if (FONT_SIZES.includes(st.font)) { s.font = st.font; delete s.size; }
     if (finite(st.size)) s.size = Math.round(Math.max(8, Math.min(200, st.size)) * 2) / 2;
     if (typeof st.hand === 'boolean') { if (st.hand) s.hand = true; else delete s.hand; }
+    if (finite(st.strokeW)) s.strokeW = Math.max(0, Math.min(24, st.strokeW));
+    if (hex(st.strokeC)) s.strokeC = hex(st.strokeC);
+    if (['solid', 'dashed', 'dotted'].includes(st.strokeD)) s.strokeD = st.strokeD;
     if (ALIGNS.includes(st.align)) s.align = st.align;
     if (typeof st.bold === 'boolean') s.weight = st.bold ? 800 : 0;
     if (typeof st.muted === 'boolean') s.muted = st.muted;
@@ -234,6 +240,17 @@ function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
     }
     if (CLIP_METALS.includes(o.metal)) d.metal = o.metal;
   }
+  if (it.type === 'arrow') {
+    if (['triangle', 'wide', 'thin', 'round', 'bar', 'none'].includes(o.head)) d.head = o.head;
+    if (['triangle', 'wide', 'thin', 'round', 'bar', 'none'].includes(o.tail)) d.tail = o.tail;
+    if (finite(o.thickness)) d.body = Math.max(3, Math.min(120, o.thickness));
+    // a fresh straight arrow across the box, bent if asked
+    if (!d.pts || finite(o.bend) || finite(o.w) || finite(o.h)) {
+      const b = finite(o.bend) ? Math.max(-0.6, Math.min(0.6, o.bend)) : 0;
+      d.pts = [[12, it.h / 2], [it.w / 2, it.h / 2 - b * it.w], [it.w - 12, it.h / 2]]; d.w0 = it.w; d.h0 = it.h;
+    }
+  }
+  if (it.type === 'media' && typeof o.url === 'string') d.url = o.url.slice(0, 2000);
   if (typeof o.movable === 'boolean') { if (o.movable) d.movable = true; else delete d.movable; }
   if (typeof o.jump === 'string') { if (/^[A-Za-z0-9_-]{1,48}$/.test(o.jump)) d.jump = o.jump; else if (!o.jump) { delete d.jump; delete d.jumpLabel; } }
   if (typeof o.jumpLabel === 'string') { if (o.jumpLabel.trim()) d.jumpLabel = o.jumpLabel.trim().slice(0, 40); else delete d.jumpLabel; }

@@ -6,7 +6,7 @@
 // Item:  { id, type, x, y, w, h, rot, z, locked, title, text, color, style: {}, data: {}, anim: {} }
 // Link:  { id, from: { item } | { x, y }, to: { item } | { x, y }, label, style: { kind, path, dash, start, end, color, width, flow } }
 
-export const ITEM_TYPES = ['note', 'card', 'text', 'shape', 'frame', 'flip', 'image', 'video', 'file', 'link', 'project', 'sticker', 'ink', 'checklist', 'prompt', 'hide', 'clip'];
+export const ITEM_TYPES = ['note', 'card', 'text', 'shape', 'frame', 'flip', 'image', 'video', 'file', 'link', 'project', 'sticker', 'ink', 'checklist', 'prompt', 'hide', 'clip', 'media', 'arrow'];
 export const SHAPES = ['rect', 'round', 'pill', 'ellipse', 'diamond', 'triangle', 'hexagon', 'star', 'arrow', 'bubble'];
 export const LINK_KINDS = ['line', 'tunnel', 'raised', 'drawn'];
 export const LINK_PATHS = ['curved', 'straight', 'elbow'];
@@ -33,7 +33,7 @@ export const PALETTE = ['#ff4d5e', '#ff8a5c', '#ffb020', '#e8b86b', '#b8e04a', '
 
 export const DEFAULT_SIZE = {
   note: [220, 180], card: [280, 170], text: [320, 60], shape: [200, 140], frame: [1100, 620], flip: [240, 240], image: [320, 240],
-  video: [360, 240], file: [260, 90], link: [300, 110], project: [280, 150], sticker: [72, 72], ink: [10, 10], checklist: [280, 220], prompt: [360, 220], hide: [320, 200], clip: [46, 128],
+  video: [360, 240], file: [260, 90], link: [300, 110], project: [280, 150], sticker: [72, 72], ink: [10, 10], checklist: [280, 220], prompt: [360, 220], hide: [320, 200], clip: [46, 128], media: [320, 300], arrow: [320, 120],
 };
 
 let seq = 0;

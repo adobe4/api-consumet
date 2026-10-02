@@ -140,12 +140,21 @@ CREATE TABLE IF NOT EXISTS agent_keys (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_used_at TEXT
 );
+CREATE TABLE IF NOT EXISTS board_assets (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  thumb TEXT NOT NULL DEFAULT '',
+  data TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_board_assets_user ON board_assets(user_id);
 `;
 
 // columns added after the first release, for databases created before them
 const ADDED = [['users', 'secrets', "TEXT NOT NULL DEFAULT ''"], ['projects', 'sources', "TEXT NOT NULL DEFAULT '[]'"], ['tasks', 'source', "TEXT NOT NULL DEFAULT ''"], ['links', 'look', "TEXT NOT NULL DEFAULT '{}'"],
   ['boards', 'share_token', 'TEXT'], ['boards', 'share_mode', "TEXT NOT NULL DEFAULT 'off'"], ['boards', 'share_pass', "TEXT NOT NULL DEFAULT ''"], ['boards', 'share_seats', 'INTEGER NOT NULL DEFAULT 0']];
-const VERSION = 3;
+const VERSION = 4;
 
 const toArgs = (args) => args.map((a) => (a === undefined ? null : typeof a === 'boolean' ? Number(a) : a));
 const plain = (row) => (row ? Object.fromEntries(Object.entries(row)) : undefined);

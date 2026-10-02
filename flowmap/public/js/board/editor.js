@@ -6,6 +6,8 @@ import { api } from '../api.js';
 import { S, projects, project, notify, saveSettings, updateAiKey, keyModels, nvidiaModels } from '../store.js';
 import { openBrainSettings } from '../brain-ui.js';
 import { snapshotBoard } from './snapshot.js';
+import { arrowBounds, ARROW_HEADS, ARROW_HEAD_LABEL } from './arrows.js';
+import { confirmDialog } from '../ui-common.js';
 import { createSurface, route, drawLink, drawLabel, svgEl, LINK_DEFAULT } from '../surface.js';
 import { makeItem, makeLink, newId, bounds, inside, PALETTE, DEFAULT_SIZE, CLIP_SIZE, FONT_PX } from '/shared/board.js';
 import { CLIP_DEFAULT, CLIP_LABEL, METAL_LABEL, clipSvg } from './clips.js';
@@ -20,15 +22,15 @@ import { openModal } from '../ui-common.js';
 const COLORS = ['', ...PALETTE];
 const ICON_STICKERS = ['arrow-right', 'arrow-left', 'arrow-up', 'arrow-down', 'arrow-up-right', 'mouse-pointer-click', 'pointer', 'check', 'x', 'circle-check', 'circle-x', 'star', 'flame', 'rocket', 'lightbulb', 'target', 'zap', 'trophy', 'crown', 'heart', 'thumbs-up', 'party-popper', 'sparkles', 'badge-check', 'circle-alert', 'circle-question-mark', 'info', 'trending-up', 'trending-down', 'banknote', 'clock', 'pin', 'flag', 'megaphone', 'bell', 'gift', 'eye', 'hand'].map((n) => `i:${n}`);
 const STICKERS = ['👉', '👈', '👆', '👇', '➡️', '⬅️', '⬆️', '⬇️', '↗️', '✅', '❌', '⭐', '🔥', '🚀', '💡', '🎯', '💰', '📈', '📉', '❤️', '👏', '🎉', '😂', '🤯', '😮', '⚠️', '❓', '❗', '💯', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '🎬', '📌', '🧠', '⏰'];
-const DEF_FINISH = { note: 'tinted', card: 'soft', shape: 'solid', frame: 'raised', flip: 'soft', image: 'soft', video: 'soft', file: 'soft', link: 'soft', project: 'soft', checklist: 'soft', prompt: 'soft', text: 'none', sticker: 'none', ink: 'none', hide: 'none', clip: 'none' };
+const DEF_FINISH = { note: 'tinted', card: 'soft', shape: 'solid', frame: 'raised', flip: 'soft', image: 'soft', video: 'soft', file: 'soft', link: 'soft', project: 'soft', checklist: 'soft', prompt: 'soft', text: 'none', sticker: 'none', ink: 'none', hide: 'none', clip: 'none', arrow: 'none', media: 'soft' };
 const TOOLS = [
   ['select', '↖', 'Select & move (V)', 'v'], ['multi', 'i:square-dashed-mouse-pointer', 'Select several (M): tap items to add or remove them, drag a box around them', 'm'], ['hand', '✋', 'Move the board (H or hold Space)', 'h'],
   ['note', '🗒️', 'Sticky note (N)', 'n'], ['card', '▭', 'Card (C)', 'c'], ['text', 'i:type', 'Text (T)', 't'], ['shape', '◆', 'Shapes (S)', 's'],
   ['frame', '▦', 'Frame / slide (F)', 'f'], ['flip', '🂠', 'Flip card', ''], ['checklist', '☑', 'Checklist', ''], ['prompt', '✦', 'Prompt with copy button (P)', 'p'],
   ['hide', '🙈', 'Hide: a blur or cover you tap away to reveal (R)', 'r'],
-  ['connector', '⤳', 'Connect (L)', 'l'], ['pen', '✏️', 'Draw (D)', 'd'], ['highlight', '🖍️', 'Highlighter', ''], ['eraser', '⌫', 'Eraser (E)', 'e'],
+  ['connector', '⤳', 'Connect (L)', 'l'], ['arrow', 'i:arrow-right', 'Big arrow (A): drag to draw, then bend it with the round handles', 'a'], ['pen', '✏️', 'Draw (D)', 'd'], ['highlight', '🖍️', 'Highlighter', ''], ['eraser', '⌫', 'Eraser (E)', 'e'],
   ['sticker', '😀', 'Stickers & arrows', ''], ['clip', 'i:paperclip', 'Paper clips, pins & tape (U)', 'u'], ['image', '🖼️', 'Image: link or upload', 'i'], ['file', '📎', 'Attach a text file', ''], ['video', '🎬', 'Video from this device', ''],
-  ['link', '🔗', 'Web link', ''], ['project', '📊', 'Live project from your tracker', ''], ['laser', 'i:spotlight', 'Laser pointer (X)', 'x'],
+  ['link', '🔗', 'Web link with preview', ''], ['media', '🎬', 'Video or post cards for research (YouTube, TikTok, Instagram…)', ''], ['asset', '🧩', 'My assets: designs you saved', ''], ['project', '📊', 'Live project from your tracker', ''], ['laser', 'i:spotlight', 'Laser pointer (X)', 'x'],
 ];
 
 export function createEditor(host, { board, share = null, onBack, onRenamed }) {
@@ -100,7 +102,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   const toolbar = h('div', { class: 'bd-tools', role: 'toolbar', 'aria-label': 'Board tools' });
   if (!readonly) root.append(toolbar);
   // media tools live behind one "Insert" button so the bar fits any screen
-  const INSERT = ['image', 'file', 'video', 'link', 'project'];
+  const INSERT = ['image', 'file', 'video', 'link', 'media', 'asset', 'project'];
   for (const [id, ic, label] of TOOLS) {
     if (INSERT.includes(id) || id === 'highlight') continue;
     if (id === 'laser') toolbar.append(h('i', { class: 'tsep' }));
@@ -138,6 +140,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (t === 'file') { attachFiles(); setTool('select'); }
     if (t === 'video') { addVideo(); setTool('select'); }
     if (t === 'project') projectPicker(toolBtn('project'));
+    if (t === 'media') { setTool('select'); mediaPrompt(); }
+    if (t === 'asset') { setTool('select'); assetPicker(); }
   }
 
   // ---------- data helpers ----------
@@ -224,6 +228,10 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (s.textColor) el.style.setProperty('--tc', s.textColor); else el.style.removeProperty('--tc');
     if (typeof s.radius === 'number') el.style.setProperty('--r', `${s.radius}px`); else el.style.removeProperty('--r');
     el.style.fontSize = typeof s.size === 'number' ? `${s.size}px` : '';
+    const sw = Number(s.strokeW) || 0;
+    el.classList.toggle('stroked', sw > 0);
+    if (sw > 0) { el.style.setProperty('--sw', `${sw}px`); el.style.setProperty('--sc', s.strokeC || '#1c1916'); el.style.setProperty('--sd', s.strokeD || 'solid'); el.style.setProperty('--sda', s.strokeD === 'dashed' ? `${sw * 3} ${sw * 2}` : s.strokeD === 'dotted' ? `0.01 ${sw * 2}` : 'none'); }
+    else ['--sw', '--sc', '--sd', '--sda'].forEach((k) => el.style.removeProperty(k));
   }
   function renderInk(it) {
     let p = inkEls.get(it.id);
@@ -280,13 +288,14 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     for (const [id, p] of inkEls) p.classList.toggle('sel', sel.has(id));
     for (const [id, g] of linkEls) g.classList.toggle('hot', sel.has(id));
     const its = [...sel].map(byId).filter(Boolean);
-    if (!its.length || readonly) { selBox.hidden = true; ctxBar.hidden = true; if (sel.size && [...sel].some(linkById)) showCtxBar(); return; }
+    if (!its.length || readonly) { selBox.hidden = true; ctxBar.hidden = true; placeArrowHandles(null); if (sel.size && [...sel].some(linkById)) showCtxBar(); return; }
     const single = its.length === 1 ? its[0] : null;
     const b = single ? { x0: single.x, y0: single.y, w: single.w, h: single.h } : bounds(its);
     selBox.hidden = false;
     Object.assign(selBox.style, { left: `${b.x0}px`, top: `${b.y0}px`, width: `${b.w}px`, height: `${b.h}px`, transform: single?.rot ? `rotate(${single.rot}deg)` : '' });
     selBox.classList.toggle('multi', !single);
     selBox.classList.toggle('lock', its.some((i) => i.locked));
+    placeArrowHandles(single?.type === 'arrow' && !single.locked && !staged() ? single : null);
     showCtxBar();
   }
   function select(ids, { add = false } = {}) {
@@ -307,13 +316,16 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (its.length) {
       kids.push(h('button', { type: 'button', class: 'cb cdot', title: 'Colour', style: { '--c': first.color || 'var(--accent)' }, onclick: (e) => colorPop(e.currentTarget) }));
       if (its.some((i) => i.type === 'note')) kids.push(b(paperPop, '🗒️', 'Paper: kind, colour, how it sits'));
-      if (its.some((i) => ['card', 'shape', 'frame', 'flip', 'image', 'video', 'file', 'link', 'project', 'checklist', 'prompt'].includes(i.type))) kids.push(b(stylePop, '◐', 'Finish & shadow'));
+      if (its.some((i) => ['card', 'shape', 'frame', 'flip', 'image', 'video', 'file', 'link', 'project', 'checklist', 'prompt', 'media'].includes(i.type))) kids.push(b(stylePop, '◐', 'Finish, shadow & stroke'));
+      else if (its.some((i) => ['note', 'text', 'sticker'].includes(i.type))) kids.push(b((x) => openPop({ ...anchorFor(x), title: 'Stroke', width: 380, body: h('div', { class: 'pgrid' }, ...strokeRows([...sel].map(byId).filter(Boolean))) }), '▢', 'Stroke'));
       if (its.some((i) => ['note', 'card', 'text', 'shape', 'flip', 'prompt', 'checklist', 'frame'].includes(i.type))) kids.push(b(textPop, 'Aa', 'Text size & alignment'));
       if (first.type === 'shape' && its.length === 1) kids.push(b(shapeSwap, '◆', 'Change shape'));
       kids.push(b(animPop, '✨', 'Animation'));
       if (its.length === 1 && first.type === 'flip') kids.push(b(() => flip(first), '🂠', 'Flip'));
       if (its.some((i) => i.type === 'hide')) kids.push(b(hidePop, '🙈', 'Cover style and what a tap does'));
       if (its.some((i) => i.type === 'clip')) kids.push(b(clipPop, '📎', 'Clip: kind, metal and colour'));
+      if (its.some((i) => i.type === 'arrow')) kids.push(b(arrowPop, '➜', 'Arrow: colour, thickness, head, bend, stroke'));
+      if (its.some((i) => i.type === 'media')) kids.push(b(mediaPop, '🎬', 'Research cards: refresh numbers, sort'));
       if (its.length === 1 && first.type !== 'ink') kids.push(h('button', { type: 'button', class: `cb${first.data?.jump ? ' on' : ''}`, title: 'Jump link: tap it to glide to another place on the board', onclick: (e) => { e.stopPropagation(); jumpPop(e.currentTarget); } }, '⌖'));
       kids.push(h('button', { type: 'button', class: `cb${its.every((i) => i.data?.movable) ? ' on' : ''}`, title: 'Movable when the board is locked or presenting', onclick: (e) => { e.stopPropagation(); toggleMovable(its); } }, '✋'));
       if (its.length === 1 && first.type === 'frame') kids.push(b(() => toggleSlide(first), data.order.includes(first.id) ? '★' : '☆', data.order.includes(first.id) ? 'Remove from slides' : 'Add to slides'));
@@ -358,8 +370,11 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const actBtn = e.target.closest('[data-act]:not([data-act="open-file"])'); // files open with a double-click, so they can still be dragged
     if (actBtn && e.button === 0) { itemAction(actBtn, e); return 'handled'; }
     if (e.target.closest('video, a')) return 'handled';
+    const ah = e.target.closest('.ahd');
+    if (ah) { startArrowHandle(e, ah.dataset.p); return 'handled'; }
     const handle = e.target.closest('.hd');
     if (handle) { startHandle(e, handle.dataset.h, w); return 'handled'; }
+    if (tool === 'arrow') { startArrowCreate(e, w); return 'handled'; }
     if (tool === 'pen' || tool === 'highlight') { startInk(e, w); return 'handled'; }
     if (tool === 'eraser') { startErase(e); return 'handled'; }
     if (tool === 'connector') { startConnect(e, w, hitItem(e)); return 'handled'; }
@@ -394,7 +409,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   function stageDown(e, w) {
     const t = e.target;
     tapEl = null;
-    const act = t.closest('[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="check"]');
+    const act = t.closest('[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="check"], [data-act="open-link"]');
     if (act && e.button === 0) { itemAction(act, e); return 'handled'; }
     if (t.closest('video, a')) return 'handled';
     if (tool === 'laser' && !root.classList.contains('presenting')) { laserDown(e); return 'handled'; }
@@ -689,6 +704,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
         const text = it.text || '';
         const done = () => { setText(btn, '✓ Copied'); setTimeout(() => { setText(btn, '⧉ Copy'); }, 1400); };
         navigator.clipboard?.writeText(text).then(done).catch(() => { const r = document.createRange(); const t = el.querySelector('.txt'); if (t) { r.selectNodeContents(t); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } });
+      } else if (act === 'open-link') {
+        openUrl(it.data?.url);
       } else if (act === 'jump') {
         jumpFrom(it);
       } else if (act === 'check') {
@@ -790,7 +807,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     textPrompt('Web link', it.data.url, (v) => {
       let url = v.trim();
       if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
-      change(() => { it.data = { ...it.data, url }; if (!it.title) try { it.title = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep */ } });
+      change(() => { it.data = { ...it.data, url }; delete it.data.preview; if (!it.title) try { it.title = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep */ } });
+      if (url) fetchPreview(it);
     }, { placeholder: 'https://…' });
   }
 
@@ -862,7 +880,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (clip && text === clip.stamp) return pasteItems(clip.data);
     const t = text.trim();
     if (/^https?:\/\/\S+\.(png|jpe?g|gif|webp|svg)(\?\S*)?$/i.test(t)) place(makeItem('image', { w: 360, h: 260, data: { url: t } }));
-    else if (/^https?:\/\/\S+$/i.test(t)) { let host = ''; try { host = new URL(t).hostname.replace(/^www\./, ''); } catch { /* */ } place(makeItem('link', { title: host, data: { url: t } })); }
+    else if (/^https?:\/\/\S+(\s+https?:\/\/\S+)*$/i.test(t)) addLinks(t.split(/\s+/));
     else place(makeItem(t.length > 300 ? 'prompt' : 'note', { text: t.slice(0, 20000), color: PALETTE[data.items.length % 6], ...(t.length > 300 ? { w: 420, h: 300, title: 'Pasted text' } : {}) }));
   };
   document.addEventListener('paste', onPaste);
@@ -974,7 +992,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
         one?.type === 'image' ? ['🖼️', 'Replace image', () => replaceImage(one)] : null,
         one?.type === 'image' ? ['✎', 'Caption', () => imageCaption(one)] : null,
         one?.type === 'link' ? ['🔗', 'Change link', () => linkUrlPrompt(one)] : null,
-        one?.type === 'link' && one.data?.url ? ['↗', 'Open link', () => window.open(one.data.url, '_blank', 'noopener')] : null,
+        (one?.type === 'link' || one?.type === 'media') && one.data?.url ? ['↗', 'Open link', () => openUrl(one.data.url)] : null,
+        its.length ? ['🧩', 'Save as asset…', () => saveAsset(its)] : null,
         one?.type === 'video' ? ['🎬', 'Choose another video', () => replaceVideo(one)] : null,
         one?.type === 'hide' ? ['🙈', 'Cover: blur, frosted, solid', () => hidePop()] : null,
         ['✋', its.every((i) => i.data?.movable) ? 'Stop being movable when locked' : 'Movable when locked', () => toggleMovable(its)],
@@ -995,6 +1014,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       clip ? ['⎘', 'Paste here', () => { const b = bounds(clip.data.items); pasteItems({ ...clip.data, items: clip.data.items.map((i) => ({ ...i, x: i.x - b.x0 + at.x - 40, y: i.y - b.y0 + at.y - 40 })) }); }, 'primary', 'Ctrl+V'] : null,
       ['🗒️', 'Sticky note', put('note')], ['▭', 'Card', put('card')], ['T', 'Text', put('text', { style: { font: 'l' } })], ['◆', 'Shape', put('shape', { data: { shape: shapeKind } })],
       ['▦', 'Frame (slide)', put('frame', { style: { shadow: 'raised' } })], ['🙈', 'Hide (tap to reveal)', put('hide', { title: 'Tap to reveal', data: { cover: 'blur', tap: 'reveal' }, z: maxZ() + 1 })], ['✦', 'Prompt', put('prompt', { title: 'Prompt' })], ['☑', 'Checklist', put('checklist', { title: 'Checklist', data: { items: [{ t: 'First step', done: false }] } })],
+      ['🧩', 'My assets…', () => assetPicker(at)], ['🎬', 'Video or post cards…', () => textPrompt('Videos or posts to compare (one link per line)', '', (v) => addLinks(v.split(/\s+/), at), { multiline: true })],
       ['😀', 'Sticker', () => stickerPicker(null, { x: e.clientX, y: e.clientY }, at)], ['📎', 'Paperclip, pin or tape', () => clipPicker(null, { x: e.clientX, y: e.clientY }, at)], ['🖼️', 'Image', () => imagePicker(null, { x: e.clientX, y: e.clientY })],
       '-', ['▣', 'Select all', () => select(data.items.map((i) => i.id)), '', 'Ctrl+A'], ['⤢', 'Fit everything', () => fitAll(), '', 'Shift+1'],
       [data.settings.snap !== false ? '▦' : '▢', data.settings.snap !== false ? 'Turn off snap to grid' : 'Snap to grid', () => { data.settings.snap = data.settings.snap === false; save(); }],
@@ -1022,7 +1042,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const body = h('div', { class: 'pgrid' },
       segRow('Finish', [['soft', 'Soft'], ['tinted', 'Tinted'], ['solid', 'Solid'], ['glass', 'Glass'], ['flat', 'Flat'], ['none', 'None']], finishOf(f), (v) => change(() => its.forEach((i) => { i.style = { ...i.style, finish: v }; }))),
       segRow('Depth', [['sunk', 'Sunk'], ['flat', 'Flat'], ['raised', 'Raised'], ['float', 'Floating']], f.style?.shadow || 'raised', (v) => change(() => its.forEach((i) => { i.style = { ...i.style, shadow: v }; }))),
-      rangeRow('Corners', f.style?.radius ?? 18, 0, 60, 2, (v) => change(() => its.forEach((i) => { i.style = { ...i.style, radius: v }; els.get(i.id)?.style.setProperty('--r', `${v}px`); }))));
+      rangeRow('Corners', f.style?.radius ?? 18, 0, 60, 2, (v) => change(() => its.forEach((i) => { i.style = { ...i.style, radius: v }; els.get(i.id)?.style.setProperty('--r', `${v}px`); }))),
+      ...strokeRows(its));
     openPop({ ...anchorFor(btn), title: 'Finish & shadow', body, width: 400 });
   }
   function textPop(btn) {
@@ -1236,6 +1257,184 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     };
     paint();
     openPop({ ...(btn ? anchorFor(btn) : pt), title: '⌖ Jump link', width: 380, body: holder });
+  }
+
+  // ---------- links: preview cards, opening (asks first), research cards for videos and posts ----------
+  const SOCIAL = /(^|\.)(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|vimeo\.com)$/i;
+  const isSocial = (url) => { try { return SOCIAL.test(new URL(url).hostname.replace(/^www\.|^m\./, '')); } catch { return false; } };
+  async function openUrl(url) {
+    if (!url) { notify('This has no link yet', 'error'); return; }
+    let host = url;
+    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { return; }
+    if (await confirmDialog({ title: `Open ${host}?`, message: url.length > 90 ? `${url.slice(0, 90)}…` : url, confirm: 'Open' })) window.open(url, '_blank', 'noopener,noreferrer');
+  }
+  // fetched details change the card without an undo step of their own
+  function quietSet(it, data) { if (!byId(it.id)) return; it.data = { ...it.data, ...data }; render(); save(); }
+  async function fetchPreview(it, fresh = false) {
+    try {
+      const p = await api('GET', `/api/preview?url=${encodeURIComponent(it.data.url)}${fresh ? '&fresh=1' : ''}`);
+      if (it.type === 'media') quietSet(it, { ...p, loading: false, error: '' });
+      else quietSet(it, { preview: { title: p.title, description: p.description, image: p.image, site: p.site || p.author || '' } });
+      if (it.type === 'link' && (!it.title || /^[\w.-]+\.\w+$/.test(it.title)) && p.title) change(() => { it.title = p.title.slice(0, 120); });
+      return p;
+    } catch (e) { if (it.type === 'media') quietSet(it, { loading: false, error: e.message.slice(0, 120) }); return null; }
+  }
+  // research cards in a neat grid at a spot; each one reads its link
+  function addLinks(urls, at = viewCenter()) {
+    const list = urls.map((u) => u.trim()).filter((u) => /^https?:\/\//i.test(u)).slice(0, 40);
+    if (!list.length) { notify('Paste one or more links that start with https://', 'error'); return; }
+    const cols = Math.min(4, list.length), W = 340, H = 330, gap = 36;
+    const x0 = at.x - (cols * W + (cols - 1) * gap) / 2, y0 = at.y - H / 2;
+    const made = list.map((url, i) => {
+      const media = isSocial(url);
+      return makeItem(media ? 'media' : 'link', { x: snap(x0 + (i % cols) * (W + gap)), y: snap(y0 + Math.floor(i / cols) * (H + gap)), w: W, h: media ? H : 250, z: maxZ() + 1 + i, title: '', data: media ? { url, loading: true } : { url } });
+    });
+    change(() => data.items.push(...made));
+    select(made.map((i) => i.id));
+    made.forEach((it, i) => setTimeout(() => fetchPreview(it), i * 250));
+  }
+  function mediaPrompt() {
+    textPrompt('Videos or posts to compare (one link per line)', '', (v) => addLinks(v.split(/\s+/)), { multiline: true, placeholder: 'https://www.youtube.com/watch?v=…\nhttps://www.tiktok.com/@name/video/…\nhttps://www.instagram.com/p/…' });
+  }
+  // put research cards in order: most views (or likes, newest…) first, in a grid
+  function sortMedia(its, by, cols) {
+    const val = (i) => (by === 'posted' ? Date.parse(i.data?.posted || 0) || 0 : by === 'title' ? 0 : Number(i.data?.[by]) || 0);
+    const sorted = by === 'title' ? its.slice().sort((a, b) => String(a.title || a.data?.title).localeCompare(String(b.title || b.data?.title))) : its.slice().sort((a, b) => val(b) - val(a));
+    const b = bounds(its), W = Math.max(...its.map((i) => i.w)), H = Math.max(...its.map((i) => i.h)), gap = 36;
+    change(() => sorted.forEach((it, i) => { it.x = snap(b.x0 + (i % cols) * (W + gap)); it.y = snap(b.y0 + Math.floor(i / cols) * (H + gap)); it.rot = 0; }));
+  }
+  function mediaPop(btn) {
+    const its = [...sel].map(byId).filter((i) => i?.type === 'media');
+    if (!its.length) return;
+    let cols = Math.min(4, its.length);
+    openPop({ ...anchorFor(btn), title: '🎬 Research cards', width: 400, body: h('div', { class: 'pgrid' },
+      h('button', { type: 'button', class: 'btn', onclick: () => { closePop(); its.forEach((it, i) => { quietSet(it, { loading: true }); setTimeout(() => fetchPreview(it, true), i * 300); }); } }, `↻ Refresh the numbers (${its.length})`),
+      its.length > 1 ? rangeRow('Columns', cols, 1, 8, 1, (v) => { cols = v; }) : null,
+      its.length > 1 ? h('div', { class: 'row wrap', style: 'gap:6px' }, [['views', 'Most views'], ['likes', 'Most likes'], ['comments', 'Most comments'], ['posted', 'Newest'], ['duration', 'Longest'], ['title', 'A to Z']].map(([k, l]) => h('button', { type: 'button', class: 'btn sm', onclick: () => sortMedia(its, k, cols) }, l))) : null,
+      h('p', { class: 'phint' }, 'Views and dates come from each platform. For exact YouTube numbers add a YouTube API key in Settings. Double-click a card to write your own note on it.')) });
+  }
+
+  // ---------- assets: save a design, use it on any board ----------
+  async function saveAsset(its) {
+    if (!its.length) return;
+    const ids = new Set(its.map((i) => i.id));
+    // a frame brings what sits inside it
+    for (const f of its.filter((i) => i.type === 'frame')) for (const i of data.items) if (inside(i, f)) ids.add(i.id);
+    const items = data.items.filter((i) => ids.has(i.id));
+    const links = data.links.filter((l) => ids.has(l.from.item) && ids.has(l.to.item));
+    const b = bounds(items);
+    textPrompt('Name this asset', items.find((i) => i.title)?.title?.slice(0, 40) || 'My asset', async (name) => {
+      try {
+        const thumb = snapshotBoard({ items, links }, { x: b.x0, y: b.y0, w: b.w, h: b.h }, { maxW: 320, maxH: 220 }) || '';
+        await api('POST', '/api/assets', { name, thumb, data: { items: JSON.parse(JSON.stringify(items)), links } });
+        notify(`Saved “${name}”. Add it on any board from ＋ → My assets.`, 'good');
+      } catch (e) { notify(e.message, 'error'); }
+    });
+  }
+  async function assetPicker(at = viewCenter()) {
+    let list;
+    try { list = await api('GET', '/api/assets'); } catch (e) { notify(e.message, 'error'); return; }
+    const grid = h('div', { class: 'asset-grid' });
+    const paint = () => clear(grid).append(...(list.length ? list.map((a) => h('div', { class: 'asset-tile' },
+      h('button', { type: 'button', class: 'asset-pick', title: `Add “${a.name}”`, onclick: async () => {
+        try {
+          const full = await api('GET', `/api/assets/${a.id}`);
+          const bb = bounds(full.data.items);
+          m.close();
+          pasteItems({ ...full.data, items: full.data.items.map((i) => ({ ...i, x: i.x - bb.x0 - bb.w / 2 + at.x, y: i.y - bb.y0 - bb.h / 2 + at.y })) }, 0);
+        } catch (e) { notify(e.message, 'error'); }
+      } }, a.thumb ? h('img', { src: a.thumb, alt: '' }) : h('span', { class: 'asset-empty' }, '🧩'), h('b', null, raw(a.name))),
+      h('button', { type: 'button', class: 'asset-del', title: 'Delete this asset', onclick: async () => { if (!(await confirmDialog({ title: `Delete “${a.name}”?`, message: 'It disappears from your assets. Boards that already use it keep their copy.', confirm: 'Delete', danger: true }))) return; await api('DELETE', `/api/assets/${a.id}`).catch(() => {}); list = list.filter((x) => x.id !== a.id); paint(); } }, '✕')))
+      : [h('p', { class: 'phint' }, 'No assets yet. Select something you designed, right-click (or tap ⋯) and choose “Save as asset…”.')]));
+    paint();
+    const m = openModal({ title: '🧩 My assets', body: grid, wide: true, actions: [{ label: 'Close' }] });
+  }
+
+  // ---------- big arrows ----------
+  const arrowHd = h('div', { class: 'arw-hd', hidden: true }, ...['a', 'm', 'b'].map((p) => h('i', { class: `ahd ahd-${p}`, 'data-p': p, title: p === 'm' ? 'Drag to bend' : p === 'a' ? 'Drag the start' : 'Drag the end' })));
+  sf.layer.append(arrowHd);
+  const arrowPts = (it) => { const d = it.data || {}, sx = it.w / (d.w0 || it.w), sy = it.h / (d.h0 || it.h); return (d.pts || [[10, it.h / 2], [it.w / 2, it.h / 2], [it.w - 10, it.h / 2]]).map(([x, y]) => [x * sx, y * sy]); };
+  function placeArrowHandles(it) {
+    arrowHd.hidden = !it;
+    if (!it) return;
+    Object.assign(arrowHd.style, { left: `${it.x}px`, top: `${it.y}px`, width: `${it.w}px`, height: `${it.h}px`, transform: it.rot ? `rotate(${it.rot}deg)` : '' });
+    arrowPts(it).forEach(([x, y], i) => Object.assign(arrowHd.children[i].style, { left: `${x}px`, top: `${y}px` }));
+  }
+  // a board point in the arrow's own (unrotated) coordinates
+  const toLocal = (it, p) => { const cx = it.x + it.w / 2, cy = it.y + it.h / 2, a = -((it.rot || 0) * Math.PI) / 180, dx = p.x - cx, dy = p.y - cy; return [dx * Math.cos(a) - dy * Math.sin(a) + it.w / 2, dx * Math.sin(a) + dy * Math.cos(a) + it.h / 2]; };
+  // after the points move: grow or shrink the box around them, keeping the arrow where it is on the board
+  function refitArrow(it, pts) {
+    const d = it.data, bb = arrowBounds(pts, d.body || 24, d.head || 'triangle', d.tail || 'none');
+    const w = Math.max(20, bb.x1 - bb.x0), hgt = Math.max(20, bb.y1 - bb.y0);
+    const a = ((it.rot || 0) * Math.PI) / 180, lc = { x: (bb.x0 + bb.x1) / 2 - it.w / 2, y: (bb.y0 + bb.y1) / 2 - it.h / 2 };
+    const cx = it.x + it.w / 2 + lc.x * Math.cos(a) - lc.y * Math.sin(a), cy = it.y + it.h / 2 + lc.x * Math.sin(a) + lc.y * Math.cos(a);
+    it.x = cx - w / 2; it.y = cy - hgt / 2; it.w = w; it.h = hgt;
+    it.data = { ...d, pts: pts.map(([x, y]) => [Math.round((x - bb.x0) * 10) / 10, Math.round((y - bb.y0) * 10) / 10]), w0: w, h0: hgt };
+  }
+  function startArrowHandle(e, which) {
+    const it = byId([...sel][0]);
+    if (!it || it.type !== 'arrow') return;
+    const k = { a: 0, m: 1, b: 2 }[which];
+    begin(); drag = { kind: 'arrow' };
+    track(e, (ev) => {
+      const pts = arrowPts(it);
+      const p = toLocal(it, wOf(ev));
+      if (k === 1) pts[1] = p;
+      else {
+        // moving an end keeps the bend in the same place relative to the line
+        const [ax, ay] = pts[0], [bx, by] = pts[2], [mx, my] = pts[1];
+        pts[k] = p;
+        const nm = [(pts[0][0] + pts[2][0]) / 2 + (mx - (ax + bx) / 2), (pts[0][1] + pts[2][1]) / 2 + (my - (ay + by) / 2)];
+        pts[1] = nm;
+      }
+      refitArrow(it, pts);
+      layout(els.get(it.id), it); render();
+    }, () => { drag = null; commit(); updateSel(); });
+  }
+  function startArrowCreate(e, w) {
+    const it = makeItem('arrow', { x: w.x, y: w.y, w: 40, h: 40, z: maxZ() + 1, color: data.settings.arrowColor || '#ff8a5c', data: { body: data.settings.arrowBody || 26, head: 'triangle', tail: 'none', pts: [[0, 0], [0, 0], [0, 0]], w0: 40, h0: 40 }, anim: { in: 'draw' } });
+    let moved = false;
+    begin(); data.items.push(it); drag = { kind: 'create' };
+    track(e, (ev) => {
+      const p = wOf(ev);
+      if (Math.hypot(p.x - w.x, p.y - w.y) < 6) return;
+      moved = true;
+      it.x = 0; it.y = 0; it.w = 1; it.h = 1; it.rot = 0;
+      refitArrow(it, [[w.x, w.y], [(w.x + p.x) / 2, (w.y + p.y) / 2], [p.x, p.y]]);
+      render();
+    }, () => {
+      drag = null;
+      // a tap without dragging: a ready-made arrow pointing right
+      if (!moved) { it.x = 0; it.y = 0; it.w = 1; it.h = 1; refitArrow(it, [[w.x - 130, w.y], [w.x, w.y - 30], [w.x + 130, w.y]]); }
+      render(); commit(); select([it.id]);
+      if (!toolLock) setTool('select');
+    });
+  }
+  function arrowPop(btn) {
+    const its = [...sel].map(byId).filter((i) => i?.type === 'arrow');
+    if (!its.length) return;
+    const f = its[0], d = f.data || {};
+    const set = (patch, refit = false) => change(() => its.forEach((i) => { i.data = { ...i.data, ...patch }; if (refit) refitArrow(i, arrowPts(i)); }));
+    const bend = (amt) => change(() => its.forEach((i) => { const p = arrowPts(i), [ax, ay] = p[0], [bx, by] = p[2], len = Math.hypot(bx - ax, by - ay) || 1; p[1] = [(ax + bx) / 2 + (-(by - ay) / len) * amt * len, (ay + by) / 2 + ((bx - ax) / len) * amt * len]; refitArrow(i, p); }));
+    const heads = ARROW_HEADS.map((k) => [k, ARROW_HEAD_LABEL[k]]);
+    openPop({ ...anchorFor(btn), title: '➜ Arrow', width: 430, body: h('div', { class: 'pgrid' },
+      swatchRow('Colour', ['#ff8a5c', '#ff4d5e', '#ffb020', '#e8b86b', '#b8e04a', '#2fb4a0', '#e07a5f', '#ff6fae', '#1c1916', '#f5f1ea'], f.color || '#ff8a5c', (c) => { data.settings.arrowColor = c; change(() => its.forEach((i) => { i.color = c; })); }),
+      rangeRow('Thickness', d.body || 26, 3, 120, 1, (v) => { data.settings.arrowBody = v; set({ body: v }, true); }),
+      segRow('Head', heads, d.head || 'triangle', (v) => set({ head: v }, true)),
+      segRow('Tail', heads, d.tail || 'none', (v) => set({ tail: v }, true)),
+      segRow('Bend', [['0', 'Straight'], ['0.25', 'Arc up'], ['-0.25', 'Arc down'], ['0.45', 'Big arc']], '', (v) => bend(Number(v))),
+      toggleRow('Thin at the start', !!d.taper, (v) => set({ taper: v })),
+      toggleRow('Outline only', !!d.outline, (v) => set({ outline: v })),
+      ...strokeRows(its),
+      h('p', { class: 'phint' }, 'Drag the three round handles to move the start, the end, or the bend.')) });
+  }
+  // a line around anything: width, colour, solid or dashed
+  function strokeRows(its) {
+    const f = its[0];
+    const set = (patch) => change(() => its.forEach((i) => { i.style = { ...i.style, ...patch }; }));
+    return [rangeRow('Stroke', Number(f.style?.strokeW) || 0, 0, 16, 1, (v) => set({ strokeW: v })),
+      swatchRow('Stroke colour', ['#1c1916', '#ffffff', '#8a7b6d', '#ff8a5c', '#ff4d5e', '#ffb020', '#2fb4a0', '#e8b86b'], f.style?.strokeC || '#1c1916', (c) => set({ strokeC: c, ...(Number(f.style?.strokeW) ? {} : { strokeW: 2 }) })),
+      segRow('Line', [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']], f.style?.strokeD || 'solid', (v) => set({ strokeD: v, ...(Number(f.style?.strokeW) ? {} : { strokeW: 2 }) }))];
   }
 
   // ---------- AI designer: understands the board, asks, then designs section by section ----------

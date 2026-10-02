@@ -2,6 +2,7 @@
 // looks: positions, colours, paper, text sizes and wrapping, overflow and overlaps. Not a pixel copy of the
 // DOM (that would need every stylesheet inlined), but faithful in the ways that matter for layout.
 import { FONT_PX } from '/shared/board.js';
+import { arrowPath } from './arrows.js';
 
 const INK = '#1c1916', FACE = '#f3eee6', FLOOR = '#ebe5dc';
 function rgb(hex) {
@@ -121,6 +122,26 @@ function drawItem(c, it) {
       else if (d.kind === 'tape') { c.fillStyle = 'rgba(243,227,179,0.85)'; c.fillRect(x, y, w, h); }
       else if (d.kind === 'binder') { c.fillStyle = '#222'; roundRect(c, x + 4, y + h * 0.42, w - 8, h * 0.56, 4); c.fill(); roundRect(c, x + w * 0.25, y, w * 0.5, h * 0.5, 4); c.stroke(); }
       else { roundRect(c, x + w * 0.15, y, w * 0.7, h, w * 0.35); c.stroke(); roundRect(c, x + w * 0.3, y + h * 0.2, w * 0.4, h * 0.7, w * 0.2); c.stroke(); }
+      break;
+    }
+    case 'arrow': {
+      const sx = w / (d.w0 || w), sy = h / (d.h0 || h);
+      const pts = (d.pts || [[10, h / 2], [w / 2, h / 2], [w - 10, h / 2]]).map(([px, py]) => [x + px * sx, y + py * sy]);
+      const path = new Path2D(arrowPath(pts, { body: d.body || 24, head: d.head || 'triangle', tail: d.tail || 'none', taper: !!d.taper }));
+      shadow(6, 3, 0.2);
+      if (!d.outline) { c.fillStyle = it.color || '#ff8a5c'; c.fill(path); }
+      noShadow();
+      if (d.outline || it.style?.strokeW) { c.strokeStyle = it.style?.strokeC || it.color || '#ff8a5c'; c.lineWidth = it.style?.strokeW || 3; c.stroke(path); }
+      break;
+    }
+    case 'media': {
+      shadow(14, 6, 0.16); roundRect(c, x, y, w, h, 18); c.fillStyle = FACE; c.fill(); noShadow();
+      const th = Math.min(h * 0.62, (w * 9) / 16);
+      c.save(); roundRect(c, x, y, w, h, 18); c.clip(); c.fillStyle = '#3a312a'; c.fillRect(x, y, w, th); c.restore();
+      textBox(c, it, `[${d.platform || 'web'} thumbnail]`, x, y, w, th, { color: '#d9cfc2', px: 13 });
+      textBox(c, it, it.title || d.title || d.url || '', x + 14, y + th + 8, w - 28, 40, { color: INK, align: 'left', valign: 'top', bold: true, px: 15 });
+      const fmt = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n));
+      textBox(c, it, [d.views != null ? `${fmt(d.views)} views` : '', d.likes != null ? `${fmt(d.likes)} likes` : '', d.author || ''].filter(Boolean).join(' · '), x + 14, y + h - 34, w - 28, 22, { color: '#8a7b6d', align: 'left', px: 12 });
       break;
     }
     case 'hide': c.fillStyle = 'rgba(200,190,178,0.85)'; roundRect(c, x, y, w, h, 20); c.fill(); textBox(c, it, it.title || 'Tap to reveal', x, y, w, h, { color: '#5b4f44', px: 16 }); break;

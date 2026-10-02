@@ -417,6 +417,7 @@ TOOLKIT, pick what the content needs (use many kinds, not only cards):
 - flip: front title, back lines (tap to reveal more). checklist: actionable steps (items). hide: a cover over an answer or price, tapped away while presenting.
 - sticker: a line icon "i:name" (rocket, target, flame, lightbulb, trophy, banknote, clock, check, x, star, zap, heart, megaphone, flag, gift, crown, sparkles, trending-up, arrow-right, arrow-down), 64-110px, in the accent colour.
 - clip: paperclip, binder, pin or tape laid over the top edge of a note, card or photo (rot -10..10). prompt: a copyable AI prompt with a Copy button. link: a web link card. image: a picture from a URL.
+- arrow: a big bold arrow (thickness 10-60, head triangle|wide|thin|round|bar|none, tail, bend -0.5..0.5) to point at what matters; stroke on anything (style.strokeW, strokeC, strokeD solid|dashed|dotted) for a crisp outlined look.
 - jump (on any item): tapping glides to another item. Build menus, "next" buttons, "back to start".
 - connect: arrows between items. kind "tunnel" + flow for money or attention moving, "drawn" for sketchy, curved paths.
 COMPOSITION: one focal point per slide; a clear reading order; align edges on a 20px grid; even gaps (24, 40 or 60); 3-7 elements per slide; give every slide a different layout (hero statement, numbered steps, two columns, card grid, comparison, quote, checklist, timeline, big number); never let things overlap except on purpose (text on its shape, a chip on its bar, a clip or tape on paper, a cover over an answer); nothing sticks out of its frame.
@@ -431,7 +432,8 @@ const DESIGN_EXAMPLE = `EXAMPLE of one designed slide (shape of the JSON only, n
 {"type":"note","paper":"lined","pin":"tape","x":700,"y":250,"w":320,"h":280,"rot":2,"text":"Tip: say the result first, then show how.","style":{"size":24,"hand":true}},
 {"type":"clip","clip":"paperclip","x":960,"y":226,"w":46,"h":128,"rot":-8}`;
 export const PLAN_ITEM_FIELDS = `Item fields: type, ref (your name for it), x, y, w, h (absolute px), title, text, color (#hex), rot, z, locked,
- style: { finish: soft|tinted|solid|glass|flat|none, shadow: sunk|flat|raised|float, radius: 0-60, size: text px, align: left|center|right, bold, muted, textColor: #hex, hand },
+ style: { finish: soft|tinted|solid|glass|flat|none, shadow: sunk|flat|raised|float, radius: 0-60, size: text px, align: left|center|right, bold, muted, textColor: #hex, hand, strokeW, strokeC, strokeD },
+ head/tail/thickness/bend (arrows),
  anim: { in: none|pop|fade|rise|zoom|draw|slide, loop: none|bounce|pulse|wiggle|float|glow, delay: seconds },
  shape (rect|round|pill|ellipse|diamond|triangle|hexagon|star|arrow|bubble), emoji (stickers: i:icon), paper/lift/pin (notes), clip/metal (clips), items (checklist rows, "[x] row" = ticked), back (flip back lines), cover (hide: blur|frost|solid|curtain), url (image, link), jump (id or ref to glide to), jumpLabel.`;
 const CREATE_SYSTEM = `You are the designer of boards inside FlowMap, a creator's planning and presentation canvas. The owner presents boards full screen and screen-records them for tutorials, strategy videos and courses. Design the board yourself, item by item, like a skilled presentation designer: real content, real hierarchy, varied layouts, using the whole toolkit. Do not produce a template.

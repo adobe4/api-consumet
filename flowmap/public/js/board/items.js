@@ -5,6 +5,7 @@ import { S, project } from '../store.js';
 import { KINDS } from '/shared/engine.js';
 import { fileUrl, videoUrl } from './files.js';
 import { clipSvg } from './clips.js';
+import { arrowPath } from './arrows.js';
 
 const star = (() => { const pts = []; for (let i = 0; i < 10; i++) { const r = i % 2 ? 22 : 50, a = (i / 10) * Math.PI * 2 - Math.PI / 2; pts.push(`${50 + Math.cos(a) * r},${52 + Math.sin(a) * r}`); } return `M${pts.join(' L')}Z`; })();
 export const SHAPE_PATHS = {
@@ -14,7 +15,7 @@ export const SHAPE_PATHS = {
 export const SHAPE_LABEL = { rect: '▭ Box', round: '▢ Rounded', pill: '⬭ Pill', ellipse: '◯ Circle', diamond: '◇ Diamond', triangle: '△ Triangle', hexagon: '⬡ Hexagon', star: '☆ Star', arrow: '➜ Arrow', bubble: '💬 Speech' };
 const NS = 'http://www.w3.org/2000/svg';
 
-export const TYPE_LABEL = { note: 'Sticky note', card: 'Card', text: 'Text', shape: 'Shape', frame: 'Frame', flip: 'Flip card', image: 'Image', video: 'Video', file: 'File', link: 'Link', project: 'Project', sticker: 'Sticker', ink: 'Drawing', checklist: 'Checklist', prompt: 'Prompt', hide: 'Hide', clip: 'Clip' };
+export const TYPE_LABEL = { note: 'Sticky note', card: 'Card', text: 'Text', shape: 'Shape', frame: 'Frame', flip: 'Flip card', image: 'Image', video: 'Video', file: 'File', link: 'Link', project: 'Project', sticker: 'Sticker', ink: 'Drawing', checklist: 'Checklist', prompt: 'Prompt', hide: 'Hide', clip: 'Clip', media: 'Video or post', arrow: 'Arrow' };
 // typed text goes in raw: what people write is never turned into icons
 const ed = (cls, text, field, placeholder) => h('div', { class: `ed ${cls}`, 'data-field': field, 'data-ph': placeholder || '' }, raw(text || ''));
 const ellipsis = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -74,7 +75,37 @@ function buildInner(it, ctx) {
     case 'link': {
       let host = '';
       try { host = new URL(d.url).hostname.replace(/^www\./, ''); } catch { /* not a url yet */ }
-      return [h('div', { class: 'lk' }, h('span', { class: 'fav' }, (host[0] || '🔗').toUpperCase()), h('div', null, ed('ttl', it.title || host, 'title', 'Link title'), h('small', null, host || 'add a link')), h('a', { class: 'btn sm', href: d.url || '#', target: '_blank', rel: 'noopener noreferrer', 'data-act': 'open-link' }, 'Open ↗')), it.text ? ed('txt', it.text, 'text', '') : null];
+      const pv = d.preview || {};
+      return [pv.image ? h('div', { class: 'lk-img' }, h('img', { src: pv.image, alt: '', draggable: false, loading: 'lazy', referrerpolicy: 'no-referrer', onerror: (e) => e.target.parentNode.classList.add('broken') })) : null,
+        h('div', { class: 'lk' }, h('span', { class: 'fav' }, (host[0] || '🔗').toUpperCase()), h('div', null, ed('ttl', it.title || pv.title || host, 'title', 'Link title'), h('small', null, pv.site || host || 'add a link')), h('button', { type: 'button', class: 'btn sm', 'data-act': 'open-link', title: d.url ? `Open ${d.url}` : 'Add a link first' }, 'Open ↗')),
+        pv.description && !it.text ? h('p', { class: 'lk-desc' }, raw(pv.description)) : null, it.text ? ed('txt', it.text, 'text', '') : null];
+    }
+    // a research card for a video or post: thumbnail, title, who posted it, views, likes, comments, when
+    case 'media': {
+      const age = d.posted ? timeAgo(d.posted) : '';
+      const stat = (ic, v, label) => (v === null || v === undefined ? null : h('span', { title: label }, ic, ' ', compact(v)));
+      return [h('div', { class: 'md-thumb' }, d.image ? h('img', { src: d.image, alt: '', draggable: false, loading: 'lazy', referrerpolicy: 'no-referrer', onerror: (e) => e.target.parentNode.classList.add('broken') }) : null,
+          h('span', { class: `md-plat p-${d.platform || 'web'}` }, PLATFORM_LABEL[d.platform] || 'Web'), d.duration ? h('span', { class: 'md-dur' }, duration(d.duration)) : null,
+          d.loading ? h('span', { class: 'md-load' }, 'Reading…') : null),
+        h('div', { class: 'md-body' },
+          h('b', { class: 'md-title' }, raw(it.title || d.title || (d.error ? 'Could not read this link' : d.url || 'Video or post'))),
+          h('small', { class: 'md-who' }, raw([d.author, age].filter(Boolean).join(' · ') || d.error || '')),
+          d.views == null && d.likes == null && d.note && !d.loading ? h('small', { class: 'md-miss' }, raw(d.note)) : null,
+          h('div', { class: 'md-stats' }, stat('👁', d.views, 'Views'), stat('❤️', d.likes, 'Likes'), stat('💬', d.comments, 'Comments'), stat('↻', d.shares, 'Shares'),
+            h('button', { type: 'button', class: 'md-open', 'data-act': 'open-link', title: d.url ? `Open ${d.url}` : '' }, '↗')),
+          ed('txt md-note', it.text, 'text', 'Your note…'))];
+    }
+    // a big arrow along a curve through start, bend and end
+    case 'arrow': {
+      const sx = it.w / (d.w0 || it.w || 1), sy = it.h / (d.h0 || it.h || 1);
+      const pts = (d.pts || [[10, it.h / 2], [it.w / 2, it.h / 2], [it.w - 10, it.h / 2]]).map(([x, y]) => [x * sx, y * sy]);
+      const svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('viewBox', `0 0 ${it.w} ${it.h}`); svg.setAttribute('class', `arw${d.outline ? ' outline' : ''}`); svg.setAttribute('overflow', 'visible');
+      const p = document.createElementNS(NS, 'path');
+      p.setAttribute('d', arrowPath(pts, { body: d.body || 24, head: d.head || 'triangle', tail: d.tail || 'none', taper: !!d.taper }));
+      p.setAttribute('vector-effect', 'non-scaling-stroke'); p.setAttribute('stroke-linejoin', 'round');
+      svg.append(p);
+      return [svg];
     }
     case 'project': {
       const p = project(d.projectId), s = p && S.sim?.days[S.offset]?.projects[p.id];
@@ -109,6 +140,18 @@ function notePin(it) {
   const kind = pin === 'clip' ? 'paperclip' : pin;
   return h('span', { class: `np np-${pin}` }, clipSvg({ id: `${it.id}np`, color: pin === 'tape' ? '#f3e3b3' : pin === 'pin' ? '#ff4d5e' : '', data: { kind, metal: pin === 'clip' ? 'silver' : 'color' } }));
 }
+const PLATFORM_LABEL = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', x: 'X', vimeo: 'Vimeo', web: 'Web' };
+export const compact = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K` : String(n)).replace('.0', '');
+const duration = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`; };
+export function timeAgo(iso) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  const s = (Date.now() - t) / 1000;
+  const u = [[31536000, 'year'], [2592000, 'month'], [604800, 'week'], [86400, 'day'], [3600, 'hour'], [60, 'minute']].find(([n]) => s >= n);
+  if (!u) return 'just now';
+  const n = Math.floor(s / u[0]);
+  return `${n} ${u[1]}${n === 1 ? '' : 's'} ago`;
+}
 function imgBox(url, fileId, ctx, cls) {
   const img = h('img', { alt: '', draggable: false, loading: 'lazy', referrerpolicy: 'no-referrer' });
   const box = h('div', { class: cls }, img);
@@ -118,4 +161,4 @@ function imgBox(url, fileId, ctx, cls) {
   return box;
 }
 // the content key: when it changes the item is rebuilt; position changes never rebuild
-export const contentKey = (it) => JSON.stringify([it.type, it.title, it.text, it.data, it.type === 'clip' ? it.color : 0, S.offset, it.type === 'project' ? S.version : 0]);
+export const contentKey = (it) => JSON.stringify([it.type, it.title, it.text, it.data, it.type === 'clip' ? it.color : 0, it.type === 'arrow' ? [it.w, it.h] : 0, S.offset, it.type === 'project' ? S.version : 0]);

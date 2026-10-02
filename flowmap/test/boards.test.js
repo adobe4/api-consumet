@@ -222,3 +222,17 @@ test('jump links: added by ref, read back, removed', async () => {
   const go2 = b.items.find((i) => i.id === go.id);
   assert.equal(go2.data?.jump, undefined); assert.equal(go2.data?.jumpLabel, undefined);
 });
+
+test('assets: save a design, list it, use it, delete it; only your own', async () => {
+  const items = [{ id: 'a1', type: 'card', x: 10, y: 10, w: 200, h: 100, title: 'Hero', style: { strokeW: 3, strokeC: '#1c1916' } }, { id: 'a2', type: 'arrow', x: 240, y: 20, w: 200, h: 80, color: '#ff8a5c', data: { body: 20, head: 'wide', pts: [[10, 40], [100, 10], [190, 40]], w0: 200, h0: 80 } }];
+  const made = await call('POST', '/api/assets', { name: 'My hero', thumb: 'data:image/jpeg;base64,/9j/', data: { items, links: [{ id: 'l1', from: { item: 'a1' }, to: { item: 'a2' } }] } }, A);
+  assert.equal(made.status, 200);
+  const list = await call('GET', '/api/assets', null, A);
+  assert.equal(list.body[0].name, 'My hero'); assert.equal(list.body[0].data, undefined, 'the list is light');
+  const one = await call('GET', `/api/assets/${made.body.id}`, null, A);
+  assert.equal(one.body.data.items.length, 2); assert.equal(one.body.data.items[1].data.head, 'wide'); assert.equal(one.body.data.links.length, 1);
+  assert.equal((await call('GET', `/api/assets/${made.body.id}`, null, B)).status, 404, 'not visible to others');
+  assert.equal((await call('POST', '/api/assets', { name: 'empty', data: { items: [] } }, A)).status, 400);
+  await call('DELETE', `/api/assets/${made.body.id}`, null, A);
+  assert.equal((await call('GET', '/api/assets', null, A)).body.length, 0);
+});

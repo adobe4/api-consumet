@@ -151,7 +151,7 @@ export async function deleteProjects(q, uid, ids) {
   await q.run(`DELETE FROM projects WHERE user_id = ? AND id IN (${list})`, uid, ...ids);
 }
 export async function deleteUser(q, uid) {
-  for (const t of ['links', 'tasks', 'logs', 'scans', 'notes', 'agent_keys', 'board_viewers', 'board_files', 'boards', 'projects']) await q.run(`DELETE FROM ${t} WHERE user_id = ?`, uid);
+  for (const t of ['links', 'tasks', 'logs', 'scans', 'notes', 'agent_keys', 'board_viewers', 'board_files', 'board_assets', 'boards', 'projects']) await q.run(`DELETE FROM ${t} WHERE user_id = ?`, uid);
   await q.run('DELETE FROM users WHERE id = ?', uid);
 }
 
