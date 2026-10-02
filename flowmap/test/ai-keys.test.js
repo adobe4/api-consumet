@@ -116,31 +116,33 @@ test('the board AI reads the open board and restyles it', async () => {
   const db = await openDb({ dataDir: dir });
   const uid = (await db.run('INSERT INTO users (email, name, pass, settings) VALUES (?, ?, ?, ?)', 'd@example.com', 'D', 'x', '{}')).lastInsertRowid;
   const b = await createBoard(db, uid, { name: 'Plain', data: { v: 1, items: [{ id: 'n1', type: 'note', x: 0, y: 0, w: 200, h: 120, text: 'Hi' }], links: [], order: [], settings: {} } });
-  // a scripted designer: read the board, then restyle the note it found, then say what it did
+  // a designer model that reads the board from the message and answers with a JSON plan, with some chatter
+  // and thinking around it (as many models do); the first answer is broken, so it gets one retry
   const seen = [];
   const designer = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
       const j = JSON.parse(body);
-      seen.push(j.tools.map((t) => t.function.name));
-      const tools = j.messages.filter((m) => m.role === 'tool');
-      const call = (name, args) => ({ role: 'assistant', content: '', tool_calls: [{ id: `c${tools.length}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
-      let msg;
-      if (!tools.length) msg = call('get_board', { board: b.id });
-      else if (tools.length === 1) { const id = JSON.parse(tools[0].content).items[0].id; msg = call('edit_board_items', { board: b.id, floor: 'grid', changes: [{ id, color: '#2fb4a0', rot: -2, style: { finish: 'solid', shadow: 'float', font: 'l' } }] }); }
-      else msg = { role: 'assistant', content: 'Made the note teal and lifted it.' };
+      seen.push(j);
+      const user = j.messages.find((m) => m.role === 'user').content;
+      const id = JSON.parse(user.split('\n').find((l) => l.startsWith('{"id"'))).id;
+      const content = seen.length === 1 ? 'Sure! Here is the plan: {"changes": [' :
+        `<think>The owner wants it nicer.</think>Here you go:\n\`\`\`json\n${JSON.stringify({ summary: 'Made the note teal, lined and lifted it.', floor: 'grid', changes: [{ id, color: '#2fb4a0', rot: -2, paper: 'lined', pin: 'tape', style: { size: 26, hand: true } }], add: [{ type: 'clip', clip: 'pin', x: 80, y: -10 }] })}\n\`\`\``;
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ choices: [{ message: msg }] }));
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content } }] }));
     });
   });
   await new Promise((r) => designer.listen(0, '127.0.0.1', r));
   const ai = { id: 'k', provider: 'nvidia', model: 'm', baseUrl: `http://127.0.0.1:${designer.address().port}/v1`, apiKey: 'good' };
   try {
     const out = await runBoardEdit({ db, uid }, [ai], { id: b.id, name: b.name }, 'Make it look better');
-    assert.equal(out.summary, 'Made the note teal and lifted it.');
-    assert.ok(seen[0].includes('edit_board_items') && seen[0].includes('get_board'));
+    assert.equal(out.summary, 'Made the note teal, lined and lifted it.');
+    assert.equal(seen.length, 2, 'one retry after an unreadable answer');
+    assert.ok(!seen[0].tools, 'no tool schemas: works with any chat model');
     const d = JSON.parse((await getBoard(db, uid, b.id)).data);
-    assert.deepEqual([d.items[0].color, d.items[0].rot, d.items[0].style.finish, d.items[0].style.shadow, d.settings.ground], ['#2fb4a0', -2, 'solid', 'float', 'grid']);
+    const note = d.items.find((i) => i.id === 'n1');
+    assert.deepEqual([note.color, note.rot, note.data.paper, note.data.pin, note.style.size, note.style.hand, d.settings.ground], ['#2fb4a0', -2, 'lined', 'tape', 26, true, 'grid']);
+    assert.ok(d.items.some((i) => i.type === 'clip' && i.data.kind === 'pin'));
   } finally { designer.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

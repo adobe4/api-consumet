@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import { HttpError } from './models.js';
 import { hashPassword, verifyPassword } from './auth.js';
-import { sanitizeBoard, generateBoard, BoardError, emptyBoard, bounds, makeItem, makeLink, newId, ITEM_TYPES, SHAPES, LINK_KINDS, LINK_PATHS, LINK_DASH, LINK_ENDS, FINISHES, SHADOWS, ANIM_IN, ANIM_LOOP, FONT_SIZES, ALIGNS, GROUNDS, CLIP_KINDS, CLIP_METALS, CLIP_SIZE } from '../shared/board.js';
+import { sanitizeBoard, generateBoard, BoardError, emptyBoard, bounds, makeItem, makeLink, newId, ITEM_TYPES, SHAPES, LINK_KINDS, LINK_PATHS, LINK_DASH, LINK_ENDS, FINISHES, SHADOWS, ANIM_IN, ANIM_LOOP, FONT_SIZES, ALIGNS, GROUNDS, CLIP_KINDS, CLIP_METALS, CLIP_SIZE, PAPERS, LIFTS, NOTE_PINS } from '../shared/board.js';
 
 const HIDE_COVERS = ['blur', 'frost', 'solid', 'curtain'];
 
@@ -140,7 +140,9 @@ const STYLE_SCHEMA = {
     finish: { type: 'string', enum: [...FINISHES, 'none'], description: 'soft = raised paper, tinted = colour wash, solid = full colour, glass = frosted, flat = no depth, none = no background (text only)' },
     shadow: { type: 'string', enum: SHADOWS, description: 'sunk = pressed in (good for frames and trays), flat, raised, float = lifted high' },
     radius: { type: 'number', description: 'Corner roundness in px, 0 to 60' },
-    font: { type: 'string', enum: FONT_SIZES }, align: { type: 'string', enum: ALIGNS },
+    size: { type: 'number', description: 'Text size in px, 8 to 200 (14 normal, 20 large, 32 heading, 52 huge)' },
+    font: { type: 'string', enum: FONT_SIZES, description: 'Older size names; prefer size' }, align: { type: 'string', enum: ALIGNS },
+    hand: { type: 'boolean', description: 'Handwritten lettering' },
     bold: { type: 'boolean' }, muted: { type: 'boolean', description: 'Softer, quieter text' }, textColor: HEX,
   },
 };
@@ -157,6 +159,9 @@ const LOOK_PROPS = {
   cover: { type: 'string', enum: HIDE_COVERS, description: 'For type=hide: a cover laid over other items that the viewer taps to reveal what is underneath. Good for quiz answers, prices, the next step.' },
   clip: { type: 'string', enum: CLIP_KINDS, description: 'For type=clip: a realistic paperclip, binder clip, push pin or tape strip that sits on top of a note, card or photo. Put it over the top edge of the thing it holds, rotate it a little.' },
   metal: { type: 'string', enum: CLIP_METALS, description: 'For type=clip: silver, gold, copper, black, or color (uses the item colour)' },
+  paper: { type: 'string', enum: PAPERS, description: 'For type=note: the kind of paper. sticky = classic sticky note, lined = notebook page, spiral = page torn from a spiral notebook, grid = graph paper, index = index card, kraft = brown paper, torn = ripped scrap, aged = old yellowed paper' },
+  lift: { type: 'string', enum: LIFTS, description: 'For type=note: how the paper sits. flat, lifted (soft shadow), curled (corner peels up)' },
+  pin: { type: 'string', enum: NOTE_PINS, description: 'For type=note: what holds it: none, tape, pin or clip' },
   movable: { type: 'boolean', description: 'Can be dragged while the board is locked or presented' },
   locked: { type: 'boolean' },
 };
@@ -191,7 +196,9 @@ function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
     if ([...FINISHES, 'none'].includes(st.finish)) s.finish = st.finish;
     if (SHADOWS.includes(st.shadow)) s.shadow = st.shadow;
     if (finite(st.radius)) s.radius = Math.max(0, Math.min(60, st.radius));
-    if (FONT_SIZES.includes(st.font)) s.font = st.font;
+    if (FONT_SIZES.includes(st.font)) { s.font = st.font; delete s.size; }
+    if (finite(st.size)) s.size = Math.round(Math.max(8, Math.min(200, st.size)) * 2) / 2;
+    if (typeof st.hand === 'boolean') { if (st.hand) s.hand = true; else delete s.hand; }
     if (ALIGNS.includes(st.align)) s.align = st.align;
     if (typeof st.bold === 'boolean') s.weight = st.bold ? 800 : 0;
     if (typeof st.muted === 'boolean') s.muted = st.muted;
@@ -213,6 +220,11 @@ function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
   if (it.type === 'flip' && typeof o.back === 'string') d.back = o.back.slice(0, 4000);
   if (it.type === 'checklist' && Array.isArray(o.items)) d.items = o.items.slice(0, 40).map((t) => { const v = String(t?.t ?? t); const done = /^\s*\[x\]/i.test(v) || t?.done === true; return { t: v.replace(/^\s*\[[x ]?\]\s*/i, '').slice(0, 200), done }; });
   if (it.type === 'hide' && HIDE_COVERS_LIST.includes(o.cover)) d.cover = o.cover;
+  if (it.type === 'note') {
+    if (PAPERS.includes(o.paper)) d.paper = o.paper;
+    if (LIFTS.includes(o.lift)) d.lift = o.lift;
+    if (NOTE_PINS.includes(o.pin)) d.pin = o.pin;
+  }
   if (it.type === 'clip') {
     if (CLIP_KINDS.includes(o.clip) && o.clip !== d.kind) {
       d.kind = o.clip;
@@ -238,7 +250,7 @@ function itemFromSpec(a, origin) {
   return it;
 }
 // what an AI sees of an item: everything that shapes how it looks, nothing bulky
-const DATA_KEYS = ['shape', 'cover', 'tap', 'back', 'items', 'url', 'movable', 'kind', 'metal', 'notes', 'num', 'flipped', 'projectId', 'name'];
+const DATA_KEYS = ['paper', 'lift', 'pin', 'shape', 'cover', 'tap', 'back', 'items', 'url', 'movable', 'kind', 'metal', 'notes', 'num', 'flipped', 'projectId', 'name'];
 function itemView(i) {
   const data = {};
   for (const k of DATA_KEYS) if (i.data?.[k] !== undefined) data[k] = k === 'notes' || k === 'back' ? String(i.data[k]).slice(0, 600) : i.data[k];

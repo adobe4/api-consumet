@@ -382,7 +382,8 @@ const BOARD_LOOK = `Make it look designed, never like a table or a plain list:
 - Breathing room: 40px+ between blocks, align things on clean rows and columns.
 - Group related things inside a frame (style.shadow "sunk") with a short title; use shapes (pill or round) as soft labelled buttons, flip cards for "tap to see more".
 - Warm earthy colours only (#e8b86b, #ff8a5c, #e07a5f, #c9a27e, #b8e04a, #2fb4a0, #ffb020, #ff6fae, #8a7b6d); never blue or purple. One accent colour per group.
-- Big bold titles (style.font "xl", bold), quieter details (style.muted), stickers (i: icons) and the odd paperclip or tape (type clip) to make it feel real; tilt notes and clips a few degrees.
+- Big bold titles (style.size 32+, bold), quieter details (style.muted), stickers (i: icons) and the odd paperclip or tape (type clip) to make it feel real; tilt notes and clips a few degrees.
+- Notes are real paper: mix kinds (paper: sticky, lined, spiral, grid, index, kraft, torn, aged), hold some with tape or a pin, use handwriting (style.hand) for personal notes.
 - Curved connections; "tunnel" kind with flow for money or attention moving.`;
 const BOARD_SYSTEM = `You design boards inside FlowMap, a creator's planning and presentation canvas. The owner will present boards full screen and screen-record them for tutorials, strategy videos and courses.
 Read the request, look at the system overview if it helps (get_overview), then call create_board once with a well-structured spec:
@@ -392,12 +393,6 @@ Then polish it: read it with get_board and use edit_board_items (and add_to_boar
 ${BOARD_LOOK}
 Write in the language the owner used. Be concrete and specific to their projects when relevant. Finish with one sentence saying what you built.`;
 const BOARD_AI_TOOLS = ['get_overview', 'list_boards', 'create_board', 'get_board', 'edit_board_items', 'add_to_board'].map((n) => TOOL_BY_NAME.get(n));
-const EDIT_SYSTEM = (id, name) => `You edit one board inside FlowMap, a creator's planning and presentation canvas: board ${id} ("${name}"). The owner is looking at it right now.
-First read it with get_board. Then do exactly what the owner asks with edit_board_items (move, resize, restyle, recolour, rewrite, rotate, animate, delete, change connections or the floor) and add_to_board (new items, clips, stickers, blocks). Keep what the owner did not ask to change. Use real ids from get_board.
-When asked to make it look better, keep the content and improve the design:
-${BOARD_LOOK}
-Write in the language the owner used. Finish with one short sentence saying what you changed.`;
-const EDIT_AI_TOOLS = ['get_board', 'edit_board_items', 'add_to_board', 'get_overview'].map((n) => TOOL_BY_NAME.get(n));
 
 // one tool-using conversation; returns the final text and the tools that ran
 async function boardTurns(ctx, ai, system, tools, request, { steps = 8, onCall } = {}) {
@@ -439,12 +434,111 @@ async function boardOnce(ctx, ai, request) {
   if (!created) throw new HttpError(502, text ? `The AI did not build a board: ${text.slice(0, 300)}` : 'The AI did not build a board. Try describing it differently.');
   return { board: created, summary: text };
 }
-export async function runBoardEdit(ctx, chain, board, request) { return withFallback(chain, (ai) => editOnce(ctx, ai, board, request)); }
-async function editOnce(ctx, ai, board, request) {
-  const { text, ran } = await boardTurns(ctx, ai, EDIT_SYSTEM(board.id, board.name), EDIT_AI_TOOLS, request);
-  const edits = ran.filter((n) => n === 'edit_board_items' || n === 'add_to_board').length;
-  if (!edits) throw new HttpError(502, text ? `The AI did not change the board: ${text.slice(0, 300)}` : 'The AI did not change the board. Try asking differently.');
-  return { summary: text || 'Done', edits };
+export async function runBoardEdit(ctx, chain, board, request) {
+  // one shared deadline across fallback keys, well inside the 300 s function limit
+  const deadline = Date.now() + 230000;
+  return withFallback(chain, (ai) => editOnce(ctx, ai, board, request, deadline));
+}
+
+// Editing the open board: the whole board goes in one compact message and the AI answers with one JSON plan,
+// which the server applies. One round trip instead of a tool loop, so it works with any chat model (also
+// ones that are weak at tool calls) and stays well inside the time limit even for big boards.
+const PLAN_SPEC = `Answer with ONE JSON object and nothing else:
+{
+ "summary": "one short sentence saying what you changed",
+ "floor": "dots" | "grid" | "plain",                       (optional)
+ "changes": [ { "id": "<item id>", ...fields to change } ],   (optional; "delete": true removes the item)
+ "restyle": [ { "ids": [...] or "types": [...], "color": "#hex", "style": {...}, "rot": n } ],   (optional; same look on many items)
+ "add": [ { "type": "note|card|text|shape|frame|flip|sticker|checklist|clip|hide|image|link|prompt", "ref": "name", "x": n, "y": n, "w": n, "h": n, ...fields } ],   (optional; x/y are absolute)
+ "connect": [ { "from": "<id or ref>", "to": "<id or ref>", "label": "", "kind": "line|tunnel|raised|drawn", "flow": true } ],   (optional)
+ "connections": [ { "id": "<connection id>", "delete": true | "kind"/"dash"/"color"/"width"/"flow"/"label"... } ]   (optional)
+}
+Item fields: title, text, color (#hex), x, y, w, h, rot (degrees), z (higher = on top), locked,
+ style: { finish: soft|tinted|solid|glass|flat|none, shadow: sunk|flat|raised|float, radius: 0-60, size: text px 8-200, align: left|center|right, bold: true|false, muted: true|false, textColor: #hex, hand: true|false (handwriting) },
+ anim: { in: none|pop|fade|rise|zoom|draw|slide, loop: none|bounce|pulse|wiggle|float|spin|glow, delay: seconds },
+ shape (for shapes: rect|round|pill|ellipse|diamond|triangle|hexagon|star|arrow|bubble), emoji (for stickers, prefer i:icon-name),
+ paper (for notes: sticky|lined|spiral|grid|index|kraft|torn|aged), lift (for notes: flat|lifted|curled), pin (for notes: none|tape|pin|clip),
+ clip (for clips: paperclip|binder|pin|tape), metal (silver|gold|copper|black|color), items (checklist rows; "[x] row" = ticked), back (flip card back text), cover (hide: blur|frost|solid|curtain).
+Only include what changes. Use the real ids from the board.`;
+const EDIT_PLAN_SYSTEM = (name) => `You edit one board inside FlowMap, a creator's planning and presentation canvas: "${name}". The owner is looking at it right now and asked for a change.
+Do exactly what the owner asks. Keep everything they did not ask to change. Keep things inside their frames.
+When asked to make it look better, keep the content and improve the design:
+${BOARD_LOOK}
+Write any new text in the language the owner used.
+${PLAN_SPEC}`;
+
+// the board as short JSON lines: what the AI needs to place and restyle things, nothing bulky
+function compactBoard(view) {
+  const lines = view.items.map((i) => JSON.stringify({ ...i, ...(i.text ? { text: i.text.slice(0, 160) } : {}), ...(i.title ? { title: i.title.slice(0, 120) } : {}), ...(i.anim ? { anim: undefined } : {}) }));
+  const links = view.connections.map((l) => JSON.stringify({ id: l.id, from: l.from, to: l.to, ...(l.label ? { label: l.label } : {}), kind: l.style?.kind, ...(l.style?.color ? { color: l.style.color } : {}) }));
+  return `Board "${view.name}" · floor ${view.floor} · ${view.items.length} items${view.slides.length ? ` · slides in order: ${view.slides.join(', ')}` : ''}\nITEMS (one per line):\n${lines.join('\n')}${links.length ? `\nCONNECTIONS:\n${links.join('\n')}` : ''}`;
+}
+// pull the JSON object out of a reply that may carry thinking, code fences or chatter around it
+export function readPlan(text) {
+  let t = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '');
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1];
+  const start = t.indexOf('{');
+  if (start < 0) throw new Error('no JSON object in the answer');
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < t.length; i++) {
+    const c = t[i];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return JSON.parse(t.slice(start, i + 1));
+  }
+  throw new Error('the JSON answer was cut off');
+}
+async function chatOnce(ai, system, messages, deadline = Date.now() + 120000) {
+  const left = deadline - Date.now();
+  if (left < 8000) { const e = new Error('out of time'); e.name = 'TimeoutError'; throw e; }
+  const ms = Math.min(120000, left);
+  const anth = ai.provider === 'anthropic';
+  const r = anth
+    ? await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': ai.apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: ai.model || AI_PROVIDERS.anthropic.model, max_tokens: 8000, system, messages }), signal: AbortSignal.timeout(ms) })
+    : await fetch(`${(ai.baseUrl || AI_PROVIDERS.openai.baseUrl).replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ai.apiKey}` }, body: JSON.stringify({ model: ai.model, max_tokens: 8000, temperature: 0.4, messages: [{ role: 'system', content: system }, ...messages] }), signal: AbortSignal.timeout(ms) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`AI provider: ${j.error?.message || j.detail || r.status}`);
+  return anth ? (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('') : j.choices?.[0]?.message?.content || '';
+}
+async function editOnce(ctx, ai, board, request, deadline) {
+  if (!ai?.apiKey) throw new HttpError(400, 'Add an AI key in the 🧠 Brain settings first, or connect your own AI agent over MCP');
+  if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in the 🧠 Brain settings');
+  const bctx = { ...ctx, source: 'ai' };
+  const view = await callTool(bctx, 'get_board', { board: board.id });
+  const system = EDIT_PLAN_SYSTEM(view.name);
+  const messages = [{ role: 'user', content: `${compactBoard(view)}\n\nTHE OWNER ASKS: ${String(request).slice(0, 4000)}` }];
+  let plan = null, lastErr = null;
+  for (let attempt = 0; attempt < 2 && !plan; attempt++) {
+    let text;
+    try { text = await chatOnce(ai, system, messages, deadline); } catch (e) {
+      throw new HttpError(502, e.name === 'TimeoutError' ? 'The AI took too long. Try a faster model in 🧠 Brain, or ask for a smaller change.' : e.message);
+    }
+    try { plan = readPlan(text); } catch (e) {
+      lastErr = e;
+      messages.push({ role: 'assistant', content: String(text).slice(0, 4000) }, { role: 'user', content: `That was not usable (${e.message}). Reply again with ONLY the JSON object.` });
+    }
+  }
+  if (!plan) throw new HttpError(502, `The AI answered in a way FlowMap could not read (${lastErr?.message}). Try again, or pick another model in 🧠 Brain.`);
+  return applyPlan(bctx, view.id, plan);
+}
+// apply a plan with the same tools agents use, so the rules (valid colours, sizes, kinds) are the same
+export async function applyPlan(bctx, boardId, plan) {
+  const p = plan && typeof plan === 'object' ? plan : {};
+  const arr = (v) => (Array.isArray(v) ? v : []);
+  let edits = 0;
+  const changes = arr(p.changes), restyle = arr(p.restyle), conns = arr(p.connections);
+  if (changes.length || restyle.length || conns.length || p.floor) {
+    const r = await callTool(bctx, 'edit_board_items', { board: boardId, changes, restyle, connections: conns, floor: p.floor });
+    edits += r.changed + r.deleted + r.connections + (p.floor ? 1 : 0);
+  }
+  if (arr(p.add).length || arr(p.connect).length) {
+    const r = await callTool(bctx, 'add_to_board', { board: boardId, at: { x: 0, y: 0 }, items: arr(p.add), connections: arr(p.connect) });
+    edits += r.added + r.connections;
+  }
+  if (!edits) throw new HttpError(502, `The AI did not change anything${p.summary ? `: ${String(p.summary).slice(0, 200)}` : ''}. Try saying exactly what to change.`);
+  return { summary: String(p.summary || 'Done').slice(0, 400), edits };
 }
 
 export { addNote, addDays };

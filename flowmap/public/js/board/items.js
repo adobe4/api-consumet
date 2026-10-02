@@ -23,7 +23,7 @@ const ellipsis = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 export function buildItem(it, ctx) {
   const d = it.data || {};
   switch (it.type) {
-    case 'note': return [ed('txt', it.text, 'text', 'Write something…')];
+    case 'note': return [h('div', { class: 'paper' }), notePin(it), ed('txt', it.text, 'text', 'Write something…')];
     case 'text': return [ed('txt', it.text, 'text', 'Text')];
     case 'card': {
       const kids = [];
@@ -94,6 +94,13 @@ export function buildItem(it, ctx) {
     case 'hide': return [h('div', { class: 'hz' }, d.nolabel ? null : h('div', { class: 'hz-l' }, h('span', { class: 'hz-ic' }, d.tap === 'move' ? '✋' : d.tap === 'none' ? '🙈' : '👆'), ed('ttl', it.title, 'title', 'Tap to reveal')))];
     default: return [];
   }
+}
+// what holds a paper note to the board: a strip of tape, a push pin or a paperclip
+function notePin(it) {
+  const pin = it.data?.pin;
+  if (!pin || pin === 'none') return null;
+  const kind = pin === 'clip' ? 'paperclip' : pin;
+  return h('span', { class: `np np-${pin}` }, clipSvg({ id: `${it.id}np`, color: pin === 'tape' ? '#f3e3b3' : pin === 'pin' ? '#ff4d5e' : '', data: { kind, metal: pin === 'clip' ? 'silver' : 'color' } }));
 }
 function imgBox(url, fileId, ctx, cls) {
   const img = h('img', { alt: '', draggable: false, loading: 'lazy', referrerpolicy: 'no-referrer' });

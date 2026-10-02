@@ -17,6 +17,12 @@ export const SHADOWS = ['flat', 'raised', 'float', 'sunk'];
 export const ANIM_IN = ['none', 'pop', 'fade', 'rise', 'zoom', 'draw', 'slide'];
 export const ANIM_LOOP = ['none', 'bounce', 'pulse', 'wiggle', 'float', 'spin', 'glow'];
 export const FONT_SIZES = ['s', 'm', 'l', 'xl', 'xxl'];
+// the old size names, in px; style.size (a number) wins when set
+export const FONT_PX = { s: 12, m: 14.5, l: 20, xl: 32, xxl: 52 };
+// sticky notes as real paper
+export const PAPERS = ['sticky', 'lined', 'spiral', 'grid', 'index', 'kraft', 'torn', 'aged'];
+export const LIFTS = ['flat', 'lifted', 'curled'];
+export const NOTE_PINS = ['none', 'tape', 'pin', 'clip'];
 export const ALIGNS = ['left', 'center', 'right'];
 export const GROUNDS = ['dots', 'grid', 'plain'];
 // clips: things that hold paper down. A wire paperclip, a binder clip, a push pin or a strip of tape.
@@ -257,8 +263,7 @@ export function generateBoard(spec, { origin = { x: 0, y: 0 }, style = {} } = {}
     const notes = (Array.isArray(s.notes) ? s.notes : []).slice(0, 60);
     notes.forEach((t, i) => {
       const x = ox + (i % 5) * 270, y = oy + Math.floor(i / 5) * 250;
-      add('note', { x, y, w: 220, h: 180, text: text(t, 800), color: color(i, null), rot: tilt(i), anim: { in: 'pop', delay: i * 0.05 } });
-      clip(i % 2 ? x + 70 : x + 85, i % 2 ? y - 22 : y - 18, i % 2 ? 'tape' : 'pin', i, i % 2 ? { w: 90, h: 34 } : {});
+      add('note', { x, y, w: 220, h: 180, text: text(t, 800), color: color(i, null), rot: tilt(i), data: { paper: ['sticky', 'lined', 'sticky', 'index', 'kraft'][i % 5], pin: ['pin', 'tape', 'none', 'tape', 'pin'][i % 5] }, anim: { in: 'pop', delay: i * 0.05 } });
     });
   }
   if (s.title && layout !== 'slides' && layout !== 'mindmap') {

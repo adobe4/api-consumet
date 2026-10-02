@@ -323,7 +323,7 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     const request = String(body.prompt || '').trim();
     if (request.length < 3) throw new HttpError(400, 'Say what to change');
     const b = await getBoard(db, user.id, params.id);
-    const out = await runBoardEdit(ctxFor(user), aiOf(user), { id: b.id, name: b.name }, request);
+    const out = await runBoardEdit(ctxFor(user), aiOf(user), { id: b.id, name: b.name }, request).catch((e) => { console.error(`board AI failed (board ${b.id}): ${e.message}`); throw e; });
     return { ...out, board: boardOut(await getBoard(db, user.id, b.id)) };
   }, { agents: false });
   route('GET', '/api/boards/:id', async ({ user, params }) => boardOut(await getBoard(db, user.id, params.id)));

@@ -409,3 +409,64 @@
 .clip-prev { display: grid; place-items: center; height: 120px; border-radius: 14px; background: var(--bg); box-shadow: var(--sunk, inset 0 2px 6px rgba(0, 0, 0, 0.12)); background-image: radial-gradient(circle, color-mix(in srgb, var(--muted) 35%, transparent) 1px, transparent 1.4px); background-size: 16px 16px; }
 .clip-prev .clip-svg { height: 96px; width: 120px; filter: drop-shadow(1.5px 3px 1.6px rgba(40, 28, 16, 0.38)); }
 .clip-prev .ck-tape { height: 46px; width: 168px; }
+
+/* ---------- sticky notes as real paper ---------- */
+@font-face { font-family: "Caveat"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/caveat-latin-600.woff2") format("woff2"); }
+.bi.hand .ed, .bi.hand .txt, .bi.hand .ttl { font-family: "Caveat", "Segoe Print", "Bradley Hand", cursive; font-weight: 600; letter-spacing: 0; line-height: 1.15; }
+.bi.hand { font-size-adjust: 0.42; }
+.t-note.hand.pp-lined .txt, .t-note.hand.pp-spiral .txt, .t-note.hand.pp-index .txt, .t-note.hand.pp-grid .txt { line-height: 1.7em; }
+.bi.t-note {
+  --paper: color-mix(in srgb, var(--c) 18%, #fffaf0); --ink: #2b2118; --line: rgba(122, 92, 62, 0.24); --margin: rgba(214, 78, 62, 0.55);
+  --nsh: drop-shadow(0 1px 1px rgba(40, 28, 16, 0.22)) drop-shadow(0 8px 10px rgba(40, 28, 16, 0.16));
+  background: none !important; box-shadow: none !important; border-radius: 0; padding: 20px 18px 18px; --tc: var(--ink); color: var(--tc); filter: var(--nsh); font-weight: 600;
+}
+.bi.t-note.sel { filter: drop-shadow(0 0 1px var(--accent)) drop-shadow(0 0 1px var(--accent)) var(--nsh); }
+.t-note.lift-flat { --nsh: drop-shadow(0 1px 1.2px rgba(40, 28, 16, 0.24)); }
+.t-note.lift-curled { --nsh: drop-shadow(0 1px 1px rgba(40, 28, 16, 0.2)) drop-shadow(2px 14px 12px rgba(40, 28, 16, 0.2)); }
+.t-note > .paper { position: absolute; inset: 0; z-index: 0; background: var(--paper); border-radius: 2px; pointer-events: none; }
+.t-note > .ed, .t-note > .np { position: relative; z-index: 1; }
+.t-note .txt { line-height: 1.35; }
+/* a curled note: the corner folds over (dog-ear) */
+.t-note.lift-curled > .paper { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 30px), calc(100% - 30px) 100%, 0 100%); }
+.t-note.lift-curled > .paper::after { content: ""; position: absolute; right: 0; bottom: 0; width: 30px; height: 30px; background: linear-gradient(to bottom right, color-mix(in srgb, var(--paper) 78%, #fff) 0, color-mix(in srgb, var(--paper) 86%, #5b4630) 48%, transparent 50%); }
+/* classic sticky note: full colour, a glossy glued strip at the top, light falling across */
+.t-note.pp-sticky { --paper: var(--c); }
+.t-note.pp-sticky > .paper { background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16) 0 12%, rgba(0, 0, 0, 0.035) 12.5% 13.5%, transparent 14%), linear-gradient(168deg, color-mix(in srgb, var(--c) 72%, #fff) 0%, var(--c) 58%, color-mix(in srgb, var(--c) 88%, #3b2a1a) 100%); }
+/* notebook page: ruled lines and a red margin */
+.t-note.pp-lined, .t-note.pp-spiral, .t-note.pp-index { justify-content: flex-start; padding-left: 46px; }
+.t-note.pp-lined .txt, .t-note.pp-spiral .txt, .t-note.pp-index .txt, .t-note.pp-grid .txt { line-height: 1.7em; text-align: left; }
+.t-note.pp-lined > .paper { background: linear-gradient(90deg, transparent 33px, var(--margin) 33px 35px, transparent 35px), repeating-linear-gradient(to bottom, transparent 0 calc(1.7em - 1px), var(--line) calc(1.7em - 1px) 1.7em) 0 calc(20px + 0.12em) / 100% 100% no-repeat, var(--paper); }
+/* torn from a spiral notebook: punched holes along the top */
+.t-note.pp-spiral { padding-top: 38px; }
+.t-note.pp-spiral > .paper { background: linear-gradient(90deg, transparent 33px, var(--margin) 33px 35px, transparent 35px), repeating-linear-gradient(to bottom, transparent 0 calc(1.7em - 1px), var(--line) calc(1.7em - 1px) 1.7em) 0 calc(38px + 0.12em) / 100% 100% no-repeat, var(--paper);
+  -webkit-mask: radial-gradient(circle at 50% 14px, transparent 6px, #000 6.6px) 0 0 / 26px 28px repeat-x, linear-gradient(#000 0 0) 0 28px / 100% 100% no-repeat;
+  mask: radial-gradient(circle at 50% 14px, transparent 6px, #000 6.6px) 0 0 / 26px 28px repeat-x, linear-gradient(#000 0 0) 0 28px / 100% 100% no-repeat; }
+/* graph paper */
+.t-note.pp-grid { justify-content: flex-start; text-align: left; }
+.t-note.pp-grid > .paper { --g: color-mix(in srgb, var(--c) 34%, rgba(122, 92, 62, 0.22)); background: linear-gradient(var(--g) 1px, transparent 1px) -1px -1px / 18px 18px, linear-gradient(90deg, var(--g) 1px, transparent 1px) -1px -1px / 18px 18px, color-mix(in srgb, var(--c) 8%, #fffdf7); }
+/* index card: clean white, one red line at the top, faint lines below */
+.t-note.pp-index { padding-top: 16px; padding-left: 18px; }
+.t-note.pp-index > .paper { background: linear-gradient(to bottom, transparent calc(1.7em + 16px), var(--margin) calc(1.7em + 16px) calc(1.7em + 18px), transparent calc(1.7em + 18px)), repeating-linear-gradient(to bottom, transparent 0 calc(1.7em - 1px), rgba(122, 92, 62, 0.14) calc(1.7em - 1px) 1.7em) 0 calc(16px + 0.12em) / 100% 100% no-repeat, color-mix(in srgb, var(--c) 6%, #fffefb); }
+/* brown kraft paper with fibres */
+.t-note.pp-kraft { --paper: color-mix(in srgb, var(--c) 16%, #c9a273); --ink: #2e1f10; }
+.t-note.pp-kraft > .paper { background: radial-gradient(rgba(84, 54, 24, 0.22) 0.8px, transparent 1.3px) 0 0 / 7px 9px, radial-gradient(rgba(255, 244, 222, 0.22) 0.8px, transparent 1.4px) 3px 4px / 11px 13px, linear-gradient(170deg, color-mix(in srgb, var(--paper) 88%, #fff), var(--paper) 60%, color-mix(in srgb, var(--paper) 90%, #3b2410)); }
+/* a scrap ripped from a page: ragged edges all round */
+.t-note.pp-torn { padding: 24px 22px; }
+.t-note.pp-torn > .paper { background: linear-gradient(175deg, color-mix(in srgb, var(--paper) 92%, #fff), var(--paper)); clip-path: polygon(0% 3%, 4% 0%, 9% 2.5%, 14% 0.5%, 20% 3%, 26% 1%, 31% 3.5%, 37% 0.5%, 43% 2.5%, 49% 0%, 55% 3%, 61% 1%, 67% 3.5%, 73% 0.5%, 79% 2.5%, 85% 0%, 91% 3%, 96% 1%, 100% 3.5%, 98.5% 10%, 100% 18%, 98% 27%, 100% 36%, 98.5% 45%, 100% 55%, 98% 64%, 100% 73%, 98.5% 82%, 100% 91%, 97.5% 100%, 91% 97.5%, 85% 100%, 79% 97%, 73% 99.5%, 67% 96.5%, 61% 99.5%, 55% 97%, 49% 100%, 43% 97%, 37% 99.5%, 31% 96.5%, 26% 99%, 20% 96.5%, 14% 99.5%, 9% 97%, 4% 100%, 0% 97%, 1.5% 90%, 0% 81%, 2% 72%, 0% 63%, 1.5% 54%, 0% 45%, 2% 36%, 0% 27%, 1.5% 18%, 0% 10%); }
+/* old paper: yellowed in the middle, darker towards the edges */
+.t-note.pp-aged { --paper: color-mix(in srgb, var(--c) 10%, #f1dfb6); --ink: #3a2812; }
+.t-note.pp-aged > .paper { border-radius: 3px; background: radial-gradient(circle at 80% 24%, transparent 0 13px, rgba(140, 92, 36, 0.2) 14px 16px, rgba(140, 92, 36, 0.07) 17px 19px, transparent 20px), radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--paper) 80%, #fff) 0%, var(--paper) 55%, color-mix(in srgb, var(--paper) 78%, #7a4f1c) 100%); box-shadow: inset 0 0 18px rgba(122, 78, 28, 0.35); }
+/* what holds the note: tape, a pin or a paperclip */
+.t-note > .np { position: absolute; z-index: 2; pointer-events: none; }
+.t-note > .np-tape { top: -14px; left: 50%; width: 92px; height: 30px; transform: translateX(-50%) rotate(-4deg); }
+.t-note > .np-pin { top: -12px; left: 50%; width: 30px; height: 34px; transform: translateX(-50%); }
+.t-note > .np-clip { top: -22px; right: 24px; width: 24px; height: 68px; transform: rotate(8deg); }
+.t-note > .np .clip-svg { width: 100%; height: 100%; filter: drop-shadow(1px 2px 1.2px rgba(40, 28, 16, 0.35)); }
+/* paper picker tiles */
+.pp-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.pp-tile { display: grid; gap: 6px; justify-items: center; padding: 6px 4px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; font: 600 11.5px/1 var(--font, inherit); color: var(--muted); }
+.pp-tile.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--strong); }
+.pp-tile .bi.t-note { position: relative; width: 62px; height: 54px; padding: 0; transform: rotate(-3deg); }
+.size-row { display: grid; grid-template-columns: auto 1fr 64px auto; gap: 10px; align-items: center; }
+.size-row input[type="number"] { width: 64px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--text); font: inherit; appearance: textfield; -moz-appearance: textfield; }
+.size-row small { color: var(--muted); }

@@ -5,7 +5,7 @@ import { icon as svgIcon } from '../icons.js';
 import { api } from '../api.js';
 import { S, projects, project, notify } from '../store.js';
 import { createSurface, route, drawLink, drawLabel, svgEl, LINK_DEFAULT } from '../surface.js';
-import { makeItem, makeLink, newId, bounds, inside, PALETTE, DEFAULT_SIZE, CLIP_SIZE } from '/shared/board.js';
+import { makeItem, makeLink, newId, bounds, inside, PALETTE, DEFAULT_SIZE, CLIP_SIZE, FONT_PX } from '/shared/board.js';
 import { CLIP_DEFAULT, CLIP_LABEL, METAL_LABEL, clipSvg } from './clips.js';
 import { buildItem, contentKey, SHAPE_LABEL, TYPE_LABEL } from './items.js';
 import { uploadFile, saveVideo, pickFiles, fileText } from './files.js';
@@ -36,6 +36,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   let version = board.version, name = board.name, icon = board.icon || '';
   let tool = 'select', toolLock = false, sticker = 'i:arrow-right', shapeKind = 'round', penColor = '#ff7a2f';
   let clipKind = 'paperclip', clipMetal = 'silver', clipColor = '';
+  let notePaper = 'sticky', noteLift = 'lifted', notePinKind = 'none';
   const sel = new Set();
   const els = new Map(), linkEls = new Map(), inkEls = new Map();
   let editing = null, undo = [], redo = [], destroyed = false, drag = null;
@@ -129,6 +130,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (t === 'shape') shapePicker(toolbar.querySelector('[data-t="shape"]'));
     if (t === 'sticker') stickerPicker(toolbar.querySelector('[data-t="sticker"]'));
     if (t === 'clip') clipPicker(toolbar.querySelector('[data-t="clip"]'));
+    if (t === 'note') paperPicker(toolbar.querySelector('[data-t="note"]'));
     if (t === 'pen' || t === 'highlight') penPicker(toolBtn(t));
     if (t === 'image') imagePicker(toolBtn('image'));
     if (t === 'file') { attachFiles(); setTool('select'); }
@@ -211,7 +213,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   }
   function layout(el, it) {
     const s = it.style || {};
-    el.className = `bi t-${it.type} fin-${finishOf(it)} sh-${s.shadow || 'raised'} f-${s.font || 'm'} al-${s.align || (it.type === 'text' || it.type === 'prompt' ? 'left' : 'center')}${s.weight >= 700 ? ' bold' : ''}${s.muted ? ' muted' : ''}${it.locked ? ' locked' : ''}${sel.has(it.id) ? ' sel' : ''}${it.anim?.loop && it.anim.loop !== 'none' ? ` lp-${it.anim.loop}` : ''}${it.type === 'shape' ? ` sh-${it.data?.shape || 'round'}` : ''}${it.type === 'flip' && it.data?.flipped ? ' flipped' : ''}${editing === it.id ? ' editing' : ''}${it.type === 'hide' ? ` cv-${it.data?.cover || 'blur'} tap-${it.data?.tap || 'reveal'}` : ''}${it.data?.movable ? ' movable' : ''}${revealed.has(it.id) ? ' revealed' : ''}`;
+    el.className = `bi t-${it.type} fin-${finishOf(it)} sh-${s.shadow || 'raised'} f-${s.font || 'm'} al-${s.align || (it.type === 'text' || it.type === 'prompt' ? 'left' : 'center')}${s.weight >= 700 ? ' bold' : ''}${s.muted ? ' muted' : ''}${it.locked ? ' locked' : ''}${sel.has(it.id) ? ' sel' : ''}${it.anim?.loop && it.anim.loop !== 'none' ? ` lp-${it.anim.loop}` : ''}${it.type === 'shape' ? ` sh-${it.data?.shape || 'round'}` : ''}${it.type === 'flip' && it.data?.flipped ? ' flipped' : ''}${editing === it.id ? ' editing' : ''}${it.type === 'hide' ? ` cv-${it.data?.cover || 'blur'} tap-${it.data?.tap || 'reveal'}` : ''}${it.data?.movable ? ' movable' : ''}${revealed.has(it.id) ? ' revealed' : ''}${it.type === 'note' ? ` pp-${it.data?.paper || 'sticky'} lift-${it.data?.lift || 'lifted'}` : ''}${s.hand ? ' hand' : ''}`;
     el.style.left = `${it.x}px`; el.style.top = `${it.y}px`; el.style.width = `${it.w}px`; el.style.height = `${it.h}px`;
     el.style.transform = it.rot ? `rotate(${it.rot}deg)` : '';
     // clips sit on the paper they hold, covers sit over everything
@@ -219,6 +221,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     el.style.setProperty('--c', it.color || (it.type === 'note' ? '#ffb020' : it.type === 'shape' ? '#ff8a5c' : 'var(--accent)'));
     if (s.textColor) el.style.setProperty('--tc', s.textColor); else el.style.removeProperty('--tc');
     if (typeof s.radius === 'number') el.style.setProperty('--r', `${s.radius}px`); else el.style.removeProperty('--r');
+    el.style.fontSize = typeof s.size === 'number' ? `${s.size}px` : '';
   }
   function renderInk(it) {
     let p = inkEls.get(it.id);
@@ -301,7 +304,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const kids = [];
     if (its.length) {
       kids.push(h('button', { type: 'button', class: 'cb cdot', title: 'Colour', style: { '--c': first.color || 'var(--accent)' }, onclick: (e) => colorPop(e.currentTarget) }));
-      if (its.some((i) => ['note', 'card', 'shape', 'frame', 'flip', 'image', 'video', 'file', 'link', 'project', 'checklist', 'prompt'].includes(i.type))) kids.push(b(stylePop, '◐', 'Finish & shadow'));
+      if (its.some((i) => i.type === 'note')) kids.push(b(paperPop, '🗒️', 'Paper: kind, colour, how it sits'));
+      if (its.some((i) => ['card', 'shape', 'frame', 'flip', 'image', 'video', 'file', 'link', 'project', 'checklist', 'prompt'].includes(i.type))) kids.push(b(stylePop, '◐', 'Finish & shadow'));
       if (its.some((i) => ['note', 'card', 'text', 'shape', 'flip', 'prompt', 'checklist', 'frame'].includes(i.type))) kids.push(b(textPop, 'Aa', 'Text size & alignment'));
       if (first.type === 'shape' && its.length === 1) kids.push(b(shapeSwap, '◆', 'Change shape'));
       kids.push(b(animPop, '✨', 'Animation'));
@@ -553,7 +557,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       it = makeItem(type, { x: snap(w.x - dw / 2), y: snap(w.y - dh / 2), z: type === 'frame' ? minZ() - 1 : maxZ() + 1, anim: { in: 'pop' } });
       if (type === 'shape') it.data.shape = shapeKind;
       if (type === 'sticker') { it.text = sticker; it.anim = { in: 'pop', loop: sticker.startsWith('i:') ? 'none' : 'bounce' }; }
-      if (type === 'note') it.color = PALETTE[(data.items.length) % 6];
+      if (type === 'note') { it.color = PALETTE[(data.items.length) % 6]; it.data = { paper: notePaper, lift: noteLift, ...(notePinKind !== 'none' ? { pin: notePinKind } : {}) }; it.rot = [-2, 1.5, -1, 2][data.items.length % 4]; }
       if (type === 'frame') { it.title = `Frame ${data.items.filter((i) => i.type === 'frame').length + 1}`; it.style = { shadow: 'raised' }; }
       if (type === 'checklist') { it.title = 'Checklist'; it.data.items = [{ t: 'First step', done: false }, { t: 'Second step', done: false }]; }
       if (type === 'flip') { it.title = 'FRONT'; it.data.back = 'Line one\nLine two\nLine three'; }
@@ -1014,11 +1018,72 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const its = [...sel].map(byId).filter(Boolean), f = its[0];
     const set = (patch) => change(() => its.forEach((i) => { i.style = { ...i.style, ...patch }; }));
     openPop({ ...anchorFor(btn), title: 'Text', width: 380, body: h('div', { class: 'pgrid' },
-      segRow('Size', [['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL'], ['xxl', 'XXL']], f.style?.font || 'm', (v) => set({ font: v })),
+      sizeRow(its),
       segRow('Align', [['left', '⇤'], ['center', '↔'], ['right', '⇥']], f.style?.align || 'center', (v) => set({ align: v })),
       toggleRow('Bold', (f.style?.weight || 0) >= 700, (v) => set({ weight: v ? 800 : 0 })),
-      toggleRow('Soft colour', !!f.style?.muted, (v) => set({ muted: v }))) });
+      toggleRow('Soft colour', !!f.style?.muted, (v) => set({ muted: v })),
+      toggleRow('Handwriting', !!f.style?.hand, (v) => set({ hand: v || undefined }))) });
   }
+  // text size in px: drag the slider or type a number; one undo step per change
+  const sizeOf = (i) => (typeof i.style?.size === 'number' ? i.style.size : FONT_PX[i.style?.font || (i.type === 'text' ? 'l' : 'm')] || 14.5);
+  function sizeRow(its) {
+    const cur = Math.round(sizeOf(its[0]) * 2) / 2;
+    const num = h('input', { type: 'number', min: 6, max: 200, step: 1, value: cur, 'aria-label': 'Text size in pixels' });
+    const rng = h('input', { type: 'range', min: 8, max: 120, step: 1, value: Math.min(120, cur), 'aria-label': 'Text size' });
+    const live = (v) => {
+      if (!Number.isFinite(v) || v < 6 || v > 200) return;
+      begin();
+      for (const i of its) { i.style = { ...i.style, size: v }; const el = els.get(i.id); if (el) layout(el, i); }
+    };
+    const done = () => { render(); commit(); };
+    rng.addEventListener('input', () => { num.value = rng.value; live(Number(rng.value)); });
+    rng.addEventListener('change', done);
+    num.addEventListener('input', () => { const v = Number(num.value); if (v >= 8) rng.value = String(Math.min(120, v)); live(v); });
+    num.addEventListener('change', done);
+    num.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); done(); num.blur(); } });
+    return h('div', { class: 'pr size-row' }, h('span', { class: 'pl' }, 'Size'), rng, num, h('small', null, 'px'));
+  }
+
+  // ---------- paper notes ----------
+  const PAPER_LABEL = { sticky: 'Sticky', lined: 'Lined', spiral: 'Notebook', grid: 'Graph', index: 'Index card', kraft: 'Kraft', torn: 'Torn scrap', aged: 'Old paper' };
+  const NOTE_COLORS = ['#ffd54a', '#ffb020', '#ff8a5c', '#ff6fae', '#b8e04a', '#7fd8b0', '#e8b86b', '#f5f1ea', '#e07a5f', '#c9a27e'];
+  function paperBody(cur, set) {
+    const tile = (k) => h('button', { type: 'button', class: `pp-tile${cur.paper === k ? ' on' : ''}`, onclick: () => set({ paper: k }) },
+      h('div', { class: `bi t-note pp-${k} lift-${cur.lift}`, style: { '--c': cur.color || '#ffd54a' } }, h('div', { class: 'paper' })), PAPER_LABEL[k]);
+    return h('div', { class: 'pgrid' },
+      h('div', { class: 'pp-tiles' }, Object.keys(PAPER_LABEL).map(tile)),
+      swatchRow('Colour', NOTE_COLORS, cur.color || '', (c) => set({ color: c })),
+      segRow('Sits', [['flat', 'Flat'], ['lifted', 'Lifted'], ['curled', 'Corner folded']], cur.lift, (v) => set({ lift: v })),
+      segRow('Held by', [['none', 'Nothing'], ['tape', 'Tape'], ['pin', 'Pin'], ['clip', 'Clip']], cur.pin || 'none', (v) => set({ pin: v })),
+      h('p', { class: 'phint' }, 'Tilt it with the round handle. Text size, bold and ✍ handwriting are under Aa.'));
+  }
+  function paperPicker(btn) {
+    const cur = { paper: notePaper, lift: noteLift, pin: notePinKind, color: '' };
+    const holder = h('div');
+    const paint = () => clear(holder).append(paperBody(cur, (patch) => { Object.assign(cur, patch); notePaper = cur.paper; noteLift = cur.lift; notePinKind = cur.pin; paint(); }));
+    paint();
+    openPop({ anchor: btn, title: 'Pick a paper, then tap the board', width: 420, body: holder });
+  }
+  function paperPop(btn) {
+    const its = [...sel].map(byId).filter((i) => i?.type === 'note');
+    if (!its.length) return;
+    const f = its[0];
+    const cur = { paper: f.data?.paper || 'sticky', lift: f.data?.lift || 'lifted', pin: f.data?.pin || 'none', color: f.color || '' };
+    const holder = h('div');
+    const paint = () => clear(holder).append(paperBody(cur, (patch) => {
+      Object.assign(cur, patch);
+      change(() => its.forEach((i) => {
+        i.data = { ...i.data, paper: cur.paper, lift: cur.lift };
+        if (cur.pin === 'none') delete i.data.pin; else i.data.pin = cur.pin;
+        if ('color' in patch) i.color = patch.color;
+      }));
+      notePaper = cur.paper; noteLift = cur.lift; notePinKind = cur.pin;
+      paint();
+    }));
+    paint();
+    openPop({ ...anchorFor(btn), title: '🗒️ Paper', width: 420, body: holder });
+  }
+
   function animPop(btn) {
     const its = [...sel].map(byId).filter(Boolean), f = its[0];
     const set = (patch) => change(() => its.forEach((i) => { i.anim = { ...i.anim, ...patch }; }));
