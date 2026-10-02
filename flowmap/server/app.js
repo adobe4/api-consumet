@@ -5,7 +5,7 @@ import { RES, HttpError, fromRow, toCols, readWorld, loadWorld, ownedProjectIds,
 import { simulate, alerts, suggestions } from '../shared/engine.js';
 import { buildTemplate, TEMPLATES } from '../shared/templates.js';
 import { scanProject, scanAll, dayIn } from './sync.js';
-import { handleMcp, runBrain, runBoardAI, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey } from './brain.js';
+import { handleMcp, runBrain, runBoardAI, runBoardEdit, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey } from './brain.js';
 import { listBoards, getBoard, boardOut, createBoard, seedBoards, saveBoard, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, sharedFile } from './boards.js';
 import { generateBoard } from '../shared/board.js';
 
@@ -317,6 +317,14 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     if (request.length < 4) throw new HttpError(400, 'Describe the board you want');
     const out = await runBoardAI(ctxFor(user), aiOf(user), request);
     return { ...out, board: boardOut(await getBoard(db, user.id, out.board.id)) };
+  }, { agents: false });
+  route('POST', '/api/boards/:id/ai', async ({ user, params, body }) => {
+    if (!brainLimit(`brain:${user.id}`)) throw new HttpError(429, 'The AI already ran many times this hour. Try again later.');
+    const request = String(body.prompt || '').trim();
+    if (request.length < 3) throw new HttpError(400, 'Say what to change');
+    const b = await getBoard(db, user.id, params.id);
+    const out = await runBoardEdit(ctxFor(user), aiOf(user), { id: b.id, name: b.name }, request);
+    return { ...out, board: boardOut(await getBoard(db, user.id, b.id)) };
   }, { agents: false });
   route('GET', '/api/boards/:id', async ({ user, params }) => boardOut(await getBoard(db, user.id, params.id)));
   route('PUT', '/api/boards/:id', async ({ user, params, body }) => saveBoard(db, user.id, params.id, body));

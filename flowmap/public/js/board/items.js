@@ -4,6 +4,7 @@ import { icon } from '../icons.js';
 import { S, project } from '../store.js';
 import { KINDS } from '/shared/engine.js';
 import { fileUrl, videoUrl } from './files.js';
+import { clipSvg } from './clips.js';
 
 const star = (() => { const pts = []; for (let i = 0; i < 10; i++) { const r = i % 2 ? 22 : 50, a = (i / 10) * Math.PI * 2 - Math.PI / 2; pts.push(`${50 + Math.cos(a) * r},${52 + Math.sin(a) * r}`); } return `M${pts.join(' L')}Z`; })();
 export const SHAPE_PATHS = {
@@ -13,7 +14,7 @@ export const SHAPE_PATHS = {
 export const SHAPE_LABEL = { rect: '▭ Box', round: '▢ Rounded', pill: '⬭ Pill', ellipse: '◯ Circle', diamond: '◇ Diamond', triangle: '△ Triangle', hexagon: '⬡ Hexagon', star: '☆ Star', arrow: '➜ Arrow', bubble: '💬 Speech' };
 const NS = 'http://www.w3.org/2000/svg';
 
-export const TYPE_LABEL = { note: 'Sticky note', card: 'Card', text: 'Text', shape: 'Shape', frame: 'Frame', flip: 'Flip card', image: 'Image', video: 'Video', file: 'File', link: 'Link', project: 'Project', sticker: 'Sticker', ink: 'Drawing', checklist: 'Checklist', prompt: 'Prompt', hide: 'Hide' };
+export const TYPE_LABEL = { note: 'Sticky note', card: 'Card', text: 'Text', shape: 'Shape', frame: 'Frame', flip: 'Flip card', image: 'Image', video: 'Video', file: 'File', link: 'Link', project: 'Project', sticker: 'Sticker', ink: 'Drawing', checklist: 'Checklist', prompt: 'Prompt', hide: 'Hide', clip: 'Clip' };
 // typed text goes in raw: what people write is never turned into icons
 const ed = (cls, text, field, placeholder) => h('div', { class: `ed ${cls}`, 'data-field': field, 'data-ph': placeholder || '' }, raw(text || ''));
 const ellipsis = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -89,6 +90,7 @@ export function buildItem(it, ctx) {
     }
     case 'prompt': return [h('div', { class: 'prh' }, h('span', null, '✦'), ed('ttl', it.title, 'title', 'Prompt'), h('button', { type: 'button', class: 'btn sm primary', 'data-act': 'copy', title: 'Copy the prompt' }, '⧉ Copy')), ed('txt selectable sf-scroll', it.text, 'text', 'Write or paste a prompt…')];
     // a cover over other things: blurred, frosted, solid or striped; tapped away while presenting
+    case 'clip': return [clipSvg(it)];
     case 'hide': return [h('div', { class: 'hz' }, d.nolabel ? null : h('div', { class: 'hz-l' }, h('span', { class: 'hz-ic' }, d.tap === 'move' ? '✋' : d.tap === 'none' ? '🙈' : '👆'), ed('ttl', it.title, 'title', 'Tap to reveal')))];
     default: return [];
   }
@@ -102,4 +104,4 @@ function imgBox(url, fileId, ctx, cls) {
   return box;
 }
 // the content key: when it changes the item is rebuilt; position changes never rebuild
-export const contentKey = (it) => JSON.stringify([it.type, it.title, it.text, it.data, S.offset, it.type === 'project' ? S.version : 0]);
+export const contentKey = (it) => JSON.stringify([it.type, it.title, it.text, it.data, it.type === 'clip' ? it.color : 0, S.offset, it.type === 'project' ? S.version : 0]);

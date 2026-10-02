@@ -377,39 +377,74 @@ async function brainOnce(ctx, ai, { trigger = 'manual', budgetMs = 50000 } = {})
   return { summary, actions };
 }
 
-// ---------- built-in AI: build a board from a request ----------
+// ---------- built-in AI: build a board from a request, or change the board that is open ----------
+const BOARD_LOOK = `Make it look designed, never like a table or a plain list:
+- Breathing room: 40px+ between blocks, align things on clean rows and columns.
+- Group related things inside a frame (style.shadow "sunk") with a short title; use shapes (pill or round) as soft labelled buttons, flip cards for "tap to see more".
+- Warm earthy colours only (#e8b86b, #ff8a5c, #e07a5f, #c9a27e, #b8e04a, #2fb4a0, #ffb020, #ff6fae, #8a7b6d); never blue or purple. One accent colour per group.
+- Big bold titles (style.font "xl", bold), quieter details (style.muted), stickers (i: icons) and the odd paperclip or tape (type clip) to make it feel real; tilt notes and clips a few degrees.
+- Curved connections; "tunnel" kind with flow for money or attention moving.`;
 const BOARD_SYSTEM = `You design boards inside FlowMap, a creator's planning and presentation canvas. The owner will present boards full screen and screen-record them for tutorials, strategy videos and courses.
-Read the request, look at the system overview if it helps (get_overview), then call create_board exactly once with a well-structured spec:
+Read the request, look at the system overview if it helps (get_overview), then call create_board once with a well-structured spec:
 - For a video, lesson or pitch use layout "slides": 5 to 12 slides, each with a short punchy title, 2 to 6 points ("Heading: detail"), an emoji, and speaker notes with what to say.
 - For processes use "workflow" with nodes and edges; for brainstorming "mindmap"; for task boards "kanban"; for plans over time "timeline".
+Then polish it: read it with get_board and use edit_board_items (and add_to_board for extra stickers, clips or notes) so it looks great.
+${BOARD_LOOK}
 Write in the language the owner used. Be concrete and specific to their projects when relevant. Finish with one sentence saying what you built.`;
-const BOARD_AI_TOOLS = [TOOL_BY_NAME.get('get_overview'), TOOL_BY_NAME.get('create_board'), TOOL_BY_NAME.get('list_boards')];
+const BOARD_AI_TOOLS = ['get_overview', 'list_boards', 'create_board', 'get_board', 'edit_board_items', 'add_to_board'].map((n) => TOOL_BY_NAME.get(n));
+const EDIT_SYSTEM = (id, name) => `You edit one board inside FlowMap, a creator's planning and presentation canvas: board ${id} ("${name}"). The owner is looking at it right now.
+First read it with get_board. Then do exactly what the owner asks with edit_board_items (move, resize, restyle, recolour, rewrite, rotate, animate, delete, change connections or the floor) and add_to_board (new items, clips, stickers, blocks). Keep what the owner did not ask to change. Use real ids from get_board.
+When asked to make it look better, keep the content and improve the design:
+${BOARD_LOOK}
+Write in the language the owner used. Finish with one short sentence saying what you changed.`;
+const EDIT_AI_TOOLS = ['get_board', 'edit_board_items', 'add_to_board', 'get_overview'].map((n) => TOOL_BY_NAME.get(n));
 
-export async function runBoardAI(ctx, chain, request) { return withFallback(chain, (ai) => boardOnce(ctx, ai, request)); }
-async function boardOnce(ctx, ai, request) {
+// one tool-using conversation; returns the final text and the tools that ran
+async function boardTurns(ctx, ai, system, tools, request, { steps = 8, onCall } = {}) {
   if (!ai?.apiKey) throw new HttpError(400, 'Add an AI key in the 🧠 Brain settings first, or connect your own AI agent over MCP');
   if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in the 🧠 Brain settings');
   const bctx = { ...ctx, source: 'ai' };
   const turn = ai.provider === 'anthropic' ? anthropicTurn : openaiTurn;
   const messages = [{ role: 'user', content: String(request).slice(0, 6000) }];
-  let created = null, text = '';
-  for (let step = 0; step < 5 && !created; step++) {
+  let text = '';
+  const ran = [];
+  const start = Date.now();
+  for (let step = 0; step < steps; step++) {
     let t;
-    try { t = await turn(ai, BOARD_SYSTEM, messages, BOARD_AI_TOOLS); } catch (e) { throw new HttpError(502, e.name === 'TimeoutError' ? 'The AI provider took too long to answer' : e.message); }
+    try { t = await turn(ai, system, messages, tools); } catch (e) {
+      if (!ran.length) throw new HttpError(502, e.name === 'TimeoutError' ? 'The AI provider took too long to answer' : e.message);
+      break;
+    }
     text = t.text || text;
     if (!t.calls.length) break;
     const results = [];
     for (const c of t.calls) {
       try {
         const out = await callTool(bctx, c.name, c.args);
-        if (c.name === 'create_board') created = out.created;
-        results.push({ id: c.id, content: JSON.stringify(out).slice(0, 12000) });
+        onCall?.(c.name, out);
+        ran.push(c.name);
+        results.push({ id: c.id, content: JSON.stringify(out).slice(0, 24000) });
       } catch (e) { results.push({ id: c.id, content: e.message, isError: true }); }
     }
     t.answer(results);
+    if (Date.now() - start > 50000) break;
   }
+  return { text: (text || '').trim().slice(0, 600), ran };
+}
+
+export async function runBoardAI(ctx, chain, request) { return withFallback(chain, (ai) => boardOnce(ctx, ai, request)); }
+async function boardOnce(ctx, ai, request) {
+  let created = null;
+  const { text } = await boardTurns(ctx, ai, BOARD_SYSTEM, BOARD_AI_TOOLS, request, { onCall: (name, out) => { if (name === 'create_board' && !created) created = out.created; } });
   if (!created) throw new HttpError(502, text ? `The AI did not build a board: ${text.slice(0, 300)}` : 'The AI did not build a board. Try describing it differently.');
-  return { board: created, summary: (text || '').trim().slice(0, 600) };
+  return { board: created, summary: text };
+}
+export async function runBoardEdit(ctx, chain, board, request) { return withFallback(chain, (ai) => editOnce(ctx, ai, board, request)); }
+async function editOnce(ctx, ai, board, request) {
+  const { text, ran } = await boardTurns(ctx, ai, EDIT_SYSTEM(board.id, board.name), EDIT_AI_TOOLS, request);
+  const edits = ran.filter((n) => n === 'edit_board_items' || n === 'add_to_board').length;
+  if (!edits) throw new HttpError(502, text ? `The AI did not change the board: ${text.slice(0, 300)}` : 'The AI did not change the board. Try asking differently.');
+  return { summary: text || 'Done', edits };
 }
 
 export { addNote, addDays };

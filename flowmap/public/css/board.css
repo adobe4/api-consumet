@@ -399,3 +399,13 @@
 .tplc .ti .lic { width: 26px; height: 26px; }
 .hz-ic .lic { width: 18px; height: 18px; color: var(--accent); }
 .pb .lic { width: 18px; height: 18px; }
+
+/* clips: paperclips, binder clips, push pins and tape that sit on top of paper */
+.bi.t-clip { background: none !important; box-shadow: none !important; border: 0; padding: 0; overflow: visible; }
+.t-clip .clip-svg { width: 100%; height: 100%; overflow: visible; pointer-events: none; filter: drop-shadow(1.5px 3px 1.6px rgba(40, 28, 16, 0.38)) drop-shadow(0 0.5px 0.4px rgba(0, 0, 0, 0.25)); }
+.t-clip .ck-pin { filter: drop-shadow(5px 8px 3px rgba(40, 28, 16, 0.32)) drop-shadow(1px 2px 1px rgba(0, 0, 0, 0.3)); }
+.t-clip .ck-tape { filter: drop-shadow(0 1px 1.2px rgba(40, 28, 16, 0.22)); }
+.t-clip.sel .clip-svg { filter: drop-shadow(0 0 0.5px var(--accent)) drop-shadow(1.5px 3px 1.6px rgba(40, 28, 16, 0.38)); }
+.clip-prev { display: grid; place-items: center; height: 120px; border-radius: 14px; background: var(--bg); box-shadow: var(--sunk, inset 0 2px 6px rgba(0, 0, 0, 0.12)); background-image: radial-gradient(circle, color-mix(in srgb, var(--muted) 35%, transparent) 1px, transparent 1.4px); background-size: 16px 16px; }
+.clip-prev .clip-svg { height: 96px; width: 120px; filter: drop-shadow(1.5px 3px 1.6px rgba(40, 28, 16, 0.38)); }
+.clip-prev .ck-tape { height: 46px; width: 168px; }

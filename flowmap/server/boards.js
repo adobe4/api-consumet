@@ -3,7 +3,9 @@
 import crypto from 'node:crypto';
 import { HttpError } from './models.js';
 import { hashPassword, verifyPassword } from './auth.js';
-import { sanitizeBoard, generateBoard, BoardError, emptyBoard, bounds, makeItem, makeLink, newId, ITEM_TYPES, SHAPES, LINK_KINDS, LINK_PATHS, LINK_DASH, LINK_ENDS } from '../shared/board.js';
+import { sanitizeBoard, generateBoard, BoardError, emptyBoard, bounds, makeItem, makeLink, newId, ITEM_TYPES, SHAPES, LINK_KINDS, LINK_PATHS, LINK_DASH, LINK_ENDS, FINISHES, SHADOWS, ANIM_IN, ANIM_LOOP, FONT_SIZES, ALIGNS, GROUNDS, CLIP_KINDS, CLIP_METALS, CLIP_SIZE } from '../shared/board.js';
+
+const HIDE_COVERS = ['blur', 'frost', 'solid', 'curtain'];
 
 const MAX_BOARDS = 200;
 const MAX_FILE = 1_600_000; // decoded bytes
@@ -129,92 +131,224 @@ const SPEC_SCHEMA = {
     notes: { type: 'array', items: { type: 'string' } },
   },
 };
-const ITEM_SCHEMA = {
-  type: 'object',
+// Everything an AI may set on an item, when adding it or changing it later. Positions are absolute on
+// edit_board_items and relative to the new block on add_to_board.
+const HEX = { type: 'string', description: 'Hex colour like #e8b86b' };
+const STYLE_SCHEMA = {
+  type: 'object', description: 'How the item looks. Only the keys you give change.',
   properties: {
-    type: { type: 'string', enum: ITEM_TYPES }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
-    title: { type: 'string' }, text: { type: 'string' }, color: { type: 'string', description: 'Hex colour' },
-    shape: { type: 'string', enum: SHAPES, description: 'For type=shape' }, emoji: { type: 'string', description: 'For type=sticker. Prefer a line icon: i:arrow-right, i:arrow-left, i:arrow-up, i:arrow-down, i:check, i:x, i:star, i:flame, i:rocket, i:lightbulb, i:target, i:zap, i:trophy, i:heart, i:thumbs-up, i:circle-alert, i:sparkles, i:banknote, i:clock, i:pin, i:flag, i:megaphone (an emoji also works)' },
-    url: { type: 'string', description: 'For type=image or type=link' }, back: { type: 'string', description: 'For type=flip: text on the back, one line per row' },
-    items: { type: 'array', items: { type: 'string' }, description: 'For type=checklist' },
-    cover: { type: 'string', enum: ['blur', 'frost', 'solid', 'curtain'], description: 'For type=hide: a cover laid over other items (put it after them) that the viewer taps to reveal what is underneath. Good for quiz answers, prices, the next step.' },
-    ref: { type: 'string', description: 'Your own name for this item so connections can point at it' },
+    finish: { type: 'string', enum: [...FINISHES, 'none'], description: 'soft = raised paper, tinted = colour wash, solid = full colour, glass = frosted, flat = no depth, none = no background (text only)' },
+    shadow: { type: 'string', enum: SHADOWS, description: 'sunk = pressed in (good for frames and trays), flat, raised, float = lifted high' },
+    radius: { type: 'number', description: 'Corner roundness in px, 0 to 60' },
+    font: { type: 'string', enum: FONT_SIZES }, align: { type: 'string', enum: ALIGNS },
+    bold: { type: 'boolean' }, muted: { type: 'boolean', description: 'Softer, quieter text' }, textColor: HEX,
   },
 };
+const ANIM_SCHEMA = { type: 'object', description: 'Animation when presenting', properties: { in: { type: 'string', enum: ANIM_IN }, loop: { type: 'string', enum: ANIM_LOOP }, delay: { type: 'number', description: 'Seconds' } } };
+const LOOK_PROPS = {
+  title: { type: 'string' }, text: { type: 'string' }, color: { ...HEX, description: 'Main colour of the item (note paper, card accent, shape fill, clip colour when metal=color)' },
+  x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, rot: { type: 'number', description: 'Rotation in degrees. A few degrees (-4..4) makes notes and clips look hand-placed.' },
+  z: { type: 'number', description: 'Stacking: higher is on top' },
+  style: STYLE_SCHEMA, anim: ANIM_SCHEMA,
+  shape: { type: 'string', enum: SHAPES, description: 'For type=shape' },
+  emoji: { type: 'string', description: 'For type=sticker. Prefer a line icon: i:arrow-right, i:arrow-left, i:arrow-up, i:arrow-down, i:check, i:x, i:star, i:flame, i:rocket, i:lightbulb, i:target, i:zap, i:trophy, i:heart, i:thumbs-up, i:circle-alert, i:sparkles, i:banknote, i:clock, i:pin, i:flag, i:megaphone (an emoji also works)' },
+  url: { type: 'string', description: 'For type=image or type=link' }, back: { type: 'string', description: 'For type=flip: text on the back, one line per row' },
+  items: { type: 'array', items: { type: 'string' }, description: 'For type=checklist: the rows (start a row with [x] to tick it)' },
+  cover: { type: 'string', enum: HIDE_COVERS, description: 'For type=hide: a cover laid over other items that the viewer taps to reveal what is underneath. Good for quiz answers, prices, the next step.' },
+  clip: { type: 'string', enum: CLIP_KINDS, description: 'For type=clip: a realistic paperclip, binder clip, push pin or tape strip that sits on top of a note, card or photo. Put it over the top edge of the thing it holds, rotate it a little.' },
+  metal: { type: 'string', enum: CLIP_METALS, description: 'For type=clip: silver, gold, copper, black, or color (uses the item colour)' },
+  movable: { type: 'boolean', description: 'Can be dragged while the board is locked or presented' },
+  locked: { type: 'boolean' },
+};
+const ITEM_SCHEMA = {
+  type: 'object',
+  properties: { type: { type: 'string', enum: ITEM_TYPES.filter((t) => t !== 'ink') }, ...LOOK_PROPS, ref: { type: 'string', description: 'Your own name for this item so connections can point at it' } },
+};
+const LINK_STYLE_PROPS = {
+  kind: { type: 'string', enum: LINK_KINDS, description: 'line, tunnel = a thick pipe, raised = embossed, drawn = hand-drawn' },
+  path: { type: 'string', enum: LINK_PATHS }, dash: { type: 'string', enum: LINK_DASH }, start: { type: 'string', enum: LINK_ENDS }, end: { type: 'string', enum: LINK_ENDS },
+  color: HEX, width: { type: 'number' }, flow: { type: 'boolean', description: 'Dots flowing along it' },
+};
+const HIDE_COVERS_LIST = HIDE_COVERS;
+const hex = (v) => (typeof v === 'string' && /^#[0-9a-f]{3,8}$/i.test(v.trim()) ? v.trim() : null);
+const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+
+// apply what the AI asked for to one item; unknown or invalid values are ignored
+function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
+  if (finite(o.x)) it.x = o.x + dx;
+  if (finite(o.y)) it.y = o.y + dy;
+  if (finite(o.w) && o.w > 4) it.w = Math.min(20000, o.w);
+  if (finite(o.h) && o.h > 4) it.h = Math.min(20000, o.h);
+  if (finite(o.rot)) it.rot = Math.max(-360, Math.min(360, o.rot));
+  if (finite(o.z)) it.z = o.z;
+  if (typeof o.title === 'string') it.title = o.title.slice(0, 300);
+  if (typeof o.text === 'string' && it.type !== 'sticker') it.text = o.text.slice(0, 5000);
+  if (typeof o.color === 'string') it.color = o.color === '' ? '' : hex(o.color) || it.color;
+  if (typeof o.locked === 'boolean') it.locked = o.locked;
+  const st = o.style && typeof o.style === 'object' ? o.style : null;
+  if (st) {
+    const s = { ...it.style };
+    if ([...FINISHES, 'none'].includes(st.finish)) s.finish = st.finish;
+    if (SHADOWS.includes(st.shadow)) s.shadow = st.shadow;
+    if (finite(st.radius)) s.radius = Math.max(0, Math.min(60, st.radius));
+    if (FONT_SIZES.includes(st.font)) s.font = st.font;
+    if (ALIGNS.includes(st.align)) s.align = st.align;
+    if (typeof st.bold === 'boolean') s.weight = st.bold ? 800 : 0;
+    if (typeof st.muted === 'boolean') s.muted = st.muted;
+    if (typeof st.textColor === 'string') { if (hex(st.textColor)) s.textColor = hex(st.textColor); else if (st.textColor === '') delete s.textColor; }
+    it.style = s;
+  }
+  const an = o.anim && typeof o.anim === 'object' ? o.anim : null;
+  if (an) {
+    const a = { ...it.anim };
+    if (ANIM_IN.includes(an.in)) a.in = an.in;
+    if (ANIM_LOOP.includes(an.loop)) a.loop = an.loop;
+    if (finite(an.delay)) a.delay = Math.max(0, Math.min(10, an.delay));
+    it.anim = a;
+  }
+  const d = { ...it.data };
+  if (it.type === 'shape' && SHAPES.includes(o.shape)) d.shape = o.shape;
+  if (it.type === 'sticker' && typeof (o.emoji ?? o.text) === 'string' && (o.emoji ?? o.text)) it.text = String(o.emoji ?? o.text).slice(0, 40);
+  if ((it.type === 'image' || it.type === 'link') && typeof o.url === 'string') d.url = o.url.slice(0, 2000);
+  if (it.type === 'flip' && typeof o.back === 'string') d.back = o.back.slice(0, 4000);
+  if (it.type === 'checklist' && Array.isArray(o.items)) d.items = o.items.slice(0, 40).map((t) => { const v = String(t?.t ?? t); const done = /^\s*\[x\]/i.test(v) || t?.done === true; return { t: v.replace(/^\s*\[[x ]?\]\s*/i, '').slice(0, 200), done }; });
+  if (it.type === 'hide' && HIDE_COVERS_LIST.includes(o.cover)) d.cover = o.cover;
+  if (it.type === 'clip') {
+    if (CLIP_KINDS.includes(o.clip) && o.clip !== d.kind) {
+      d.kind = o.clip;
+      if (!finite(o.w) && !finite(o.h)) [it.w, it.h] = CLIP_SIZE[o.clip];
+    }
+    if (CLIP_METALS.includes(o.metal)) d.metal = o.metal;
+  }
+  if (typeof o.movable === 'boolean') { if (o.movable) d.movable = true; else delete d.movable; }
+  it.data = d;
+  return it;
+}
 function itemFromSpec(a, origin) {
   const o = a && typeof a === 'object' ? a : {};
   const type = ITEM_TYPES.includes(o.type) && o.type !== 'ink' ? o.type : 'card';
-  const it = makeItem(type, { x: origin.x + (Number(o.x) || 0), y: origin.y + (Number(o.y) || 0), title: String(o.title || '').slice(0, 300), text: String(o.text || '').slice(0, 5000), color: typeof o.color === 'string' ? o.color.slice(0, 20) : '' });
-  if (Number(o.w) > 0) it.w = Number(o.w);
-  if (Number(o.h) > 0) it.h = Number(o.h);
-  if (type === 'shape') it.data.shape = SHAPES.includes(o.shape) ? o.shape : 'round';
-  if (type === 'sticker') it.text = String(o.emoji || o.text || 'i:star').slice(0, 40);
-  if (type === 'image' || type === 'link') it.data.url = String(o.url || '').slice(0, 2000);
-  if (type === 'flip') it.data.back = String(o.back || '').slice(0, 4000);
-  if (type === 'checklist') it.data.items = (Array.isArray(o.items) ? o.items : []).slice(0, 40).map((t) => ({ t: String(t).slice(0, 200), done: false }));
+  const it = makeItem(type, { x: origin.x, y: origin.y });
+  if (type === 'shape') it.data.shape = 'round';
+  if (type === 'sticker') it.text = 'i:star';
   if (type === 'frame') it.style.shadow = 'raised';
-  if (type === 'hide') { it.data = { cover: ['blur', 'frost', 'solid', 'curtain'].includes(o.cover) ? o.cover : 'blur', tap: 'reveal' }; if (!it.title) it.title = 'Tap to reveal'; it.z = 1000; }
-  it.anim = { in: 'pop' };
+  if (type === 'hide') { it.data = { cover: 'blur', tap: 'reveal' }; it.title = 'Tap to reveal'; it.z = 1000; }
+  if (type === 'clip') { it.data = { kind: 'paperclip', metal: 'silver' }; it.z = 2000; it.rot = -6; }
+  applyLook(it, o, { dx: origin.x, dy: origin.y });
+  if (!it.anim.in) it.anim.in = type === 'clip' ? 'none' : 'pop';
   return it;
 }
+// what an AI sees of an item: everything that shapes how it looks, nothing bulky
+const DATA_KEYS = ['shape', 'cover', 'tap', 'back', 'items', 'url', 'movable', 'kind', 'metal', 'notes', 'num', 'flipped', 'projectId', 'name'];
+function itemView(i) {
+  const data = {};
+  for (const k of DATA_KEYS) if (i.data?.[k] !== undefined) data[k] = k === 'notes' || k === 'back' ? String(i.data[k]).slice(0, 600) : i.data[k];
+  const r = (n) => Math.round(n);
+  return { id: i.id, type: i.type, x: r(i.x), y: r(i.y), w: r(i.w), h: r(i.h), ...(i.rot ? { rot: i.rot } : {}), z: i.z || 0,
+    ...(i.title ? { title: i.title } : {}), ...(i.text ? { text: i.text.slice(0, 400) } : {}), ...(i.color ? { color: i.color } : {}),
+    ...(Object.keys(i.style || {}).length ? { style: i.style } : {}), ...(Object.keys(i.anim || {}).length ? { anim: i.anim } : {}),
+    ...(Object.keys(data).length ? { data } : {}), ...(i.locked ? { locked: true } : {}) };
+}
+function applyLinkStyle(l, c) {
+  const s = { ...l.style };
+  if (LINK_KINDS.includes(c.kind)) s.kind = c.kind;
+  if (LINK_PATHS.includes(c.path)) s.path = c.path;
+  if (LINK_DASH.includes(c.dash)) s.dash = c.dash;
+  if (LINK_ENDS.includes(c.start)) s.start = c.start;
+  if (LINK_ENDS.includes(c.end)) s.end = c.end;
+  if (typeof c.color === 'string') { if (hex(c.color)) s.color = hex(c.color); else if (c.color === '') delete s.color; }
+  if (finite(c.width)) s.width = Math.max(1, Math.min(60, c.width));
+  if (typeof c.flow === 'boolean') s.flow = c.flow;
+  l.style = s;
+  if (typeof c.label === 'string') l.label = c.label.slice(0, 200);
+}
+const DESIGN_TIPS = 'Design like a polished, tactile canvas, not a table: give each block breathing room (40px+ gaps), group related things inside a frame (style.shadow "sunk"), use shapes (pill or round) as soft labelled buttons, one accent colour per group from warm earthy tones (#e8b86b, #ff8a5c, #e07a5f, #c9a27e, #b8e04a, #2fb4a0, #ffb020; never blue or purple), big bold titles (style.font "xl", bold), quieter details (style.muted), a few stickers or clips, slight rotation on notes, and curved connections.';
 
 export const BOARD_TOOLS = [
   { name: 'list_boards', description: 'List the owner\'s boards (free canvases for plans, workflows, courses and presentations).',
     input_schema: { type: 'object', properties: {} },
     run: async ({ db, uid }) => ({ boards: await listBoards(db, uid) }) },
-  { name: 'get_board', description: 'Read a board: its items (with ids, positions, text) and connections, and the slide order.',
+  { name: 'get_board', description: 'Read a board in full: every item with its position, size, rotation, colour, style (finish, shadow, corners, font, alignment), animation and type details; every connection with its style; the slide order and the floor (dots, grid or plain). Read it before changing a board.',
     input_schema: { type: 'object', properties: { board: BOARD_ARG }, required: ['board'] },
     run: async ({ db, uid }, a) => {
       const r = await findBoard(db, uid, a.board), d = parse(r.data);
-      return { id: r.id, name: r.name, slides: d.order, items: d.items.filter((i) => i.type !== 'ink').map((i) => ({ id: i.id, type: i.type, x: Math.round(i.x), y: Math.round(i.y), w: Math.round(i.w), h: Math.round(i.h), title: i.title || undefined, text: i.text ? i.text.slice(0, 400) : undefined })), connections: d.links.map((l) => ({ id: l.id, from: l.from.item, to: l.to.item, label: l.label || undefined })) };
+      return { id: r.id, name: r.name, icon: r.icon, floor: d.settings?.ground || 'dots', slides: d.order,
+        items: d.items.filter((i) => i.type !== 'ink').map(itemView),
+        drawings: d.items.filter((i) => i.type === 'ink').length,
+        connections: d.links.map((l) => ({ id: l.id, from: l.from.item || { x: l.from.x, y: l.from.y }, to: l.to.item || { x: l.to.x, y: l.to.y }, ...(l.label ? { label: l.label } : {}), style: l.style })) };
     } },
-  { name: 'create_board', description: 'Create a new board, laid out automatically from a plain description: a slide deck for a tutorial or strategy video, a workflow, a mind map, a kanban, a timeline or a wall of notes. The owner can present slides full screen and screen-record them.',
-    input_schema: { type: 'object', properties: { name: { type: 'string' }, icon: { type: 'string', description: 'One emoji' }, spec: SPEC_SCHEMA }, required: ['name', 'spec'] },
+  { name: 'create_board', description: `Create a new board, laid out automatically from a plain description: a slide deck for a tutorial or strategy video, a workflow, a mind map, a kanban, a timeline or a wall of notes. The owner can present slides full screen and screen-record them. Afterwards you can polish it with edit_board_items. ${DESIGN_TIPS}`,
+    input_schema: { type: 'object', properties: { name: { type: 'string' }, icon: { type: 'string', description: 'One emoji' }, floor: { type: 'string', enum: GROUNDS }, spec: SPEC_SCHEMA }, required: ['name', 'spec'] },
     run: async ({ db, uid }, a) => {
       const g = generateBoard(a.spec);
-      const b = await createBoard(db, uid, { name: a.name, icon: a.icon || '', data: { v: 1, items: g.items, links: g.links, order: g.order, settings: {} } });
+      const b = await createBoard(db, uid, { name: a.name, icon: a.icon || '', data: { v: 1, items: g.items, links: g.links, order: g.order, settings: GROUNDS.includes(a.floor) ? { ground: a.floor } : {} } });
       return { created: { id: b.id, name: b.name, items: b.items, slides: b.slides } };
     } },
-  { name: 'add_to_board', description: 'Add more to an existing board: either a laid-out block (spec, same as create_board) placed beside what is there, or individual items and connections between them.',
-    input_schema: { type: 'object', properties: { board: BOARD_ARG, spec: SPEC_SCHEMA, items: { type: 'array', items: ITEM_SCHEMA }, connections: { type: 'array', items: { type: 'object', properties: { from: { type: 'string', description: 'Item id or ref' }, to: { type: 'string' }, label: { type: 'string' }, kind: { type: 'string', enum: LINK_KINDS }, path: { type: 'string', enum: LINK_PATHS }, dash: { type: 'string', enum: LINK_DASH }, end: { type: 'string', enum: LINK_ENDS }, flow: { type: 'boolean' } } } } }, required: ['board'] },
+  { name: 'add_to_board', description: `Add to an existing board: a laid-out block (spec, same as create_board) placed beside what is there, and/or individual items (any type, with full styling) and connections. Item x/y are relative to the block's top-left corner, which is placed to the right of the board (or at "at" if given). ${DESIGN_TIPS}`,
+    input_schema: { type: 'object', properties: { board: BOARD_ARG, spec: SPEC_SCHEMA, at: { type: 'object', description: 'Absolute board position for the top-left of what you add', properties: { x: { type: 'number' }, y: { type: 'number' } } }, items: { type: 'array', items: ITEM_SCHEMA }, connections: { type: 'array', items: { type: 'object', properties: { from: { type: 'string', description: 'Item id or ref' }, to: { type: 'string' }, label: { type: 'string' }, ...LINK_STYLE_PROPS } } } }, required: ['board'] },
     run: async ({ db, uid }, a) => {
       const r = await findBoard(db, uid, a.board), d = parse(r.data);
       const b = bounds(d.items);
-      const origin = { x: b ? b.x1 + 300 : 0, y: b ? b.y0 : 0 };
+      const origin = a.at && finite(a.at.x) && finite(a.at.y) ? { x: a.at.x, y: a.at.y } : { x: b ? b.x1 + 300 : 0, y: b ? b.y0 : 0 };
       const refs = new Map(d.items.map((i) => [i.id, i]));
-      let added = 0;
+      const added = [];
       if (a.spec) {
         const g = generateBoard(a.spec, { origin });
-        d.items.push(...g.items); d.links.push(...g.links); d.order.push(...g.order); added += g.items.length;
+        d.items.push(...g.items); d.links.push(...g.links); d.order.push(...g.order); added.push(...g.items.map((i) => i.id));
       }
+      const top = d.items.reduce((m, i) => Math.max(m, i.z || 0), 0);
       for (const spec of Array.isArray(a.items) ? a.items.slice(0, 200) : []) {
         const it = itemFromSpec(spec, a.spec ? { x: origin.x, y: origin.y + 900 } : origin);
-        it.z = d.items.length + 1;
-        d.items.push(it); refs.set(it.id, it); if (spec?.ref) refs.set(String(spec.ref), it); added++;
+        if (!finite(spec?.z)) it.z = it.type === 'frame' ? -1 - added.length : Math.max(it.z || 0, top + added.length + 1);
+        d.items.push(it); refs.set(it.id, it); if (spec?.ref) refs.set(String(spec.ref), it); added.push(it.id);
       }
+      let linked = 0;
       for (const c of Array.isArray(a.connections) ? a.connections.slice(0, 300) : []) {
         const f = refs.get(String(c?.from)), t = refs.get(String(c?.to));
-        if (!f || !t) continue;
-        d.links.push(makeLink({ item: f.id }, { item: t.id }, { label: String(c.label || '').slice(0, 200), style: { kind: LINK_KINDS.includes(c.kind) ? c.kind : 'line', path: LINK_PATHS.includes(c.path) ? c.path : 'curved', dash: LINK_DASH.includes(c.dash) ? c.dash : 'solid', start: 'none', end: LINK_ENDS.includes(c.end) ? c.end : 'arrow', width: 3, flow: !!c.flow } }));
+        if (!f || !t || f === t) continue;
+        const l = makeLink({ item: f.id }, { item: t.id }, { style: { kind: 'line', path: 'curved', dash: 'solid', start: 'none', end: 'arrow', width: 3, flow: false } });
+        applyLinkStyle(l, c); d.links.push(l); linked++;
       }
       await saveBoard(db, uid, r.id, { data: d });
-      return { board: r.id, added };
+      return { board: r.id, added: added.length, ids: added.slice(0, 300), connections: linked };
     } },
-  { name: 'edit_board_items', description: 'Change or delete items on a board (move, resize, recolour, rewrite text).',
-    input_schema: { type: 'object', properties: { board: BOARD_ARG, changes: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, delete: { type: 'boolean' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, title: { type: 'string' }, text: { type: 'string' }, color: { type: 'string' } }, required: ['id'] } } }, required: ['board', 'changes'] },
+  { name: 'edit_board_items', description: `Change anything on a board: move, resize, rotate, restack, recolour, rewrite, restyle (finish, shadow, corners, font size, alignment, bold, text colour), animate, change a shape, sticker, checklist, flip back, cover or clip, or delete items. Also restyle or delete connections, restyle many items at once (restyle), and change the floor or board name. Read the board with get_board first so you use real ids. ${DESIGN_TIPS}`,
+    input_schema: { type: 'object', properties: {
+      board: BOARD_ARG,
+      changes: { type: 'array', description: 'One entry per item', items: { type: 'object', properties: { id: { type: 'string' }, delete: { type: 'boolean' }, ...LOOK_PROPS }, required: ['id'] } },
+      restyle: { type: 'array', description: 'Apply the same look to many items at once: pick them by ids and/or types (no ids and no types = every item)', items: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, types: { type: 'array', items: { type: 'string', enum: ITEM_TYPES } }, color: HEX, style: STYLE_SCHEMA, anim: ANIM_SCHEMA, rot: { type: 'number' } } } },
+      connections: { type: 'array', description: 'Change or delete connections', items: { type: 'object', properties: { id: { type: 'string' }, delete: { type: 'boolean' }, label: { type: 'string' }, ...LINK_STYLE_PROPS }, required: ['id'] } },
+      floor: { type: 'string', enum: GROUNDS, description: 'The board background' },
+      name: { type: 'string' }, icon: { type: 'string', description: 'One emoji' },
+    }, required: ['board'] },
     run: async ({ db, uid }, a) => {
       const r = await findBoard(db, uid, a.board), d = parse(r.data);
-      let n = 0;
-      for (const c of Array.isArray(a.changes) ? a.changes : []) {
+      let changed = 0, removed = 0, links = 0;
+      const missing = [];
+      for (const c of Array.isArray(a.changes) ? a.changes.slice(0, 500) : []) {
         const i = d.items.findIndex((x) => x.id === c?.id);
-        if (i < 0) continue;
-        if (c.delete) { const id = d.items[i].id; d.items.splice(i, 1); d.links = d.links.filter((l) => l.from.item !== id && l.to.item !== id); d.order = d.order.filter((x) => x !== id); n++; continue; }
-        for (const k of ['x', 'y', 'w', 'h']) if (typeof c[k] === 'number') d.items[i][k] = c[k];
-        for (const k of ['title', 'text', 'color']) if (typeof c[k] === 'string') d.items[i][k] = c[k];
-        n++;
+        if (i < 0) { if (c?.id) missing.push(c.id); continue; }
+        if (c.delete) { const id = d.items[i].id; d.items.splice(i, 1); d.links = d.links.filter((l) => l.from.item !== id && l.to.item !== id); d.order = d.order.filter((x) => x !== id); removed++; continue; }
+        applyLook(d.items[i], c); changed++;
       }
-      await saveBoard(db, uid, r.id, { data: d });
-      return { board: r.id, changed: n };
+      for (const g of Array.isArray(a.restyle) ? a.restyle.slice(0, 20) : []) {
+        const ids = Array.isArray(g?.ids) && g.ids.length ? new Set(g.ids.map(String)) : null, types = Array.isArray(g?.types) && g.types.length ? new Set(g.types) : null;
+        for (const it of d.items) {
+          if (it.type === 'ink' || (ids && !ids.has(it.id)) || (types && !types.has(it.type))) continue;
+          applyLook(it, { color: g.color, style: g.style, anim: g.anim, rot: g.rot }); changed++;
+        }
+      }
+      for (const c of Array.isArray(a.connections) ? a.connections.slice(0, 500) : []) {
+        const i = d.links.findIndex((l) => l.id === c?.id);
+        if (i < 0) { if (c?.id) missing.push(c.id); continue; }
+        if (c.delete) d.links.splice(i, 1); else applyLinkStyle(d.links[i], c);
+        links++;
+      }
+      if (GROUNDS.includes(a.floor)) d.settings = { ...d.settings, ground: a.floor };
+      const meta = {};
+      if (typeof a.name === 'string' && a.name.trim()) meta.name = a.name;
+      if (typeof a.icon === 'string') meta.icon = a.icon;
+      await saveBoard(db, uid, r.id, { data: d, ...meta });
+      return { board: r.id, changed, deleted: removed, connections: links, ...(missing.length ? { notFound: missing.slice(0, 50) } : {}) };
     } },
 ];
 

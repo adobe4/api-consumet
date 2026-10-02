@@ -5,7 +5,8 @@ import { icon as svgIcon } from '../icons.js';
 import { api } from '../api.js';
 import { S, projects, project, notify } from '../store.js';
 import { createSurface, route, drawLink, drawLabel, svgEl, LINK_DEFAULT } from '../surface.js';
-import { makeItem, makeLink, newId, bounds, inside, PALETTE, DEFAULT_SIZE } from '/shared/board.js';
+import { makeItem, makeLink, newId, bounds, inside, PALETTE, DEFAULT_SIZE, CLIP_SIZE } from '/shared/board.js';
+import { CLIP_DEFAULT, CLIP_LABEL, METAL_LABEL, clipSvg } from './clips.js';
 import { buildItem, contentKey, SHAPE_LABEL, TYPE_LABEL } from './items.js';
 import { uploadFile, saveVideo, pickFiles, fileText } from './files.js';
 import { openPop, closePop, segRow, swatchRow, toggleRow, rangeRow } from '../pop.js';
@@ -17,14 +18,14 @@ import { openModal } from '../ui-common.js';
 const COLORS = ['', ...PALETTE];
 const ICON_STICKERS = ['arrow-right', 'arrow-left', 'arrow-up', 'arrow-down', 'arrow-up-right', 'mouse-pointer-click', 'pointer', 'check', 'x', 'circle-check', 'circle-x', 'star', 'flame', 'rocket', 'lightbulb', 'target', 'zap', 'trophy', 'crown', 'heart', 'thumbs-up', 'party-popper', 'sparkles', 'badge-check', 'circle-alert', 'circle-question-mark', 'info', 'trending-up', 'trending-down', 'banknote', 'clock', 'pin', 'flag', 'megaphone', 'bell', 'gift', 'eye', 'hand'].map((n) => `i:${n}`);
 const STICKERS = ['👉', '👈', '👆', '👇', '➡️', '⬅️', '⬆️', '⬇️', '↗️', '✅', '❌', '⭐', '🔥', '🚀', '💡', '🎯', '💰', '📈', '📉', '❤️', '👏', '🎉', '😂', '🤯', '😮', '⚠️', '❓', '❗', '💯', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '🎬', '📌', '🧠', '⏰'];
-const DEF_FINISH = { note: 'tinted', card: 'soft', shape: 'solid', frame: 'raised', flip: 'soft', image: 'soft', video: 'soft', file: 'soft', link: 'soft', project: 'soft', checklist: 'soft', prompt: 'soft', text: 'none', sticker: 'none', ink: 'none', hide: 'none' };
+const DEF_FINISH = { note: 'tinted', card: 'soft', shape: 'solid', frame: 'raised', flip: 'soft', image: 'soft', video: 'soft', file: 'soft', link: 'soft', project: 'soft', checklist: 'soft', prompt: 'soft', text: 'none', sticker: 'none', ink: 'none', hide: 'none', clip: 'none' };
 const TOOLS = [
   ['select', '↖', 'Select & move (V)', 'v'], ['multi', 'i:square-dashed-mouse-pointer', 'Select several (M): tap items to add or remove them, drag a box around them', 'm'], ['hand', '✋', 'Move the board (H or hold Space)', 'h'],
   ['note', '🗒️', 'Sticky note (N)', 'n'], ['card', '▭', 'Card (C)', 'c'], ['text', 'i:type', 'Text (T)', 't'], ['shape', '◆', 'Shapes (S)', 's'],
   ['frame', '▦', 'Frame / slide (F)', 'f'], ['flip', '🂠', 'Flip card', ''], ['checklist', '☑', 'Checklist', ''], ['prompt', '✦', 'Prompt with copy button (P)', 'p'],
   ['hide', '🙈', 'Hide: a blur or cover you tap away to reveal (R)', 'r'],
   ['connector', '⤳', 'Connect (L)', 'l'], ['pen', '✏️', 'Draw (D)', 'd'], ['highlight', '🖍️', 'Highlighter', ''], ['eraser', '⌫', 'Eraser (E)', 'e'],
-  ['sticker', '😀', 'Stickers & arrows', ''], ['image', '🖼️', 'Image: link or upload', 'i'], ['file', '📎', 'Attach a text file', ''], ['video', '🎬', 'Video from this device', ''],
+  ['sticker', '😀', 'Stickers & arrows', ''], ['clip', 'i:paperclip', 'Paper clips, pins & tape (U)', 'u'], ['image', '🖼️', 'Image: link or upload', 'i'], ['file', '📎', 'Attach a text file', ''], ['video', '🎬', 'Video from this device', ''],
   ['link', '🔗', 'Web link', ''], ['project', '📊', 'Live project from your tracker', ''], ['laser', 'i:spotlight', 'Laser pointer (X)', 'x'],
 ];
 
@@ -34,13 +35,14 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   data.items ||= []; data.links ||= []; data.order ||= []; data.settings ||= {};
   let version = board.version, name = board.name, icon = board.icon || '';
   let tool = 'select', toolLock = false, sticker = 'i:arrow-right', shapeKind = 'round', penColor = '#ff7a2f';
+  let clipKind = 'paperclip', clipMetal = 'silver', clipColor = '';
   const sel = new Set();
   const els = new Map(), linkEls = new Map(), inkEls = new Map();
   let editing = null, undo = [], redo = [], destroyed = false, drag = null;
   // locked (stage) mode: for recording and explaining. Nothing is edited; covers tap away, movable things move,
   // and all of it snaps back with Reset. Presenting and shared links behave the same way.
   let locked = false, tapEl = null;
-  const revealed = new Set(), stageBackup = new Map();
+  const revealed = new Set(), stageBackup = new Map(), checkBackup = new Map();
   const staged = () => readonly || locked || root.classList.contains('presenting');
 
   // ---------- layout ----------
@@ -82,6 +84,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     iconBtn, nameEl, status, h('span', { class: 'spacer' }),
     readonly ? null : undoBtn, readonly ? null : redoBtn,
     readonly ? null : lockBtn,
+    readonly ? null : h('button', { class: 'btn bd-editonly bd-ai', type: 'button', title: 'Ask AI to change this board: restyle, tidy, add, rewrite', onclick: (e) => aiPop(e.currentTarget) }, '✨', h('span', { class: 'lbl-txt' }, 'AI')),
     h('button', { class: 'btn icon', type: 'button', title: 'Floor, grid and snapping', onclick: (e) => boardLook(e.currentTarget) }, '🎨'),
     readonly ? null : h('button', { class: 'btn bd-editonly', type: 'button', title: 'Share a link to this board', onclick: () => openShareDialog(board) }, '🔗', h('span', { class: 'lbl-txt' }, 'Share')),
     h('button', { class: 'btn bd-full', type: 'button', title: 'Full screen (F11)', onclick: () => toggleFull() }, '⛶'),
@@ -125,6 +128,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     closePop();
     if (t === 'shape') shapePicker(toolbar.querySelector('[data-t="shape"]'));
     if (t === 'sticker') stickerPicker(toolbar.querySelector('[data-t="sticker"]'));
+    if (t === 'clip') clipPicker(toolbar.querySelector('[data-t="clip"]'));
     if (t === 'pen' || t === 'highlight') penPicker(toolBtn(t));
     if (t === 'image') imagePicker(toolBtn('image'));
     if (t === 'file') { attachFiles(); setTool('select'); }
@@ -171,6 +175,13 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       } else { status.textContent = 'Not saved, retrying…'; status.dataset.s = 'err'; setTimeout(() => save(), 4000); }
     } finally { saving = false; if (pending) { pending = false; save(); } }
   }, 700);
+  // save right now (before the AI reads the board on the server)
+  async function flushSave() {
+    for (let i = 0; i < 80 && saving; i++) await new Promise((r) => setTimeout(r, 100));
+    const out = stageBackup.size ? { ...data, items: data.items.map((i) => (stageBackup.has(i.id) ? { ...i, ...stageBackup.get(i.id) } : i)) } : data;
+    const r = await api('PUT', `/api/boards/${board.id}`, { name, icon, data: out, version });
+    version = r.version; board.version = r.version;
+  }
 
   // ---------- render ----------
   const finishOf = (it) => it.style?.finish || DEF_FINISH[it.type] || 'soft';
@@ -203,9 +214,11 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     el.className = `bi t-${it.type} fin-${finishOf(it)} sh-${s.shadow || 'raised'} f-${s.font || 'm'} al-${s.align || (it.type === 'text' || it.type === 'prompt' ? 'left' : 'center')}${s.weight >= 700 ? ' bold' : ''}${s.muted ? ' muted' : ''}${it.locked ? ' locked' : ''}${sel.has(it.id) ? ' sel' : ''}${it.anim?.loop && it.anim.loop !== 'none' ? ` lp-${it.anim.loop}` : ''}${it.type === 'shape' ? ` sh-${it.data?.shape || 'round'}` : ''}${it.type === 'flip' && it.data?.flipped ? ' flipped' : ''}${editing === it.id ? ' editing' : ''}${it.type === 'hide' ? ` cv-${it.data?.cover || 'blur'} tap-${it.data?.tap || 'reveal'}` : ''}${it.data?.movable ? ' movable' : ''}${revealed.has(it.id) ? ' revealed' : ''}`;
     el.style.left = `${it.x}px`; el.style.top = `${it.y}px`; el.style.width = `${it.w}px`; el.style.height = `${it.h}px`;
     el.style.transform = it.rot ? `rotate(${it.rot}deg)` : '';
-    el.style.zIndex = String(Math.round(it.z || 0) + 10000);
+    // clips sit on the paper they hold, covers sit over everything
+    el.style.zIndex = String(Math.round(it.z || 0) + 10000 + (it.type === 'clip' ? 400000 : it.type === 'hide' ? 500000 : 0));
     el.style.setProperty('--c', it.color || (it.type === 'note' ? '#ffb020' : it.type === 'shape' ? '#ff8a5c' : 'var(--accent)'));
     if (s.textColor) el.style.setProperty('--tc', s.textColor); else el.style.removeProperty('--tc');
+    if (typeof s.radius === 'number') el.style.setProperty('--r', `${s.radius}px`); else el.style.removeProperty('--r');
   }
   function renderInk(it) {
     let p = inkEls.get(it.id);
@@ -294,6 +307,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       kids.push(b(animPop, '✨', 'Animation'));
       if (its.length === 1 && first.type === 'flip') kids.push(b(() => flip(first), '🂠', 'Flip'));
       if (its.some((i) => i.type === 'hide')) kids.push(b(hidePop, '🙈', 'Cover style and what a tap does'));
+      if (its.some((i) => i.type === 'clip')) kids.push(b(clipPop, '📎', 'Clip: kind, metal and colour'));
       kids.push(h('button', { type: 'button', class: `cb${its.every((i) => i.data?.movable) ? ' on' : ''}`, title: 'Movable when the board is locked or presenting', onclick: (e) => { e.stopPropagation(); toggleMovable(its); } }, '✋'));
       if (its.length === 1 && first.type === 'frame') kids.push(b(() => toggleSlide(first), data.order.includes(first.id) ? '★' : '☆', data.order.includes(first.id) ? 'Remove from slides' : 'Add to slides'));
       kids.push(b(() => change(() => its.forEach((i) => { i.locked = !i.locked; })), its.every((i) => i.locked) ? '🔒' : '🔓', 'Lock / unlock'));
@@ -339,7 +353,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (tool === 'pen' || tool === 'highlight') { startInk(e, w); return 'handled'; }
     if (tool === 'eraser') { startErase(e); return 'handled'; }
     if (tool === 'connector') { startConnect(e, w, hitItem(e)); return 'handled'; }
-    if (['note', 'card', 'text', 'shape', 'frame', 'flip', 'checklist', 'prompt', 'sticker', 'link', 'hide'].includes(tool)) { startCreate(e, w); return 'handled'; }
+    if (['note', 'card', 'text', 'shape', 'frame', 'flip', 'checklist', 'prompt', 'sticker', 'link', 'hide', 'clip'].includes(tool)) { startCreate(e, w); return 'handled'; }
     const itId = hitItem(e);
     const lkId = e.target.closest?.('[data-link]')?.dataset.link;
     const multi = tool === 'multi';
@@ -370,7 +384,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   function stageDown(e, w) {
     const t = e.target;
     tapEl = null;
-    const act = t.closest('[data-act="copy"], [data-act="open-attach"], [data-act="open-file"]');
+    const act = t.closest('[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="check"]');
     if (act && e.button === 0) { itemAction(act, e); return 'handled'; }
     if (t.closest('video, a')) return 'handled';
     if (tool === 'laser' && !root.classList.contains('presenting')) { laserDown(e); return 'handled'; }
@@ -413,7 +427,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   }
   function resetStage() {
     for (const [id, p] of stageBackup) { const it = byId(id); if (it) { it.x = p.x; it.y = p.y; } }
-    stageBackup.clear(); revealed.clear();
+    for (const [id, items] of checkBackup) { const it = byId(id); if (it) it.data = { ...it.data, items: JSON.parse(items) }; }
+    stageBackup.clear(); revealed.clear(); checkBackup.clear();
     render(); updateStageBar();
   }
   const stageBar = h('div', { class: 'stage-bar', hidden: true });
@@ -421,7 +436,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   const FX = [['highlight', '✨ Glow'], ['shake', '〰 Shake'], ['pop', '⬆ Pop'], ['none', 'Nothing']];
   function updateStageBar() {
     const on = staged() && !root.classList.contains('presenting');
-    const changed = stageBackup.size + revealed.size > 0;
+    const changed = stageBackup.size + revealed.size + checkBackup.size > 0;
     stageBar.hidden = !on || (readonly && !changed);
     if (stageBar.hidden) return;
     const fx = data.settings.tapFx || 'highlight';
@@ -545,6 +560,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (type === 'prompt') { it.title = 'Prompt'; }
       if (type === 'hide') { it.title = 'Tap to reveal'; it.data = { cover: 'blur', tap: 'reveal' }; it.anim = {}; }
       if (type === 'link') { it.data.url = ''; }
+      if (type === 'clip') { [it.w, it.h] = CLIP_SIZE[clipKind]; it.x = snap(w.x - it.w / 2); it.y = snap(w.y - it.h / 2); it.data = { kind: clipKind, metal: clipMetal }; it.color = clipColor; it.rot = clipKind === 'tape' ? -3 : -8; it.anim = {}; }
       if (type === 'text') it.style = { font: 'l' };
       begin();
       data.items.push(it);
@@ -663,9 +679,11 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
         const done = () => { setText(btn, '✓ Copied'); setTimeout(() => { setText(btn, '⧉ Copy'); }, 1400); };
         navigator.clipboard?.writeText(text).then(done).catch(() => { const r = document.createRange(); const t = el.querySelector('.txt'); if (t) { r.selectNodeContents(t); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } });
       } else if (act === 'check') {
-        if (readonly) return;
         const i = Number(btn.dataset.i);
-        change(() => { it.data.items[i].done = !it.data.items[i].done; });
+        if (!it.data.items?.[i]) return;
+        // a shared link ticks only on this screen (Reset puts it back); the owner's ticks are saved, even when locked or presenting
+        if (readonly) { if (!checkBackup.has(it.id)) checkBackup.set(it.id, JSON.stringify(it.data.items)); it.data.items[i].done = !it.data.items[i].done; it.data = { ...it.data }; render(); updateStageBar(); }
+        else change(() => { it.data.items[i].done = !it.data.items[i].done; it.data = { ...it.data }; });
         if (it.data.items[i].done) { const r = btn.getBoundingClientRect(); burstAt(r.left + 9, r.top + 9); }
       } else if (act === 'check-add') {
         change(() => { it.data.items = [...(it.data.items || []), { t: 'New item', done: false }]; });
@@ -962,7 +980,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       clip ? ['⎘', 'Paste here', () => { const b = bounds(clip.data.items); pasteItems({ ...clip.data, items: clip.data.items.map((i) => ({ ...i, x: i.x - b.x0 + at.x - 40, y: i.y - b.y0 + at.y - 40 })) }); }, 'primary', 'Ctrl+V'] : null,
       ['🗒️', 'Sticky note', put('note')], ['▭', 'Card', put('card')], ['T', 'Text', put('text', { style: { font: 'l' } })], ['◆', 'Shape', put('shape', { data: { shape: shapeKind } })],
       ['▦', 'Frame (slide)', put('frame', { style: { shadow: 'raised' } })], ['🙈', 'Hide (tap to reveal)', put('hide', { title: 'Tap to reveal', data: { cover: 'blur', tap: 'reveal' }, z: maxZ() + 1 })], ['✦', 'Prompt', put('prompt', { title: 'Prompt' })], ['☑', 'Checklist', put('checklist', { title: 'Checklist', data: { items: [{ t: 'First step', done: false }] } })],
-      ['😀', 'Sticker', () => stickerPicker(null, { x: e.clientX, y: e.clientY }, at)], ['🖼️', 'Image', () => imagePicker(null, { x: e.clientX, y: e.clientY })],
+      ['😀', 'Sticker', () => stickerPicker(null, { x: e.clientX, y: e.clientY }, at)], ['📎', 'Paperclip, pin or tape', () => clipPicker(null, { x: e.clientX, y: e.clientY }, at)], ['🖼️', 'Image', () => imagePicker(null, { x: e.clientX, y: e.clientY })],
       '-', ['▣', 'Select all', () => select(data.items.map((i) => i.id)), '', 'Ctrl+A'], ['⤢', 'Fit everything', () => fitAll(), '', 'Shift+1'],
       [data.settings.snap !== false ? '▦' : '▢', data.settings.snap !== false ? 'Turn off snap to grid' : 'Snap to grid', () => { data.settings.snap = data.settings.snap === false; save(); }],
       ['🔒', 'Lock the board', () => setLocked(true), '', 'K'],
@@ -1016,6 +1034,76 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     openPop({ ...anchorFor(btn), title: '⤳ Connection', width: 430, body: linkStyleBody(st, (patch) => change(() => lks.forEach((l) => { l.style = { ...l.style, ...patch }; })), { fitWidth: true }) });
   }
   function toggleMovable(its) { const v = !its.every((i) => i.data?.movable); change(() => its.forEach((i) => { i.data = { ...i.data, movable: v }; })); notify(v ? '✋ Movable: when the board is locked or presenting, this can be dragged around' : 'No longer movable when locked', 'info'); }
+  // ---------- clips ----------
+  const CLIP_COLORS = ['', '#ff4d5e', '#ff8a5c', '#ffb020', '#e8b86b', '#b8e04a', '#2fb4a0', '#e07a5f', '#ff6fae', '#f3e3b3', '#f5f1ea', '#1c1916'];
+  function clipBody(cur, set) {
+    const metalRow = cur.kind === 'tape' ? null : segRow(cur.kind === 'pin' ? 'Head' : 'Metal', Object.entries(METAL_LABEL), cur.metal || CLIP_DEFAULT[cur.kind].metal, (v) => set({ metal: v }));
+    const preview = h('div', { class: 'clip-prev' }, clipSvg({ id: `pv${cur.kind}`, color: cur.color, data: { kind: cur.kind, metal: cur.metal } }));
+    return h('div', { class: 'pgrid' }, preview,
+      segRow('Kind', Object.entries(CLIP_LABEL), cur.kind, (v) => set({ kind: v, metal: CLIP_DEFAULT[v].metal })),
+      metalRow,
+      cur.kind === 'tape' || cur.kind === 'pin' || cur.metal === 'color' ? swatchRow('Colour', CLIP_COLORS, cur.color || '', (c) => set({ color: c })) : null,
+      h('p', { class: 'phint' }, 'Lay it across the top edge of a note, card or photo. Drag the round handle to tilt it; drag a corner to resize.'));
+  }
+  function clipPicker(btn, pt, at) {
+    const cur = { kind: clipKind, metal: clipMetal, color: clipColor };
+    const holder = h('div');
+    const paint = () => clear(holder).append(clipBody(cur, (patch) => { Object.assign(cur, patch); clipKind = cur.kind; clipMetal = cur.metal; clipColor = cur.color; paint(); }));
+    paint();
+    openPop({ ...(btn ? { anchor: btn } : pt), title: at ? 'Add a clip' : 'Pick a clip, then tap the board', width: 400, body: h('div', null, holder,
+      at ? h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:8px' }, h('button', { type: 'button', class: 'btn primary sm', onclick: () => { closePop(); const [cw, ch] = CLIP_SIZE[cur.kind]; place(makeItem('clip', { w: cw, h: ch, rot: cur.kind === 'tape' ? -3 : -8, color: cur.color, data: { kind: cur.kind, metal: cur.metal } }), at); } }, 'Add it')) : null) });
+  }
+  function clipPop(btn) {
+    const its = [...sel].map(byId).filter((i) => i?.type === 'clip');
+    if (!its.length) return;
+    const f = its[0];
+    const cur = { kind: f.data?.kind || 'paperclip', metal: f.data?.metal, color: f.color || '' };
+    const holder = h('div');
+    const paint = () => clear(holder).append(clipBody(cur, (patch) => {
+      Object.assign(cur, patch);
+      change(() => its.forEach((i) => {
+        if (patch.kind && patch.kind !== i.data?.kind) { const [cw, ch] = CLIP_SIZE[patch.kind]; i.x += (i.w - cw) / 2; i.y += (i.h - ch) / 2; i.w = cw; i.h = ch; }
+        i.data = { ...i.data, kind: cur.kind, metal: cur.metal };
+        if ('color' in patch) i.color = patch.color;
+      }));
+      paint();
+    }));
+    paint();
+    openPop({ ...anchorFor(btn), title: '📎 Clip', width: 400, body: holder });
+  }
+
+  // ---------- ask AI to change this board ----------
+  function aiPop(btn) {
+    const box = h('textarea', { class: 'ai-in', rows: 4, placeholder: 'What should change? “Make it look like a polished slide”, “Turn the boxes into pills with soft shadows”, “Add paperclips to the notes”, “Translate everything to Swahili”…' });
+    const go = h('button', { type: 'button', class: 'btn primary', onclick: () => run(box.value) }, '✨ Apply');
+    const chip = (t) => h('button', { type: 'button', class: 'chip', onclick: () => { box.value = t; box.focus(); } }, t);
+    async function run(text) {
+      if (text.trim().length < 3) { notify('Say what to change first', 'error'); return; }
+      go.disabled = true; setText(go, '✨ Working… (up to a minute)');
+      try {
+        await flushSave();
+        const r = await api('POST', `/api/boards/${board.id}/ai`, { prompt: text });
+        begin();
+        data.items = r.board.data.items || []; data.links = r.board.data.links || []; data.order = r.board.data.order || [];
+        data.settings = { ...data.settings, ...(r.board.data.settings || {}) };
+        sf.setGround(data.settings.ground || 'dots');
+        version = r.board.version;
+        if (r.board.name && r.board.name !== name) { name = r.board.name; nameEl.textContent = name; onRenamed?.(name, icon); }
+        sel.clear(); render();
+        const snap0 = before; before = null;
+        if (snap0 && snap0 !== snapshot()) { undo.push(snap0); redo = []; updateUndoBtns(); }
+        closePop();
+        notify(`${r.summary || 'Done'} (Undo puts it back)`, 'good');
+      } catch (e) { notify(e.message, 'error'); }
+      finally { go.disabled = false; setText(go, '✨ Apply'); }
+    }
+    openPop({ anchor: btn, title: '✨ Ask AI to change this board', width: 420, body: h('div', { class: 'pgrid' },
+      box,
+      h('div', { class: 'chips' }, chip('Make it look better'), chip('Tidy and align everything'), chip('Add paperclips and tape to the notes'), chip('Use warm colours only')),
+      h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, h('small', { class: 'phint' }, S.user?.hasAiKey ? 'Uses the AI from your 🧠 Brain settings' : 'Add an AI key in 🧠 Brain first'), go)) });
+    setTimeout(() => box.focus(), 50);
+  }
+
   function hidePop(btn) {
     const its = [...sel].map(byId).filter((i) => i?.type === 'hide');
     if (!its.length) return;

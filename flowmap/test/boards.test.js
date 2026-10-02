@@ -156,3 +156,49 @@ test('New Beginning template: real projects, pipes, tasks, goals and its board, 
   nb = (await list()).filter((b) => b.name === 'New Beginning');
   assert.equal(nb.length, 1, 'loading it again adds no copy');
 });
+
+test('AI tools see and change every style: items, clips, restyle, connections, floor', async () => {
+  const key = (await call('POST', '/api/agent-keys', { name: 'Designer' }, A)).body.key;
+  const tool = async (name, args) => {
+    const r = await fetch(`${BASE}/api/mcp/${key}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+    const j = await r.json();
+    assert.ok(!j.result.isError, j.result.content[0].text);
+    return JSON.parse(j.result.content[0].text);
+  };
+  const made = await tool('create_board', { name: 'Styled', floor: 'grid', spec: { layout: 'notes', notes: ['One', 'Two'] } });
+  const add = await tool('add_to_board', { board: made.created.id, at: { x: 0, y: 600 }, items: [
+    { type: 'shape', ref: 'btn', shape: 'pill', text: 'ChatGPT - Script', color: '#e8b86b', w: 286, h: 55, style: { finish: 'soft', shadow: 'raised', font: 'l', bold: true } },
+    { type: 'clip', ref: 'clip', clip: 'binder', metal: 'gold', x: 100, y: -30, rot: -6 },
+    { type: 'checklist', ref: 'ck', items: ['[x] Script', 'Voice'], x: 400 },
+  ], connections: [{ from: 'btn', to: 'ck', kind: 'tunnel', flow: true, color: '#ff8a5c' }] });
+  assert.equal(add.added, 3);
+  assert.equal(add.connections, 1);
+  let b = await tool('get_board', { board: 'Styled' });
+  assert.equal(b.floor, 'grid');
+  const pill = b.items.find((i) => i.text === 'ChatGPT - Script');
+  assert.equal(pill.data.shape, 'pill'); assert.equal(pill.style.weight, 800); assert.equal(pill.style.font, 'l');
+  const clip = b.items.find((i) => i.type === 'clip');
+  assert.deepEqual([clip.data.kind, clip.data.metal, clip.rot, clip.w], ['binder', 'gold', -6, 96]);
+  assert.ok(clip.z > pill.z, 'new items stack on top');
+  assert.deepEqual(b.items.find((i) => i.type === 'checklist').data.items.map((x) => x.done), [true, false]);
+  assert.equal(b.connections[0].style.kind, 'tunnel');
+  const notes = b.items.filter((i) => i.type === 'note').map((i) => i.id);
+  const ed = await tool('edit_board_items', { board: b.id, floor: 'plain', name: 'Styled v2',
+    changes: [{ id: pill.id, style: { finish: 'glass', radius: 30, textColor: '#1c1916', align: 'left' }, rot: 2, shape: 'round' }, { id: clip.id, clip: 'pin', metal: 'color', color: '#ff4d5e' }, { id: 'nope' }],
+    restyle: [{ types: ['note'], style: { shadow: 'float', muted: true }, color: '#ffb020' }],
+    connections: [{ id: b.connections[0].id, kind: 'drawn', dash: 'dashed', label: 'feeds' }] });
+  assert.equal(ed.notFound[0], 'nope');
+  b = await tool('get_board', { board: 'Styled v2' });
+  assert.equal(b.floor, 'plain');
+  const pill2 = b.items.find((i) => i.id === pill.id);
+  assert.deepEqual([pill2.style.finish, pill2.style.radius, pill2.style.textColor, pill2.style.align, pill2.rot, pill2.data.shape], ['glass', 30, '#1c1916', 'left', 2, 'round']);
+  const clip2 = b.items.find((i) => i.id === clip.id);
+  assert.deepEqual([clip2.data.kind, clip2.data.metal, clip2.color, clip2.w], ['pin', 'color', '#ff4d5e', 54]);
+  for (const id of notes) { const n = b.items.find((i) => i.id === id); assert.equal(n.style.shadow, 'float'); assert.equal(n.color, '#ffb020'); }
+  assert.deepEqual([b.connections[0].style.kind, b.connections[0].style.dash, b.connections[0].label], ['drawn', 'dashed', 'feeds']);
+  // bad values are ignored, not saved
+  await tool('edit_board_items', { board: b.id, changes: [{ id: pill.id, color: 'javascript:alert(1)', style: { finish: 'laser', font: 'huge' } }] });
+  b = await tool('get_board', { board: b.id });
+  const pill3 = b.items.find((i) => i.id === pill.id);
+  assert.deepEqual([pill3.color, pill3.style.finish, pill3.style.font], ['#e8b86b', 'glass', 'l']);
+});
