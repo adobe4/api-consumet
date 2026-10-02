@@ -406,7 +406,7 @@ async function brainOnce(ctx, ai, { trigger = 'manual', budgetMs = 50000 } = {})
 // ---------- built-in AI: design a board, or change the board that is open ----------
 // The AI designs every item itself (positions, sizes, styles) from the whole toolkit, then FlowMap checks the
 // result (overlaps, things sticking out of frames, text that will not fit) and gives it one round to fix them.
-const DESIGN_GUIDE = `CANVAS: x grows right, y grows down, in px. A slide is a frame of 1100x620 (16:9). Lay slides in a row with 180px gaps (x = 0, 1280, 2560, ...), a second row 820px lower. Free content (notes, maps, menus) can sit anywhere.
+export const DESIGN_GUIDE = `CANVAS: x grows right, y grows down, in px. A slide is a frame of 1100x620 (16:9). Lay slides in a row with 180px gaps (x = 0, 1280, 2560, ...), a second row 820px lower. Free content (notes, maps, menus) can sit anywhere.
 TEXT SIZES (style.size, px): 64-80 hero title · 40-48 slide title · 28-32 heading · 20-24 big body · 15-17 body · 12-13 label. Bold headings (style.bold). Budget the box: a line needs about size x 1.4 px of height and holds about width / (size x 0.56) characters.
 TOOLKIT, pick what the content needs (use many kinds, not only cards):
 - frame: a slide or a section (style.finish "tinted", one accent colour, style.shadow "raised"). Keep its content 50-70px inside its edges. Add it to "slides" to present it.
@@ -430,7 +430,7 @@ const DESIGN_EXAMPLE = `EXAMPLE of one designed slide (shape of the JSON only, n
 {"type":"text","x":150,"y":230,"w":460,"h":76,"text":"Hook in the first 3 seconds","style":{"size":22,"bold":true,"textColor":"#ffffff","align":"left"}},
 {"type":"note","paper":"lined","pin":"tape","x":700,"y":250,"w":320,"h":280,"rot":2,"text":"Tip: say the result first, then show how.","style":{"size":24,"hand":true}},
 {"type":"clip","clip":"paperclip","x":960,"y":226,"w":46,"h":128,"rot":-8}`;
-const PLAN_ITEM_FIELDS = `Item fields: type, ref (your name for it), x, y, w, h (absolute px), title, text, color (#hex), rot, z, locked,
+export const PLAN_ITEM_FIELDS = `Item fields: type, ref (your name for it), x, y, w, h (absolute px), title, text, color (#hex), rot, z, locked,
  style: { finish: soft|tinted|solid|glass|flat|none, shadow: sunk|flat|raised|float, radius: 0-60, size: text px, align: left|center|right, bold, muted, textColor: #hex, hand },
  anim: { in: none|pop|fade|rise|zoom|draw|slide, loop: none|bounce|pulse|wiggle|float|glow, delay: seconds },
  shape (rect|round|pill|ellipse|diamond|triangle|hexagon|star|arrow|bubble), emoji (stickers: i:icon), paper/lift/pin (notes), clip/metal (clips), items (checklist rows, "[x] row" = ticked), back (flip back lines), cover (hide: blur|frost|solid|curtain), url (image, link), jump (id or ref to glide to), jumpLabel.`;
@@ -554,23 +554,40 @@ export function readPlan(text) {
   }
   throw new Error('the JSON answer was cut off');
 }
-async function chatOnce(ai, system, messages, deadline = Date.now() + 120000, maxTokens = 12000) {
-  try { return await chatCall(ai, system, messages, deadline, maxTokens); } catch (e) {
+export async function chatOnce(ai, system, messages, deadline = Date.now() + 120000, maxTokens = 12000, images = []) {
+  try { return await chatCall(ai, system, messages, deadline, maxTokens, images); } catch (e) {
+    // a model that cannot see pictures: the same request as text only
+    if (images.length && /image|vision|multimodal|content.*(type|array|part)|only.*text|unsupported|invalid.*(content|message)|HTTP 400|400/i.test(e.message)) return chatOnce(ai, system, messages, deadline, maxTokens, []);
     // some models allow fewer output tokens: ask again with a smaller budget
-    if (maxTokens > 4096 && /max_tokens|max_completion_tokens|maximum.*tokens|too large|output.*tokens/i.test(e.message)) return chatCall(ai, system, messages, deadline, 4096);
+    if (maxTokens > 4096 && /max_tokens|max_completion_tokens|maximum.*tokens|too large|output.*tokens/i.test(e.message)) return chatCall(ai, system, messages, deadline, 4096, images);
     throw e;
   }
 }
-async function chatCall(ai, system, messages, deadline, maxTokens) {
+// pictures of the board (JPEG/PNG data URLs) ride along with the last user message
+function withImages(messages, images, anth) {
+  if (!images.length) return messages;
+  const out = messages.slice();
+  const last = out[out.length - 1];
+  const text = typeof last.content === 'string' ? last.content : '';
+  const pics = images.map((url) => {
+    if (!anth) return { type: 'image_url', image_url: { url } };
+    const m = String(url).match(/^data:(image\/[a-z]+);base64,(.*)$/);
+    return m ? { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } } : null;
+  }).filter(Boolean);
+  out[out.length - 1] = { ...last, content: [...pics, { type: 'text', text }] };
+  return out;
+}
+async function chatCall(ai, system, messages, deadline, maxTokens, images = []) {
   const left = deadline - Date.now();
   if (left < 8000) { const e = new Error('out of time'); e.name = 'TimeoutError'; throw e; }
-  const ms = Math.min(120000, left);
+  const ms = Math.min(140000, left);
   const anth = ai.provider === 'anthropic';
+  const msgs = withImages(messages, images, anth);
   const r = anth
-    ? await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': ai.apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: ai.model || AI_PROVIDERS.anthropic.model, max_tokens: maxTokens, system, messages }), signal: AbortSignal.timeout(ms) })
-    : await fetch(`${(ai.baseUrl || AI_PROVIDERS.openai.baseUrl).replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ai.apiKey}` }, body: JSON.stringify({ model: ai.model, max_tokens: maxTokens, temperature: 0.5, messages: [{ role: 'system', content: system }, ...messages] }), signal: AbortSignal.timeout(ms) });
+    ? await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': ai.apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: ai.model || AI_PROVIDERS.anthropic.model, max_tokens: maxTokens, system, messages: msgs }), signal: AbortSignal.timeout(ms) })
+    : await fetch(`${(ai.baseUrl || AI_PROVIDERS.openai.baseUrl).replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ai.apiKey}` }, body: JSON.stringify({ model: ai.model, max_tokens: maxTokens, temperature: 0.6, messages: [{ role: 'system', content: system }, ...msgs] }), signal: AbortSignal.timeout(ms) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`AI provider: ${plainError(r.status, errMsg(j))}`);
+  if (!r.ok) throw new Error(`AI provider: ${plainError(r.status, errMsg(j))}${r.status === 400 ? ' (HTTP 400)' : ''}`);
   return anth ? (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('') : j.choices?.[0]?.message?.content || '';
 }
 async function editOnce(ctx, ai, board, request, deadline) {

@@ -29,7 +29,7 @@ function connectionHelp(url) {
     step('Any other agent or script', 'Use the link as an MCP server (Streamable HTTP). Or call the REST API at /api/... with the header "Authorization: Bearer <the fm_ key at the end of the link>".'));
 }
 
-export function openBrainSettings() {
+export function openBrainSettings({ onClose } = {}) {
   const s = S.user.settings || {};
   const st = { about: s.about || '', daily: !!s.aiDaily };
 
@@ -213,5 +213,5 @@ export function openBrainSettings() {
     h('div', { class: 'row', style: 'margin-top:8px' }, h('div', { class: 'grow' }, nameInput), createBtn),
     created,
   );
-  return openModal({ title: '🧠 AI brain', body, wide: true, actions: [{ label: 'Close', kind: 'primary' }] });
+  return openModal({ title: '🧠 AI brain', body, wide: true, onClose, actions: [{ label: 'Close', kind: 'primary' }] });
 }

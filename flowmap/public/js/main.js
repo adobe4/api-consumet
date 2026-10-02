@@ -174,7 +174,7 @@ function buildTopbar() {
       h('button', { class: 'btn primary', onclick: () => openProjectEditor(null) }, '＋', h('span', { class: 'lbl-txt' }, 'Project')),
       linkBtn,
       h('button', { class: 'btn', onclick: () => openTab('checkin') }, '📝', h('span', { class: 'lbl-txt' }, 'Check-in')),
-      h('button', { class: 'btn', title: 'AI brain: connect an AI that gives you tasks', onclick: () => openBrainSettings() }, '🧠', h('span', { class: 'lbl-txt' }, 'Brain')),
+      h('button', { class: 'btn keep', title: 'AI brain: your AI keys and models, and an AI that gives you tasks', onclick: () => openBrainSettings() }, '🧠', h('span', { class: 'lbl-txt' }, 'Brain')),
       soundBtn,
       h('button', { class: 'btn icon keep', title: 'How it works', onclick: openHelp }, '❓'),
       h('button', { class: 'btn icon keep', title: 'Settings & data', onclick: openSettings }, '⚙️')));

@@ -220,3 +220,76 @@ test('board design: the AI places every item, FlowMap checks it, the AI fixes wh
     assert.ok(d.items.find((i) => i.type === 'frame').z < t.z, 'frames stay underneath');
   } finally { designer.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('design session: plan with questions, sections in local coordinates, fix, polish, pictures', async () => {
+  const { designStep } = await import('../server/design.js');
+  const { openDb } = await import('../server/db.js');
+  const { createBoard, getBoard } = await import('../server/boards.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowmap-session-'));
+  const db = await openDb({ dataDir: dir });
+  const uid = (await db.run('INSERT INTO users (email, name, pass, settings) VALUES (?, ?, ?, ?)', 's@example.com', 'S', 'x', '{}')).lastInsertRowid;
+  const b = await createBoard(db, uid, { name: 'Talk', data: { v: 1, items: [
+    { id: 'f1', type: 'frame', x: 2000, y: 1000, w: 1100, h: 620, title: 'Intro', color: '#2fb4a0' },
+    { id: 't1', type: 'text', x: 2070, y: 1060, w: 500, h: 60, text: 'Hello' },
+  ], links: [], order: ['f1'], settings: {} } });
+  const seen = [];
+  let refusedImage = false;
+  const ai = http.createServer((req, res) => {
+    let body = ''; req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const j = JSON.parse(body);
+      const sys = j.messages[0].content, last = j.messages.at(-1).content;
+      const hasImage = Array.isArray(last) && last.some((p) => p.type === 'image_url');
+      seen.push({ sys: sys.slice(0, 60), hasImage });
+      res.setHeader('content-type', 'application/json');
+      // the first picture is refused, as a text-only model would: FlowMap must retry without it
+      if (hasImage && !refusedImage) { refusedImage = true; res.statusCode = 400; return res.end(JSON.stringify({ error: { message: 'image input is not supported by this model' } })); }
+      const text = Array.isArray(last) ? last.find((p) => p.type === 'text').text : last;
+      let plan;
+      if (/Before designing, study/.test(sys)) plan = { understanding: 'A short talk.', summary: 'Redesign the intro, add a steps slide.', questions: [{ id: 'big', q: 'Do you want big text?', type: 'yesno' }], steps: [{ focus: 'f1', title: 'Intro', what: 'Hero layout' }, { focus: 'new', title: 'Steps', what: 'Numbered steps' }] };
+      else if (/FlowMap checked this section/.test(text)) plan = { summary: 'Fixed the overlap.', changes: [{ id: [...text.matchAll(/"id":"([^"]+)","type":"card"/g)].at(-1)[1], x: 600 }] };
+      else if (/YOUR SECTION/.test(text)) {
+        assert.match(text, /LOCAL to this frame/);
+        plan = { summary: 'Designed.', frame: { color: '#ff8a5c' }, changes: /"id":"t1"/.test(text) ? [{ id: 't1', x: 70, y: 56, w: 800, h: 90, text: 'Hello, big', style: { size: 52, bold: true } }] : [],
+          add: [{ type: 'card', x: 70, y: 240, w: 400, h: 200, title: 'Step one' }, { type: 'card', x: 300, y: 300, w: 400, h: 200, title: 'Overlapping' }] };
+      } else plan = { summary: 'Unified title sizes.', floor: 'grid', restyle: [{ types: ['text'], style: { align: 'left' } }] };
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(plan) } }] }));
+    });
+  });
+  await new Promise((r) => ai.listen(0, '127.0.0.1', r));
+  const cfg = { id: 'k', provider: 'gemini', model: 'm', baseUrl: `http://127.0.0.1:${ai.address().port}/v1`, apiKey: 'good' };
+  const ctx = { db, uid, source: 'ai' };
+  const dl = () => Date.now() + 60000;
+  const img = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+  try {
+    const plan = await designStep(ctx, cfg, b.id, { phase: 'plan', request: 'Redesign this talk', images: [img] }, {}, dl());
+    assert.equal(seen[0].hasImage, true); assert.equal(seen[1].hasImage, false, 'retried without the picture');
+    assert.equal(plan.questions[0].id, 'direction', 'the style question comes first');
+    assert.ok(plan.questions[0].options.some((o) => o.id === 'bold') && plan.questions[0].options.some((o) => o.id === 'auto'));
+    assert.equal(plan.questions[1].q, 'Do you want big text?');
+    assert.deepEqual(plan.steps.map((s) => s.focus), ['f1', 'new']);
+    assert.ok(plan.steps[1].slot.x > 2000, 'new slides go after the existing ones');
+    // section on the existing frame: local coordinates come back as board coordinates
+    const s1 = await designStep(ctx, cfg, b.id, { phase: 'section', focus: 'f1', step: plan.steps[0], answers: [{ q: 'Do you want big text?', a: 'Yes' }], direction: 'bold', images: [img] }, {}, dl());
+    assert.equal(seen.at(-1).hasImage, true, 'a model that can see gets the section picture');
+    let d = JSON.parse((await getBoard(db, uid, b.id)).data);
+    const t1 = d.items.find((i) => i.id === 't1');
+    assert.deepEqual([t1.x, t1.y, t1.style.size], [2070, 1056, 52]);
+    assert.equal(d.items.find((i) => i.id === 'f1').color, '#ff8a5c');
+    assert.ok(s1.issues.some((x) => /overlap/.test(x)), 'the design check found the overlap');
+    const fixed = await designStep(ctx, cfg, b.id, { phase: 'fix', focus: 'f1', issues: s1.issues, step: plan.steps[0] }, {}, dl());
+    assert.equal(fixed.issues.filter((x) => /overlap/.test(x)).length, 0);
+    // a new slide: its frame is made at the planned slot and added to the slides
+    const s2 = await designStep(ctx, cfg, b.id, { phase: 'section', focus: 'new', step: plan.steps[1] }, {}, dl());
+    d = JSON.parse((await getBoard(db, uid, b.id)).data);
+    const f2 = d.items.find((i) => i.id === s2.focus);
+    assert.deepEqual([f2.type, f2.x, f2.y, d.order.length], ['frame', plan.steps[1].slot.x, plan.steps[1].slot.y, 2]);
+    assert.ok(d.items.some((i) => i.title === 'Step one' && i.x === f2.x + 70));
+    const p = await designStep(ctx, cfg, b.id, { phase: 'polish' }, {}, dl());
+    assert.equal(p.summary, 'Unified title sizes.');
+    assert.equal(JSON.parse((await getBoard(db, uid, b.id)).data).settings.ground, 'grid');
+    // once a style is remembered it is not asked again
+    const again = await designStep(ctx, cfg, b.id, { phase: 'plan', request: 'Redesign this talk' }, { designDirection: 'desk' }, dl());
+    assert.ok(!again.questions.some((q) => q.id === 'direction')); assert.equal(again.direction, 'desk');
+  } finally { ai.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});

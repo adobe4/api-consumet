@@ -3,7 +3,9 @@
 import { h, clear, debounce, setText, raw } from '../util.js';
 import { icon as svgIcon } from '../icons.js';
 import { api } from '../api.js';
-import { S, projects, project, notify } from '../store.js';
+import { S, projects, project, notify, saveSettings, updateAiKey, keyModels, nvidiaModels } from '../store.js';
+import { openBrainSettings } from '../brain-ui.js';
+import { snapshotBoard } from './snapshot.js';
 import { createSurface, route, drawLink, drawLabel, svgEl, LINK_DEFAULT } from '../surface.js';
 import { makeItem, makeLink, newId, bounds, inside, PALETTE, DEFAULT_SIZE, CLIP_SIZE, FONT_PX } from '/shared/board.js';
 import { CLIP_DEFAULT, CLIP_LABEL, METAL_LABEL, clipSvg } from './clips.js';
@@ -1236,36 +1238,163 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     openPop({ ...(btn ? anchorFor(btn) : pt), title: '⌖ Jump link', width: 380, body: holder });
   }
 
-  // ---------- ask AI to change this board ----------
+  // ---------- AI designer: understands the board, asks, then designs section by section ----------
+  const DESIGN_CHIPS = ['Redesign it properly: every slide its own layout, the whole toolkit', 'Fix overlaps, alignment and text sizes everywhere', 'Add more: tips on paper notes, stickers, a checklist and a menu with jump links', 'Make the text bigger and bolder'];
+  let session = null;
+  const regionOf = (id) => { const f = byId(id); if (f) return { x: f.x, y: f.y, w: f.w, h: f.h }; const its = data.items.filter((i) => i.type !== 'frame'); const b = bounds(its.length ? its : data.items); return b && { x: b.x0, y: b.y0, w: b.w, h: b.h }; };
+  const picture = (id, maxW = 1280) => { try { const r = regionOf(id); return r ? snapshotBoard(data, r, { maxW }) : null; } catch { return null; } };
+  function takeBoard(b) {
+    data.items = b.data.items || []; data.links = b.data.links || []; data.order = b.data.order || [];
+    data.settings = { ...data.settings, ...(b.data.settings || {}) };
+    sf.setGround(data.settings.ground || 'dots');
+    version = b.version; board.version = b.version;
+    if (b.name && b.name !== name) { name = b.name; nameEl.textContent = name; onRenamed?.(name, icon); }
+    sel.clear(); render();
+  }
+  // which saved key (and model) does the designing
+  function keyRow(state) {
+    const holder = h('div', { class: 'ai-keyrow' });
+    const paint = async () => {
+      const keys = S.user?.aiKeys || [];
+      if (!keys.length) { clear(holder).append(h('span', { class: 'phint' }, 'No AI key yet.'), h('button', { type: 'button', class: 'btn sm primary', onclick: () => openBrainSettings({ onClose: paint }) }, '🧠 Add a key')); return; }
+      if (!keys.some((k) => k.id === state.keyId)) state.keyId = keys.some((k) => k.id === S.user.settings?.aiActive) ? S.user.settings.aiActive : keys[0].id;
+      const k = keys.find((x) => x.id === state.keyId);
+      const keySel = h('select', { 'aria-label': 'AI key', onchange: (e) => { state.keyId = e.target.value; paint(); } }, keys.map((x) => h('option', { value: x.id, selected: x.id === state.keyId }, `${x.label}${x.test?.ok ? '' : x.test ? ' (failing)' : ''}`)));
+      const modelSel = h('select', { 'aria-label': 'Model', onchange: async (e) => { try { await updateAiKey(k.id, { model: e.target.value }); notify(`Now using ${e.target.value}`, 'good'); } catch (err) { notify(err.message, 'error'); } } }, h('option', { value: k.model, selected: true }, k.model || 'default model'));
+      clear(holder).append(h('span', { class: 'pl' }, 'AI'), keySel, modelSel, h('button', { type: 'button', class: 'btn sm', title: 'Keys, models and providers', onclick: () => openBrainSettings({ onClose: paint }) }, '🧠'));
+      // fill the model list from the provider, without blocking the popup
+      (async () => {
+        try {
+          const list = k.provider === 'nvidia' ? await nvidiaModels() : k.provider === 'compatible' ? null : await keyModels(k.id);
+          const all = [...new Set([...(list?.recommended || []), ...(list?.all || [])])];
+          if (all.length && modelSel.isConnected) modelSel.replaceChildren(...[...new Set([k.model, ...all].filter(Boolean))].map((m) => h('option', { value: m, selected: m === k.model }, m)));
+        } catch { /* the current model stays selectable */ }
+      })();
+    };
+    paint();
+    return holder;
+  }
   function aiPop(btn) {
-    const box = h('textarea', { class: 'ai-in', rows: 4, placeholder: 'What should change? “Make it look like a polished slide”, “Turn the boxes into pills with soft shadows”, “Add paperclips to the notes”, “Translate everything to Swahili”…' });
-    const go = h('button', { type: 'button', class: 'btn primary', onclick: () => run(box.value) }, '✨ Apply');
+    const st = { keyId: S.user?.settings?.aiActive, ask: S.user?.settings?.designAsk !== false };
+    const box = h('textarea', { class: 'ai-in', rows: 4, placeholder: 'What should the AI design or change? “Redesign this into a beautiful tutorial deck”, “Add a slide about pricing”, “Make every title bigger and centred”…' });
     const chip = (t) => h('button', { type: 'button', class: 'chip', onclick: () => { box.value = t; box.focus(); } }, t);
-    async function run(text) {
-      if (text.trim().length < 3) { notify('Say what to change first', 'error'); return; }
-      go.disabled = true; setText(go, '✨ Designing… (up to 2 minutes)');
-      try {
-        await flushSave();
-        const r = await api('POST', `/api/boards/${board.id}/ai`, { prompt: text });
-        begin();
-        data.items = r.board.data.items || []; data.links = r.board.data.links || []; data.order = r.board.data.order || [];
-        data.settings = { ...data.settings, ...(r.board.data.settings || {}) };
-        sf.setGround(data.settings.ground || 'dots');
-        version = r.board.version;
-        if (r.board.name && r.board.name !== name) { name = r.board.name; nameEl.textContent = name; onRenamed?.(name, icon); }
-        sel.clear(); render();
-        const snap0 = before; before = null;
-        if (snap0 && snap0 !== snapshot()) { undo.push(snap0); redo = []; updateUndoBtns(); }
-        closePop();
-        notify(`${r.summary || 'Done'} (Undo puts it back)`, 'good');
-      } catch (e) { notify(e.message, 'error'); }
-      finally { go.disabled = false; setText(go, '✨ Apply'); }
-    }
-    openPop({ anchor: btn, title: '✨ Ask AI to change this board', width: 420, body: h('div', { class: 'pgrid' },
+    const prefs = Array.isArray(S.user?.settings?.designPrefs) ? S.user.settings.designPrefs : [];
+    const go = h('button', { type: 'button', class: 'btn primary', onclick: () => { if (box.value.trim().length < 3) { notify('Say what to design first', 'error'); return; } closePop(); runDesign(box.value.trim(), st); } }, '✨ Start');
+    openPop({ anchor: btn, title: '✨ AI designer', width: 460, body: h('div', { class: 'pgrid' },
       box,
-      h('div', { class: 'chips' }, chip('Redesign it properly: give every slide its own layout and use the whole toolkit'), chip('Fix overlaps, alignment and text sizes'), chip('Add more: tips on paper notes, stickers, a checklist and a menu with jump links'), chip('Make it look better')),
-      h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, h('small', { class: 'phint' }, S.user?.hasAiKey ? 'Uses the AI from your 🧠 Brain settings' : 'Add an AI key in 🧠 Brain first'), go)) });
+      h('div', { class: 'chips' }, DESIGN_CHIPS.map(chip)),
+      keyRow(st),
+      toggleRow('Ask me questions first', st.ask, (v) => { st.ask = v; saveSettings({ designAsk: v }).catch(() => {}); }),
+      prefs.length || S.user?.settings?.designDirection ? h('details', { class: 'ai-prefs' }, h('summary', null, `What it remembers about your taste (${prefs.length + (S.user.settings.designDirection ? 1 : 0)})`),
+        h('ul', null, S.user.settings.designDirection ? h('li', null, `Style: ${S.user.settings.designDirection}`) : null, prefs.slice(-12).map((p) => h('li', null, raw(p)))),
+        h('button', { type: 'button', class: 'btn sm', onclick: async () => { await saveSettings({ designPrefs: [], designDirection: null }); notify('Forgotten. It will ask again.', 'good'); closePop(); } }, 'Forget it')) : null,
+      h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, h('small', { class: 'phint' }, 'It studies the board, asks you, then designs one section at a time. One Undo puts it all back.'), go)) });
     setTimeout(() => box.focus(), 50);
+  }
+  // the questions: buttons for yes/no and choices, a box for text, all optional
+  function askOwner(questions) {
+    return new Promise((resolve) => {
+      const answers = new Map();
+      let remember = true, done = false;
+      const finish = (v) => { if (done) return; done = true; resolve(v); };
+      const body = h('div', { class: 'aiq' }, questions.map((q) => {
+        const row = h('div', { class: 'aiq-opts' });
+        const pick = (val, label, btnEl) => { answers.set(q.id, { q: q.q, a: label, id: val }); row.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btnEl)); };
+        if (q.type === 'yesno') ['Yes', 'No'].forEach((l) => { const b = h('button', { type: 'button', class: 'aiq-btn', onclick: () => pick(l.toLowerCase(), l, b) }, l); row.append(b); });
+        else if (q.type === 'text') row.append(h('input', { type: 'text', placeholder: 'Type your answer', oninput: (e) => { if (e.target.value.trim()) answers.set(q.id, { q: q.q, a: e.target.value.trim() }); else answers.delete(q.id); } }));
+        else q.options.forEach((o, i) => { const b = h('button', { type: 'button', class: 'aiq-btn opt', onclick: () => pick(o.id, o.label, b) },
+          h('b', null, `${String.fromCharCode(65 + i)}. ${o.label}`), o.colors ? h('span', { class: 'aiq-sw' }, o.colors.map((c) => h('i', { style: { background: c } }))) : null, o.hint ? h('small', null, o.hint) : null); row.append(b); });
+        return h('div', { class: 'aiq-q' }, h('p', null, raw(q.q)), row);
+      }), toggleRow('Remember my answers for next time', true, (v) => { remember = v; }));
+      openModal({ title: '✨ A few questions first', body, onClose: () => finish(null), actions: [
+        { label: 'Skip, decide yourself', onClick: () => { finish({ answers: [], direction: null, remember: false }); } },
+        { label: 'Design it', kind: 'primary', onClick: () => { const list = [...answers.values()]; const dir = answers.get('direction')?.id; finish({ answers: list.filter((a) => a.q !== questions.find((x) => x.id === 'direction')?.q), direction: dir && dir !== 'auto' ? dir : null, remember }); } },
+      ] });
+    });
+  }
+  async function rememberTaste(res) {
+    const prev = Array.isArray(S.user?.settings?.designPrefs) ? S.user.settings.designPrefs : [];
+    const lines = res.answers.map((a) => `${a.q.replace(/\?$/, '')}: ${a.a}`.slice(0, 160));
+    const next = [...prev.filter((p) => !lines.some((l) => l.split(':')[0] === p.split(':')[0])), ...lines].slice(-20);
+    await saveSettings({ designPrefs: next, ...(res.direction ? { designDirection: res.direction } : {}) }).catch(() => {});
+  }
+  function sessionPanel() {
+    const steps = h('ol', { class: 'ais-steps' });
+    const head = h('div', { class: 'ais-head' }, h('b', null, '✨ AI designer'), h('small', null, ''));
+    const about = h('p', { class: 'ais-about' }, 'Studying your board…');
+    const stop = h('button', { type: 'button', class: 'btn sm', onclick: () => { if (session) { session.stop = true; setText(stop, 'Stopping after this step…'); stop.disabled = true; } } }, 'Stop');
+    const close = h('button', { type: 'button', class: 'btn sm primary', hidden: true, onclick: () => el.remove() }, 'Done');
+    const el = h('div', { class: 'ai-session' }, head, about, steps, h('div', { class: 'row', style: 'justify-content:flex-end;gap:8px' }, stop, close));
+    root.append(el);
+    const rows = [];
+    return {
+      el, about, setKey: (t) => setText(head.lastChild, t),
+      setSteps: (list) => { clear(steps); rows.length = 0; list.forEach((s) => { const r = h('li', { class: 'wait' }, h('span', { class: 'st' }), h('div', null, h('b', null, raw(s.title)), h('small', null, ''))); rows.push(r); steps.append(r); }); },
+      mark: (i, state, note) => { const r = rows[i]; if (!r) return; r.className = state; if (note !== undefined) setText(r.querySelector('small'), note); },
+      end: () => { stop.hidden = true; close.hidden = false; },
+    };
+  }
+  async function runDesign(request, opts = {}) {
+    if (session) { notify('The AI is already designing', 'error'); return; }
+    if (!(S.user?.aiKeys || []).length) { openBrainSettings(); notify('Add an AI key first', 'error'); return; }
+    const panel = sessionPanel();
+    session = { stop: false };
+    const before0 = snapshot();
+    const call = async (body) => {
+      const r = await api('POST', `/api/boards/${board.id}/design`, { request, keyId: opts.keyId, ...body });
+      takeBoard(r.board);
+      if (r.usedKey) panel.setKey(r.usedKey);
+      return r;
+    };
+    let changed = false;
+    try {
+      await flushSave();
+      await Promise.all([document.fonts?.load('600 24px "Caveat"'), document.fonts?.load('800 24px Manrope')]).catch(() => {}); // so the pictures show the real lettering
+      const plan = await call({ phase: 'plan', images: [picture(null, 1600)].filter(Boolean) });
+      setText(panel.about, plan.understanding || plan.summary || 'Plan ready.');
+      let answers = [], direction = plan.direction;
+      if (opts.ask !== false && plan.questions?.length) {
+        const res = await askOwner(plan.questions);
+        if (!res) { setText(panel.about, 'Stopped before designing.'); return; }
+        answers = res.answers; direction = res.direction || direction;
+        if (res.remember && (res.answers.length || res.direction)) rememberTaste(res);
+      }
+      const steps = [...plan.steps, { focus: 'all', title: 'Final polish: the whole board together' }];
+      panel.setSteps(steps);
+      for (let i = 0; i < steps.length; i++) {
+        if (session.stop) { for (let j = i; j < steps.length; j++) panel.mark(j, 'skip', 'skipped'); break; }
+        const st = steps[i];
+        panel.mark(i, 'work', 'designing…');
+        try {
+          if (st.focus === 'all') {
+            const r = await call({ phase: 'polish', answers, direction, images: [picture(null, 1600)].filter(Boolean) });
+            panel.mark(i, 'ok', r.summary); changed = true;
+            continue;
+          }
+          if (byId(st.focus)) glide(viewOf(byId(st.focus)));
+          let r = await call({ phase: 'section', focus: st.focus, step: st, answers, direction, images: [byId(st.focus) ? picture(st.focus) : null].filter(Boolean) });
+          changed = true;
+          const f = byId(r.focus);
+          if (f) glide(viewOf(f));
+          if (r.issues?.length && !session.stop) {
+            panel.mark(i, 'work', `fixing ${r.issues.length} thing${r.issues.length === 1 ? '' : 's'}…`);
+            r = await call({ phase: 'fix', focus: r.focus, step: st, issues: r.issues, answers, direction, images: [picture(r.focus)].filter(Boolean) });
+          }
+          panel.mark(i, 'ok', r.summary || 'done');
+        } catch (e) {
+          panel.mark(i, 'fail', e.message.slice(0, 140));
+          if (e.status === 429 || e.status === 400) { for (let j = i + 1; j < steps.length; j++) panel.mark(j, 'skip', 'skipped'); break; }
+        }
+      }
+      setText(panel.about, `${plan.summary || 'Done.'} Undo puts the board back as it was.`);
+    } catch (e) {
+      setText(panel.about, e.message);
+      notify(e.message, 'error');
+    } finally {
+      if (changed && before0 !== snapshot()) { undo.push(before0); redo = []; updateUndoBtns(); }
+      panel.end();
+      session = null;
+    }
   }
 
   function hidePop(btn) {
@@ -1412,6 +1541,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       sf.destroy(); root.remove();
     },
     present,
+    design: (request, opts) => runDesign(request, opts),
     lock: setLocked,
     fit: fitAll,
     resize: () => sf.resize(),

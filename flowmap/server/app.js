@@ -5,7 +5,8 @@ import { RES, HttpError, fromRow, toCols, readWorld, loadWorld, ownedProjectIds,
 import { simulate, alerts, suggestions } from '../shared/engine.js';
 import { buildTemplate, TEMPLATES } from '../shared/templates.js';
 import { scanProject, scanAll, dayIn } from './sync.js';
-import { handleMcp, runBrain, runBoardAI, runBoardEdit, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey, listModels, bestModel } from './brain.js';
+import { designStep, DIRECTIONS } from './design.js';
+import { handleMcp, runBrain, runBoardAI, runBoardEdit, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey, listModels, bestModel, withFallback } from './brain.js';
 import { listBoards, getBoard, boardOut, createBoard, seedBoards, saveBoard, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, sharedFile } from './boards.js';
 import { generateBoard } from '../shared/board.js';
 
@@ -15,6 +16,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 export function createApp({ db, secret, openSignup = true, cronSecret = '', youtubeKey = '' }) {
   const authLimit = makeLimiter(12, 10 * 60 * 1000);
   const brainLimit = makeLimiter(20, 60 * 60 * 1000);
+  const designLimit = makeLimiter(160, 60 * 60 * 1000); // one design session is several short steps
 
   // ---------- helpers ----------
   const secretsOf = (u) => decryptJson(secret, u.secrets);
@@ -332,6 +334,22 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     if (request.length < 4) throw new HttpError(400, 'Describe the board you want');
     const out = await runBoardAI(ctxFor(user), aiOf(user), request);
     return { ...out, board: boardOut(await getBoard(db, user.id, out.board.id)) };
+  }, { agents: false });
+  // one step of a design session (plan with questions, a section, a fix, the final polish)
+  route('GET', '/api/design/directions', async () => Object.fromEntries(Object.entries(DIRECTIONS).map(([id, d]) => [id, { label: d.label, hint: d.hint, colors: d.colors }])), { auth: false });
+  route('POST', '/api/boards/:id/design', async ({ user, params, body }) => {
+    if (!designLimit(`design:${user.id}`)) throw new HttpError(429, 'The AI already ran many design steps this hour. Try again later.');
+    const b = await getBoard(db, user.id, params.id);
+    const settings = settingsOf(user);
+    let chain = aiOf(user);
+    const i = chain.findIndex((k) => k.id === body.keyId);
+    if (i > 0) chain = [chain[i], ...chain.slice(0, i), ...chain.slice(i + 1)];
+    const deadline = Date.now() + 240000;
+    const out = await withFallback(chain, (ai) => {
+      if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in the 🧠 Brain settings');
+      return designStep({ ...ctxFor(user), source: 'ai' }, ai, b.id, body, settings, deadline);
+    }).catch((e) => { console.error(`design ${body.phase} failed (board ${b.id}): ${e.message}`); throw e; });
+    return { ...out, board: boardOut(await getBoard(db, user.id, b.id)) };
   }, { agents: false });
   route('POST', '/api/boards/:id/ai', async ({ user, params, body }) => {
     if (!brainLimit(`brain:${user.id}`)) throw new HttpError(429, 'The AI already ran many times this hour. Try again later.');

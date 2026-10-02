@@ -109,15 +109,18 @@ export function createBoards(host) {
       openBoard(b.id, false, b);
     } catch (e) { notify(e.message, 'error'); }
   }
+  // a new board designed by the AI: an empty board opens, then the designer studies the request, asks, and designs
   async function aiBuild(text, btn) {
     if (text.trim().length < 4) { notify('Describe the board you want first', 'error'); return; }
-    btn.disabled = true; setText(btn, '✨ Designing… (up to 2 minutes)');
+    btn.disabled = true;
     try {
-      const r = await api('POST', '/api/boards/generate', { prompt: text });
-      notify(r.summary || 'Board ready', 'good');
-      openBoard(r.board.id, false, r.board);
+      const nameGuess = text.trim().replace(/^(make|create|build|design|tengeneza)\s+(me\s+)?(a|an)?\s*/i, '').split(/[.\n]/)[0].slice(0, 48) || 'New board';
+      const b = await api('POST', '/api/boards', { name: nameGuess.charAt(0).toUpperCase() + nameGuess.slice(1), icon: '✨', data: emptyBoard() });
+      boards.unshift(b);
+      await openBoard(b.id, false, b);
+      editor?.design(text.trim(), { ask: S.user?.settings?.designAsk !== false });
     } catch (e) { notify(e.message, 'error'); }
-    finally { btn.disabled = false; setText(btn, '✨ Build it'); }
+    finally { btn.disabled = false; }
   }
 
   // ---------- editor ----------
