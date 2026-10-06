@@ -277,7 +277,7 @@ function itemView(i) {
   for (const k of DATA_KEYS) if (i.data?.[k] !== undefined) data[k] = k === 'notes' || k === 'back' ? String(i.data[k]).slice(0, 600) : i.data[k];
   const r = (n) => Math.round(n);
   return { id: i.id, type: i.type, x: r(i.x), y: r(i.y), w: r(i.w), h: r(i.h), ...(i.rot ? { rot: i.rot } : {}), z: i.z || 0,
-    ...(i.title ? { title: i.title } : {}), ...(i.text ? { text: i.text.slice(0, 400) } : {}), ...(i.color ? { color: i.color } : {}),
+    ...(i.title ? { title: i.title } : {}), ...(i.text ? { text: i.text.slice(0, 6000) } : {}), ...(i.color ? { color: i.color } : {}),
     ...(Object.keys(i.style || {}).length ? { style: i.style } : {}), ...(Object.keys(i.anim || {}).length ? { anim: i.anim } : {}),
     ...(Object.keys(data).length ? { data } : {}), ...(i.locked ? { locked: true } : {}) };
 }
