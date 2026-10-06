@@ -263,3 +263,30 @@ test('AI tools build trackers and business items with their settings', async () 
   assert.equal(by('table').title, 'Spending');
   assert.equal(by('text').style.family, 'display');
 });
+
+test('a deleted board waits in Recently deleted: undo, other people, share links and erasing', async () => {
+  const b = (await call('POST', '/api/boards', { name: 'Oops board', data: { items: [{ id: 'n1', type: 'note', x: 0, y: 0, w: 200, h: 150, text: 'keep me' }] } }, A)).body;
+  await call('PUT', `/api/boards/${b.id}/share`, { mode: 'public' }, A);
+  const tok = (await call('GET', `/api/boards/${b.id}/share`, null, A)).body.token;
+  assert.equal((await call('GET', `/api/share/${tok}`)).status, 200);
+
+  assert.equal((await call('DELETE', `/api/boards/${b.id}`, null, A)).status, 200);
+  assert.ok(!(await call('GET', '/api/boards', null, A)).body.some((x) => x.id === b.id), 'gone from the list');
+  assert.equal((await call('GET', `/api/boards/${b.id}`, null, A)).status, 404);
+  assert.equal((await call('GET', `/api/share/${tok}`)).status, 404, 'its link stops working');
+  const trash = (await call('GET', '/api/boards-deleted', null, A)).body;
+  const t = trash.find((x) => x.id === b.id);
+  assert.ok(t && t.daysLeft === 30 && t.name === 'Oops board');
+  assert.equal((await call('GET', '/api/boards-deleted', null, B)).body.length, 0, 'nobody else sees it');
+  assert.equal((await call('POST', `/api/boards-deleted/${b.id}/restore`, null, B)).status, 404, 'nobody else can bring it back');
+
+  assert.equal((await call('POST', `/api/boards-deleted/${b.id}/restore`, null, A)).status, 200);
+  const back = (await call('GET', `/api/boards/${b.id}`, null, A)).body;
+  assert.equal(back.data.items[0].text, 'keep me');
+  assert.equal((await call('GET', `/api/share/${tok}`)).status, 200, 'the link works again');
+
+  await call('DELETE', `/api/boards/${b.id}`, null, A);
+  assert.equal((await call('DELETE', `/api/boards-deleted/${b.id}`, null, A)).status, 200);
+  assert.ok(!(await call('GET', '/api/boards-deleted', null, A)).body.some((x) => x.id === b.id), 'erased for good');
+  assert.equal((await call('POST', `/api/boards-deleted/${b.id}/restore`, null, A)).status, 404);
+});

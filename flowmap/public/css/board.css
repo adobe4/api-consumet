@@ -986,3 +986,11 @@ button, a, [role="button"], .bt, .tplc { touch-action: manipulation; }
 @keyframes pill-in { from { opacity: 0; transform: translate(-50%, 16px); } }
 /* keyboard shortcuts mean nothing on a touch screen */
 @media (hover: none) and (pointer: coarse) { .ctxmenu kbd { display: none; } }
+/* recently deleted */
+.bh-trash { display: flex; justify-content: center; margin: 22px 0 8px; }
+.bt-trash { cursor: default; }
+.bt-trash .bt-prev { opacity: 0.6; filter: grayscale(0.4); }
+.toast-undo { display: inline-flex; align-items: center; gap: 12px; }
+#toasts .toast:has(button) { pointer-events: auto; }
+/* dialogs never grow wider than the screen, whatever is inside (board tiles in Demo and Recently deleted) */
+.scrim { grid-template-columns: minmax(0, 1fr); }

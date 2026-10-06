@@ -154,8 +154,9 @@ CREATE INDEX IF NOT EXISTS idx_board_assets_user ON board_assets(user_id);
 // columns added after the first release, for databases created before them
 const ADDED = [['users', 'secrets', "TEXT NOT NULL DEFAULT ''"], ['projects', 'sources', "TEXT NOT NULL DEFAULT '[]'"], ['tasks', 'source', "TEXT NOT NULL DEFAULT ''"], ['links', 'look', "TEXT NOT NULL DEFAULT '{}'"],
   ['boards', 'share_token', 'TEXT'], ['boards', 'share_mode', "TEXT NOT NULL DEFAULT 'off'"], ['boards', 'share_pass', "TEXT NOT NULL DEFAULT ''"], ['boards', 'share_seats', 'INTEGER NOT NULL DEFAULT 0'],
-  ['boards', 'pinned', 'INTEGER NOT NULL DEFAULT 0'], ['boards', 'demo', 'INTEGER NOT NULL DEFAULT 0'], ['boards', 'share_opts', "TEXT NOT NULL DEFAULT '{}'"]];
-const VERSION = 5;
+  ['boards', 'pinned', 'INTEGER NOT NULL DEFAULT 0'], ['boards', 'demo', 'INTEGER NOT NULL DEFAULT 0'], ['boards', 'share_opts', "TEXT NOT NULL DEFAULT '{}'"],
+  ['boards', 'deleted_at', 'TEXT']];
+const VERSION = 6;
 // the example boards older accounts were given: they move into the Demo shelf (one tap moves them back)
 const DEMO_NAMES = ['Tutorial video', 'Course outline', 'Strategy map', 'Content workflow', 'Task board', '30-day plan', 'Map of my system'];
 

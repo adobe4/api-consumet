@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { S, projects, notify } from '../store.js';
 import { RESOURCES } from '/shared/engine.js';
 import { generateBoard, emptyBoard } from '/shared/board.js';
-import { confirmDialog, openModal } from '../ui-common.js';
+import { confirmDialog, openModal, toast } from '../ui-common.js';
 import { openShareDialog } from './share.js';
 import { createEditor } from './editor.js';
 
@@ -49,11 +49,15 @@ function systemSpec() {
 }
 
 export function createBoards(host) {
-  let editor = null, boards = [], open = null;
+  let editor = null, boards = [], deleted = [], open = null;
   const root = h('div', { class: 'boards' });
   host.append(root);
 
-  async function load() { boards = await api('GET', '/api/boards').catch((e) => { notify(e.message, 'error'); return []; }); }
+  async function load() {
+    [boards, deleted] = await Promise.all([
+      api('GET', '/api/boards').catch((e) => { notify(e.message, 'error'); return []; }),
+      api('GET', '/api/boards-deleted').catch(() => [])]);
+  }
   async function show() {
     root.hidden = false;
     const last = store_ls.get('flowmap.board', null);
@@ -87,7 +91,8 @@ export function createBoards(host) {
         h('div', { class: 'sec sec-row' }, h('span', null, q ? `Found · ${list.length}` : `Your boards · ${rest.length}`),
           h('span', { class: 'seg mini' }, [['recent', 'Recent'], ['name', 'A–Z'], ['size', 'Biggest']].map(([v, l]) => h('button', { type: 'button', class: sortBy === v ? 'on' : '', onclick: () => { sortBy = v; store_ls.set('flowmap.boardSort', v); paintGrid(); } }, l)))),
         rest.length ? h('div', { class: 'bgrid' }, rest.map(tile))
-          : h('div', { class: 'bempty' }, h('b', null, q ? 'No board matches that.' : 'No boards of your own yet.'), h('small', null, q ? 'Try another word.' : 'Start a new board, ask the AI to build one, or open 🎬 Demo for ready-made examples.')));
+          : h('div', { class: 'bempty' }, h('b', null, q ? 'No board matches that.' : 'No boards of your own yet.'), h('small', null, q ? 'Try another word.' : 'Start a new board, ask the AI to build one, or open 🎬 Demo for ready-made examples.')),
+        deleted.length ? h('div', { class: 'bh-trash' }, h('button', { type: 'button', class: 'btn sm ghost', onclick: () => trashShelf() }, `🗑 Recently deleted · ${deleted.length}`)) : null);
     }
     clear(root).append(
       h('div', { class: 'bh' },
@@ -139,12 +144,45 @@ export function createBoards(host) {
         ['📌', b.pinned ? 'Unpin' : 'Pin on top', () => flags(b, { pinned: !b.pinned })],
         ['🎬', b.demo ? 'Move to my boards' : 'Move to Demo', () => flags(b, { demo: !b.demo, pinned: false })],
         ['⧉', 'Duplicate', async () => { await api('POST', `/api/boards/${b.id}/duplicate`); await load(); home(); }],
-        ['🗑', 'Delete', async () => { if (await confirmDialog({ title: `Delete “${b.name}”?`, message: 'The board, its uploaded files and its share link are removed for good.', confirm: 'Delete', danger: true })) { await api('DELETE', `/api/boards/${b.id}`); await load(); home(); } }, 'danger']]
+        ['🗑', 'Delete', () => removeBoard(b), 'danger']]
         .map(([ic, label, fn, cls]) => h('button', { type: 'button', class: `mi ${cls || ''}`, onclick: () => { m.remove(); fn(); } }, h('span', { class: 'mic' }, ic), label)));
     document.body.append(m);
     const mr = { width: m.offsetWidth, height: m.offsetHeight };
     m.style.left = `${Math.min(innerWidth - mr.width - 8, r.left)}px`; m.style.top = `${Math.min(innerHeight - mr.height - 8, r.bottom + 6)}px`;
     setTimeout(() => document.addEventListener('pointerdown', function away(e) { if (!m.contains(e.target)) { m.remove(); document.removeEventListener('pointerdown', away, true); } }, true));
+  }
+  // deleting moves a board to Recently deleted for 30 days, with an Undo right away
+  async function removeBoard(b) {
+    if (!(await confirmDialog({ title: `Delete “${b.name}”?`, message: 'It goes to 🗑 Recently deleted, where you can bring it back for 30 days. Its share link stops working until then.', confirm: 'Delete', danger: true }))) return;
+    try { await api('DELETE', `/api/boards/${b.id}`); } catch (e) { notify(e.message, 'error'); return; }
+    await load(); home();
+    const t = toast(h('span', { class: 'toast-undo' }, `🗑 “${b.name}” deleted`, h('button', { type: 'button', class: 'btn sm', onclick: () => { t.remove(); restore(b.id); } }, '↩ Undo')), 'info', 8000);
+  }
+  async function restore(id, after) {
+    try { await api('POST', `/api/boards-deleted/${id}/restore`); notify('Board is back', 'good'); }
+    catch (e) { notify(e.message, 'error'); return; }
+    await load(); after?.(); if (!open) home();
+  }
+  const daysAgo = (iso) => { const d = Math.floor((Date.now() - new Date(iso)) / 86400000); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`; };
+  function trashShelf() {
+    const body = h('div', { class: 'demo-shelf' });
+    const paint = () => {
+      clear(body).append(
+        h('p', { class: 'hint' }, 'Deleted boards wait here for 30 days, then they are erased for good. Bring one back and it returns to your boards as it was.'),
+        deleted.length ? h('div', { class: 'bgrid' }, deleted.map((b) => h('div', { class: 'bt bt-trash' },
+          h('div', { class: 'bt-top' }, miniPreview(b.preview), h('span', { class: 'bi-ic' }, b.icon || '🧩')),
+          h('b', null, b.name),
+          h('small', null, `Deleted ${daysAgo(b.deletedAt)} · ${b.daysLeft} day${b.daysLeft === 1 ? '' : 's'} left`),
+          h('div', { class: 'row', style: 'gap:6px;margin-top:8px' },
+            h('button', { type: 'button', class: 'btn sm primary', onclick: () => restore(b.id, paint) }, '↩ Bring back'),
+            h('button', { type: 'button', class: 'btn sm ghost danger', onclick: async () => {
+              if (!(await confirmDialog({ title: `Erase “${b.name}” for good?`, message: 'The board and its uploaded files are removed now. This cannot be undone.', confirm: 'Erase', danger: true }))) return;
+              try { await api('DELETE', `/api/boards-deleted/${b.id}`); } catch (e) { notify(e.message, 'error'); return; }
+              await load(); paint(); if (!open) home();
+            } }, 'Erase'))))) : h('p', { class: 'hint' }, 'Nothing here.'));
+    };
+    paint();
+    openModal({ title: '🗑 Recently deleted', body, wide: true, actions: [{ label: 'Close' }] });
   }
   // the Demo shelf: ready-made templates to start from, and the example boards you moved out of the way
   function demoShelf(demos) {

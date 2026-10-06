@@ -9,7 +9,7 @@ import { designStep, DIRECTIONS } from './design.js';
 import { linkPreview } from './preview.js';
 import { sanitizeBoard } from '../shared/board.js';
 import { handleMcp, runBrain, runBoardAI, runBoardEdit, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey, listModels, bestModel, withFallback } from './brain.js';
-import { listBoards, getBoard, boardOut, createBoard, seedBoards, saveBoard, setBoardFlags, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, saveShared, sharedFile } from './boards.js';
+import { listBoards, getBoard, boardOut, createBoard, seedBoards, saveBoard, setBoardFlags, deleteBoard, listDeleted, restoreBoard, eraseDeleted, purgeDeleted, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, saveShared, sharedFile } from './boards.js';
 import { generateBoard } from '../shared/board.js';
 
 const safeJson = (s) => { try { return JSON.parse(s); } catch { return {}; } };
@@ -403,6 +403,9 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
   route('PATCH', '/api/boards/:id/flags', async ({ user, params, body }) => setBoardFlags(db, user.id, params.id, { pinned: typeof body.pinned === 'boolean' ? body.pinned : undefined, demo: typeof body.demo === 'boolean' ? body.demo : undefined }));
   route('PUT', '/api/boards/:id', async ({ user, params, body }) => saveBoard(db, user.id, params.id, body));
   route('DELETE', '/api/boards/:id', async ({ user, params }) => deleteBoard(db, user.id, params.id));
+  route('GET', '/api/boards-deleted', async ({ user }) => listDeleted(db, user.id));
+  route('POST', '/api/boards-deleted/:id/restore', async ({ user, params }) => restoreBoard(db, user.id, params.id));
+  route('DELETE', '/api/boards-deleted/:id', async ({ user, params }) => eraseDeleted(db, user.id, params.id), { agents: false });
   route('POST', '/api/boards/:id/duplicate', async ({ user, params }) => duplicateBoard(db, user.id, params.id));
   route('POST', '/api/boards/:id/files', async ({ user, params, body }) => addFile(db, user.id, { ...body, boardId: params.id }));
   route('GET', '/api/board-files/:id', async ({ user, params }) => getFile(db, user.id, params.id));
@@ -437,6 +440,7 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     for (const user of await db.all('SELECT * FROM users ORDER BY id')) {
       if (Date.now() - started > 240000) { report.push({ user: user.id, skipped: 'time limit' }); continue; }
       const item = { user: user.id };
+      try { const n = await purgeDeleted(db, user.id); if (n) item.erasedBoards = n; } catch (e) { item.purgeError = e.message; }
       try { item.scans = (await scanAll(db, user.id, ctxFor(user))).length; } catch (e) { item.scanError = e.message; }
       const s = settingsOf(user), chain = aiChain(s, secretsOf(user));
       if (s.aiDaily && chain.length) {

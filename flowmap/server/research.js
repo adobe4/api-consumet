@@ -420,7 +420,7 @@ export const RESEARCH_TOOLS = [
     run: async ({ db, uid }, a) => {
       const words = String(a.query || '').toLowerCase().split(/\s+/).filter((w) => w.length > 1);
       if (!words.length) throw new HttpError(400, 'Give words to search for');
-      const rows = await db.all('SELECT id, name, data FROM boards WHERE user_id = ?', uid);
+      const rows = await db.all('SELECT id, name, data FROM boards WHERE user_id = ? AND deleted_at IS NULL', uid);
       const hits = [];
       for (const b of rows) {
         const d = parse(b.data);

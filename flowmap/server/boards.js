@@ -35,7 +35,7 @@ const clean = (data) => { try { return sanitizeBoard(data); } catch (e) { if (e 
 const nameOf = (v, d = 'Untitled board') => String(v ?? '').trim().slice(0, 80) || d;
 
 export async function listBoards(q, uid) {
-  return (await q.all('SELECT * FROM boards WHERE user_id = ? ORDER BY pinned DESC, updated_at DESC, id DESC', uid)).map(summary);
+  return (await q.all('SELECT * FROM boards WHERE user_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC, id DESC', uid)).map(summary);
 }
 // pin a board on top, or move it to the Demo shelf and back
 export async function setBoardFlags(q, uid, id, { pinned, demo } = {}) {
@@ -44,12 +44,12 @@ export async function setBoardFlags(q, uid, id, { pinned, demo } = {}) {
   return summary(await getBoard(q, uid, r.id));
 }
 export async function getBoard(q, uid, id) {
-  const r = await q.get('SELECT * FROM boards WHERE id = ? AND user_id = ?', Number(id), uid);
+  const r = await q.get('SELECT * FROM boards WHERE id = ? AND user_id = ? AND deleted_at IS NULL', Number(id), uid);
   if (!r) throw new HttpError(404, 'No such board');
   return r;
 }
 export async function createBoard(q, uid, { name, icon = '', data } = {}) {
-  if ((await q.get('SELECT COUNT(*) AS n FROM boards WHERE user_id = ?', uid)).n >= MAX_BOARDS) throw new HttpError(400, `You can keep up to ${MAX_BOARDS} boards`);
+  if ((await q.get('SELECT COUNT(*) AS n FROM boards WHERE user_id = ? AND deleted_at IS NULL', uid)).n >= MAX_BOARDS) throw new HttpError(400, `You can keep up to ${MAX_BOARDS} boards`);
   const d = clean(data || emptyBoard());
   const now = new Date().toISOString();
   const id = (await q.run('INSERT INTO boards (user_id, name, icon, data, version, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)', uid, nameOf(name), String(icon || '').slice(0, 8), JSON.stringify(d), now, now)).lastInsertRowid;
@@ -58,7 +58,7 @@ export async function createBoard(q, uid, { name, icon = '', data } = {}) {
 // Boards that come with a starter template: each is built from one or more layout specs placed side by side.
 // A board the owner already has (same name) is left alone, so loading the template again adds no copies.
 export async function seedBoards(q, uid, boards = []) {
-  const have = new Set((await q.all('SELECT name FROM boards WHERE user_id = ?', uid)).map((r) => r.name));
+  const have = new Set((await q.all('SELECT name FROM boards WHERE user_id = ? AND deleted_at IS NULL', uid)).map((r) => r.name));
   for (const b of boards) {
     if (have.has(b.name)) continue;
     const d = { v: 1, items: [], links: [], order: [], settings: {} };
@@ -84,11 +84,45 @@ export async function saveBoard(q, uid, id, { name, icon, data, version } = {}) 
     name === undefined ? r.name : nameOf(name), icon === undefined ? r.icon : String(icon || '').slice(0, 8), d, now, r.id, uid);
   return summary(await getBoard(q, uid, id));
 }
+// Deleting moves a board to "Recently deleted" for 30 days (its share link stops working meanwhile);
+// after that, or when the owner empties it, the board and its files are gone for good.
+export const KEEP_DELETED_DAYS = 30;
 export async function deleteBoard(q, uid, id) {
   const r = await getBoard(q, uid, id);
-  await q.run('DELETE FROM board_files WHERE board_id = ? AND user_id = ?', r.id, uid);
-  await q.run('DELETE FROM board_viewers WHERE board_id = ? AND user_id = ?', r.id, uid);
-  await q.run('DELETE FROM boards WHERE id = ? AND user_id = ?', r.id, uid);
+  await q.run('UPDATE boards SET deleted_at = ?, pinned = 0 WHERE id = ? AND user_id = ?', new Date().toISOString(), r.id, uid);
+  return { ok: true, id: r.id, keptDays: KEEP_DELETED_DAYS };
+}
+async function deletedBoard(q, uid, id) {
+  const r = await q.get('SELECT * FROM boards WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL', Number(id), uid);
+  if (!r) throw new HttpError(404, 'That board is not in Recently deleted');
+  return r;
+}
+async function eraseBoard(q, uid, id) {
+  await q.run('DELETE FROM board_files WHERE board_id = ? AND user_id = ?', id, uid);
+  await q.run('DELETE FROM board_viewers WHERE board_id = ? AND user_id = ?', id, uid);
+  await q.run('DELETE FROM boards WHERE id = ? AND user_id = ?', id, uid);
+}
+// boards deleted more than 30 days ago are erased
+export async function purgeDeleted(q, uid) {
+  const cut = new Date(Date.now() - KEEP_DELETED_DAYS * 86400000).toISOString();
+  const old = await q.all('SELECT id FROM boards WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?', uid, cut);
+  for (const r of old) await eraseBoard(q, uid, r.id);
+  return old.length;
+}
+export async function listDeleted(q, uid) {
+  await purgeDeleted(q, uid);
+  const rows = await q.all('SELECT * FROM boards WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC', uid);
+  return rows.map((r) => ({ ...summary(r), deletedAt: r.deleted_at, daysLeft: Math.max(0, Math.ceil(KEEP_DELETED_DAYS - (Date.now() - new Date(r.deleted_at)) / 86400000)) }));
+}
+export async function restoreBoard(q, uid, id) {
+  const r = await deletedBoard(q, uid, id);
+  if ((await q.get('SELECT COUNT(*) AS n FROM boards WHERE user_id = ? AND deleted_at IS NULL', uid)).n >= MAX_BOARDS) throw new HttpError(400, `You can keep up to ${MAX_BOARDS} boards. Delete one first.`);
+  await q.run('UPDATE boards SET deleted_at = NULL WHERE id = ? AND user_id = ?', r.id, uid);
+  return summary(await getBoard(q, uid, r.id));
+}
+export async function eraseDeleted(q, uid, id) {
+  const r = await deletedBoard(q, uid, id);
+  await eraseBoard(q, uid, r.id);
   return { ok: true };
 }
 export async function duplicateBoard(q, uid, id) {
@@ -129,7 +163,7 @@ export async function getFile(q, uid, id) {
 // ---------- tools for AI agents (MCP) and the built-in AI ----------
 const BOARD_ARG = { type: 'string', description: 'Board id or name' };
 export async function findBoard(q, uid, ref) {
-  const rows = await q.all('SELECT * FROM boards WHERE user_id = ?', uid);
+  const rows = await q.all('SELECT * FROM boards WHERE user_id = ? AND deleted_at IS NULL', uid);
   const n = Number(ref);
   const s = String(ref ?? '').trim().toLowerCase();
   const r = (Number.isInteger(n) && rows.find((x) => x.id === n)) || rows.find((x) => x.name.toLowerCase() === s) || rows.find((x) => s && x.name.toLowerCase().includes(s));
@@ -561,7 +595,7 @@ export async function removeViewer(q, uid, id, viewerId) {
 
 async function sharedBoard(q, tok) {
   if (typeof tok !== 'string' || !/^[A-Za-z0-9_-]{8,40}$/.test(tok)) throw new HttpError(404, 'This link does not exist');
-  const r = await q.get('SELECT * FROM boards WHERE share_token = ?', tok);
+  const r = await q.get('SELECT * FROM boards WHERE share_token = ? AND deleted_at IS NULL', tok);
   if (!r || !r.share_mode || r.share_mode === 'off') throw new HttpError(404, 'This link is switched off or does not exist');
   if (expired(optsOf(r))) throw new HttpError(410, 'This link has expired. Ask the owner for a new one.');
   return r;

@@ -3,11 +3,12 @@ import { h, clear } from './util.js';
 import { RESOURCES } from '/shared/engine.js';
 
 // ---------- toasts ----------
-export function toast(message, kind = 'info') {
+export function toast(message, kind = 'info', ms = kind === 'error' ? 6000 : 3600) {
   const root = document.getElementById('toasts');
   const el = h('div', { class: `toast ${kind}`, role: 'status' }, message);
   root.append(el);
-  setTimeout(() => el.remove(), kind === 'error' ? 6000 : 3600);
+  setTimeout(() => el.remove(), ms);
+  return el;
 }
 
 // ---------- modals ----------
