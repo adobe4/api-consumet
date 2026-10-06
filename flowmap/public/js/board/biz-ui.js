@@ -50,16 +50,23 @@ export const STAT_VIEWS = [['number', '# Number'], ['months', '▮ By month'], [
 export function statView(it, ctx) {
   const d = it.data || {};
   const src = ctx.source?.(it);
-  if (!src || src.type !== 'table') return [h('div', { class: 'st-top' }, ed('ttl', it.title, 'title', 'Stat')), h('p', { class: 'pg-hint' }, 'Connect a table (sales, spending…) into this, or pick one in its settings, to see totals by month and year.')];
+  if (!src || src.type !== 'table') {
+    // nothing to count yet: pick a table right here
+    const tables = ctx.candidates?.(['table']) || [];
+    return [h('div', { class: 'pg-pick' }, h('b', null, 'Which table should this count?'),
+      tables.length ? h('div', { class: 'pg-picks sf-scroll' }, tables.map((t) => h('button', { type: 'button', class: 'pg-choice', 'data-act': 'st-pick', 'data-id': t.id }, raw(`🧮 ${t.title || 'Table'}`))))
+        : h('small', null, 'Add a 🧮 table first (sales, spending, debts). Then pick it here to see totals by month and year.'))];
+  }
   const t = src.data || {};
   const cur = t.currency ?? 'TZS';
   const s = statOf(t, d);
   const fnName = { sum: 'Total', count: 'Count', avg: 'Average', max: 'Biggest', min: 'Smallest' }[s.fn];
-  const what = `${fnName}${s.valCol && s.fn !== 'count' ? ` ${s.valCol.name.toLowerCase()}` : ''}${d.filterCol && d.filterVal ? ` · ${d.filterVal}` : ''}`;
+  const colName = s.valCol && s.fn !== 'count' && s.valCol.name.toLowerCase() !== fnName.toLowerCase() ? ` ${s.valCol.name.toLowerCase()}` : '';
+  const what = `${fnName}${colName}${d.filterCol && d.filterVal ? ` · ${d.filterVal}` : ''}`;
   const good = d.good === 'down' ? -1 : 1;
   const delta = s.delta == null ? null : h('span', { class: `st-delta ${s.delta * good > 0 ? 'up' : s.delta * good < 0 ? 'down' : ''}` }, raw(`${s.delta > 0 ? '▲' : s.delta < 0 ? '▼' : '='} ${Math.abs(Math.round(s.delta * 100))}%`), h('small', null, raw(` vs ${s.period === 'month' ? 'month before' : s.period === 'year' ? 'year before' : 'before'}`)));
   const kids = [
-    h('div', { class: 'st-top' }, ed('ttl', it.title, 'title', src.title || 'Stat'), h('small', { class: 'pg-src' }, raw(`↳ ${src.title || 'Table'} · ${what}`))),
+    h('div', { class: 'st-top' }, ed('ttl', it.title || src.title || 'Stat', 'title', 'Stat'), h('small', { class: 'pg-src' }, raw(what))),
     h('div', { class: 'st-nav' },
       s.period === 'all' ? null : h('button', { type: 'button', class: 'st-arrow', 'data-act': 'st-prev', title: 'Earlier' }, '‹'),
       h('b', null, raw(s.label)),
@@ -68,6 +75,7 @@ export function statView(it, ctx) {
     h('div', { class: 'st-big' }, h('b', null, raw(s.money ? big(s.value, cur) : fmtNum(s.value, 2))), delta),
   ];
   const view = d.view || (s.dateCol ? 'months' : 'number');
+  if (!(t.rows || []).length) { kids.push(h('p', { class: 'pg-empty' }, raw(`Add rows to ${src.title || 'the table'} and this fills in by itself.`))); return kids; }
   if (view === 'months' && s.months.length) {
     const top = Math.max(1, ...s.months.map((m) => m.v));
     kids.push(h('div', { class: 'st-bars' }, s.months.map((m, i) => h('div', { class: `st-col${i === s.months.length - 1 && s.period === 'month' ? ' cur' : ''}`, title: `${m.label}: ${s.money ? fmtMoney(m.v, cur) : fmtNum(m.v, 2)}` }, h('i', { style: { height: `${Math.max(2, (m.v / top) * 100)}%` } }), h('small', null, raw(m.label.slice(0, 1)))))));

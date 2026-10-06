@@ -408,7 +408,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (its.some((i) => i.type === 'clip')) kids.push(b(clipPop, '📎', 'Clip: kind, metal and colour'));
       if (its.some((i) => i.type === 'arrow')) kids.push(b(arrowPop, '➜', 'Arrow: colour, thickness, head, bend, stroke'));
       if (its.some((i) => i.type === 'media')) kids.push(b(mediaPop, '🎬', 'Research cards: refresh numbers, sort'));
-      if (its.length === 1 && first.type === 'habit') kids.push(b(habitPop, '🗓', 'Schedule, challenge length and rules'), b(() => addProgressFor(first), '◔', 'Add a progress view (calendar, ring, line) fed by this habit'));
+      if (its.length === 1 && first.type === 'habit') kids.push(b(habitPop, '🗓', 'Name, how often, how long, rules'), b((x) => viewPop(x, first), '◔', 'Add a calendar, ring or bar for this habit'));
       if (its.length === 1 && first.type === 'progress') kids.push(b(progressPop, '◔', 'Progress: how it looks and what feeds it'));
       if (its.length === 1 && first.type === 'checklist') kids.push(b(checkSchedPop, '↻', 'Reset ticks every day, hour or week, and warn when missed'));
       if (its.length === 1 && first.type === 'table') kids.push(b(tablePop, '🧮', 'Columns, formulas, currency, export'), b(() => addStatFor(first), '📊', 'Add a stat (totals by month, year or category) for this table'));
@@ -499,7 +499,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   function stageDown(e, w) {
     const t = e.target;
     tapEl = null;
-    const act = t.closest('[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="check"], [data-act="open-link"], [data-act="tick"], [data-act="tick-part"], [data-act="cell"], [data-act="prog-inc"], [data-act="prog-dec"], [data-act^="tb-"], [data-act^="st-"], [data-act="inv-edit"], [data-act="inv-add"], [data-act="inv-del"], [data-act="inv-print"]');
+    const act = t.closest('[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="check"], [data-act="open-link"], [data-act="tick"], [data-act="tick-part"], [data-act="cell"], [data-act="hb-cell"], [data-act="prog-inc"], [data-act="prog-dec"], [data-act^="tb-"], [data-act^="st-"], [data-act="inv-edit"], [data-act="inv-add"], [data-act="inv-del"], [data-act="inv-print"]');
     if (act && e.button === 0) { itemAction(act, e); return 'handled'; }
     if (t.closest('video, a')) return 'handled';
     if (tool === 'laser' && !root.classList.contains('presenting')) { laserDown(e); return 'handled'; }
@@ -719,7 +719,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (type === 'checklist') { it.title = 'Checklist'; it.data.items = [{ t: 'First step', done: false }, { t: 'Second step', done: false }]; }
       if (type === 'flip') { it.title = 'FRONT'; it.data.back = 'Line one\nLine two\nLine three'; }
       if (type === 'prompt') { it.title = 'Prompt'; }
-      if (type === 'habit') { it.title = 'Daily habit'; it.data = habitDefaults(); }
+      if (type === 'habit') { it.title = ''; it.data = { ...habitDefaults(), length: 30 }; }
       if (type === 'progress') { it.data = { view: 'ring' }; }
       if (type === 'table') { const tp = TABLE_TEMPLATES.sales(); it.title = tp.title; it.data = { cols: tp.cols, rows: [], currency: 'TZS', fresh: true }; }
       if (type === 'stat') { const tb = data.items.filter((i) => i.type === 'table'); it.data = { view: 'months', ...(tb.length === 1 ? { source: tb[0].id } : {}) }; }
@@ -749,6 +749,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (['note', 'card', 'text', 'prompt', 'frame'].includes(type)) startEdit(it.id);
       if (type === 'link') setTimeout(() => linkUrlPrompt(it), 60);
       if (type === 'table') setTimeout(() => { select([it.id]); tablePop(); }, 80);
+      if (type === 'habit') setTimeout(() => { select([it.id]); habitPop(undefined, { fresh: true }); }, 80);
     });
   }
   function startConnect(e, w, fromId) {
@@ -859,11 +860,19 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
         if (readonly) { if (!checkBackup.has(it.id)) checkBackup.set(it.id, JSON.stringify(it.data.items)); flip(); render(); updateStageBar(); }
         else change(flip);
         if (!was) { const r = btn.getBoundingClientRect(); burstAt(r.left + 9, r.top + 9); }
-      } else if (act === 'tick' || act === 'tick-part' || act === 'cell') {
-        const key = act === 'cell' ? btn.dataset.k : periodKey(habitState(it.type === 'habit' ? it.data : sourceOf(it)?.data).every, Date.now());
+      } else if (act === 'pg-pick' || act === 'st-pick') {
+        const id = btn.dataset.id, src = byId(id);
+        if (!src || readonly) return;
+        change(() => { it.data = { ...it.data, source: id, manual: undefined, ...(act === 'pg-pick' && !it.data?.viewSet ? { view: src.type === 'habit' ? (it.h > it.w * 1.2 ? 'calendar' : 'ring') : 'ring' } : {}) }; if (!it.color && src.color) it.color = src.color; linkOnce(id, it.id); });
+      } else if (act === 'pg-manual') {
+        if (readonly) return;
+        change(() => { it.data = { ...it.data, manual: true, target: it.data?.target || 100, view: 'bar' }; });
+        setTimeout(() => { select([it.id]); progressPop(); }, 40);
+      } else if (act === 'tick' || act === 'tick-part' || act === 'cell' || act === 'hb-cell') {
+        const key = act === 'cell' || act === 'hb-cell' ? btn.dataset.k : periodKey(habitState(it.type === 'habit' ? it.data : sourceOf(it)?.data).every, Date.now());
         const target = it.type === 'habit' ? it : sourceOf(it);
         if (!target || target.type !== 'habit' || !key) return;
-        const next = act === 'cell' ? cycleCell(target.data, key) : tickHabit(target.data, key, act === 'tick' ? 'done' : 'part');
+        const next = act === 'cell' || act === 'hb-cell' ? cycleCell(target.data, key) : tickHabit(target.data, key, act === 'tick' ? 'done' : 'part');
         if (readonly) { target.data = next; render(); return; } // a shared view ticks only on this screen
         change(() => { target.data = next; });
         if (next.log?.[key] === 'done') { const r = btn.getBoundingClientRect(); burstAt(r.left + r.width / 2, r.top + r.height / 2); }
@@ -1427,8 +1436,17 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       h('p', { class: 'phint' }, 'Formula columns work things out for every row, e.g. [Qty] * [Price] or [Owed] - [Paid]. Totals add up at the bottom. Add rows any time, even when the board is locked.'));
     openPop({ ...anchorFor(btn), title: '🧮 Table', width: 560, body });
   }
+  // a free spot next to an item: to its right first, then lower down, then underneath
+  function freeSpot(src, w, h) {
+    const hits = (x, y) => data.items.some((i) => i.type !== 'frame' && i.type !== 'ink' && i.id !== src.id && x < i.x + i.w + 30 && x + w + 30 > i.x && y < i.y + i.h + 30 && y + h + 30 > i.y);
+    for (const [x0, y0, dx, dy] of [[src.x + src.w + 60, src.y, 0, 60], [src.x, src.y + src.h + 60, 60, 0]]) {
+      for (let k = 0; k < 30; k++) { const x = x0 + dx * k, y = y0 + dy * k; if (!hits(x, y)) return { x, y }; }
+    }
+    return { x: src.x + src.w + 60, y: src.y };
+  }
   function addStatFor(tb) {
-    const st = makeItem('stat', { x: tb.x + tb.w + 70, y: tb.y, z: maxZ() + 1, title: '', data: { view: 'months' }, anim: { in: 'pop' } });
+    const at = freeSpot(tb, 340, 300);
+    const st = makeItem('stat', { ...at, z: maxZ() + 1, title: '', data: { view: 'months', source: tb.id }, anim: { in: 'pop' } });
     const l = makeLink({ item: tb.id }, { item: st.id }, { style: { ...LINK_DEFAULT, ...(data.settings.linkStyle || {}) } });
     change(() => { data.items.push(st); data.links.push(l); });
     select([st.id]);
@@ -1484,54 +1502,92 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
 
   // ---------- trackers ----------
   const oneSel = () => byId([...sel][0]);
-  const LENGTHS = [[0, 'Forever'], [7, '7'], [21, '21'], [30, '30'], [66, '66'], [90, '90'], [180, '180'], [365, '365']];
-  function habitPop(btn) {
+  // challenge lengths in words, for each kind of habit
+  const LEN_PRESETS = {
+    day: [[30, '1 month'], [91, '3 months'], [182, '6 months'], [365, '1 year'], [0, 'No end']],
+    week: [[4, '1 month'], [13, '3 months'], [26, '6 months'], [52, '1 year'], [0, 'No end']],
+    hour: [[24, '1 day'], [168, '1 week'], [720, '1 month'], [0, 'No end']],
+    '2h': [[12, '1 day'], [84, '1 week'], [360, '1 month'], [0, 'No end']],
+  };
+  const OFTEN = [['day', 'Every day'], ['week', 'Every week'], ['hour', 'Every hour'], ['2h', 'Every 2 hours']];
+  const VIEW_BTNS = [['calendar', '▦ Calendar'], ['ring', '◯ Ring'], ['bar', '▬ Bar'], ['line', '📈 Line'], ['number', '🔥 Streak']];
+  // connect two items once (a progress view follows what is connected into it, and warnings travel along it)
+  function linkOnce(from, to) {
+    if (data.links.some((l) => l.from?.item === from && l.to?.item === to)) return;
+    data.links.push(makeLink({ item: from }, { item: to }, { style: { ...LINK_DEFAULT, ...(data.settings.linkStyle || {}) } }));
+  }
+  // everything about a habit in one place: its name, how often, how long, what a miss does, and views to add
+  function habitPop(btn, { fresh = false } = {}) {
     const it = oneSel();
     if (!it || it.type !== 'habit') return;
     const d = { ...habitDefaults(), ...it.data };
-    const set = (patch) => change(() => { it.data = { ...it.data, ...patch }; });
-    const unit = { hour: 'hours', '2h': '2-hour slots', day: 'days', week: 'weeks' };
-    const lenInput = h('input', { type: 'number', min: 0, max: 3650, value: d.length || '', placeholder: 'Any number', class: 'num-in', onchange: (e) => set({ length: Math.max(0, Math.min(3650, Math.round(Number(e.target.value) || 0))) }) });
-    const days = h('div', { class: 'wd-row' }, ...['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((n, i) => i).sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((i) => {
+    const set = (patch, again = false) => { change(() => { it.data = { ...it.data, ...patch }; }); if (again) { closePop(); setTimeout(() => habitPop(btn, { fresh }), 20); } };
+    const presets = LEN_PRESETS[d.every] || LEN_PRESETS.day;
+    const name = h('input', { type: 'text', class: 'name-in', value: it.title || '', placeholder: 'e.g. Post 1 TikTok, Read 10 pages, Gym', maxlength: 120, oninput: (e) => { it.title = e.target.value; const el = els.get(it.id)?.querySelector('.ed.ttl'); if (el) el.textContent = e.target.value; }, onchange: () => change(() => { it.title = name.value.trim(); }), onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); name.blur(); } } });
+    const days = h('div', { class: 'wd-row' }, [1, 2, 3, 4, 5, 6, 0].map((i) => {
       const on = !d.days?.length || d.days.includes(i);
-      return h('button', { type: 'button', class: `chip${on ? ' on' : ''}`, onclick: (e) => { const cur = d.days?.length ? [...d.days] : [0, 1, 2, 3, 4, 5, 6]; const nx = cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]; d.days = nx.length === 7 ? [] : nx; e.currentTarget.classList.toggle('on'); set({ days: d.days }); } }, ['S', 'M', 'T', 'W', 'T', 'F', 'S'][i]);
+      return h('button', { type: 'button', class: `chip${on ? ' on' : ''}`, onclick: (e) => { const cur = d.days?.length ? [...d.days] : [0, 1, 2, 3, 4, 5, 6]; const nx = cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]; if (!nx.length) return; d.days = nx.length === 7 ? [] : nx; e.currentTarget.classList.toggle('on'); set({ days: d.days }); } }, ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][i]);
     }));
+    const custom = !presets.some(([v]) => v === (d.length || 0));
+    const lenInput = h('input', { type: 'number', min: 1, max: 3650, value: custom ? d.length : '', placeholder: 'Other', class: 'num-in', onchange: (e) => set({ length: Math.max(0, Math.min(3650, Math.round(Number(e.target.value) || 0))) }, true) });
+    const views = data.links.filter((l) => l.from?.item === it.id).map((l) => byId(l.to?.item)).filter((x) => x?.type === 'progress');
     const body = h('div', { class: 'pgrid' },
-      segRow('Tick it', EVERY.map((v) => [v, EVERY_LABEL[v].replace('Every ', '')]), d.every, (v) => set({ every: v })),
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Habit'), name),
+      segRow('How often', OFTEN, d.every, (v) => {
+        // keep the same length in time when switching between days and weeks
+        const i = presets.findIndex(([n]) => n === (d.length || 0));
+        const np = LEN_PRESETS[v];
+        set({ every: v, length: i >= 0 ? (np[Math.min(i, np.length - 1)][0]) : d.length }, true);
+      }),
       d.every === 'day' ? h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'On'), days) : null,
-      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Starts'), h('input', { type: 'date', value: d.start, onchange: (e) => e.target.value && set({ start: e.target.value }) })),
-      segRow('Challenge', LENGTHS.map(([v, l]) => [v, l]), LENGTHS.some(([v]) => v === (d.length || 0)) ? d.length || 0 : -1, (v) => { lenInput.value = v || ''; set({ length: v }); }),
-      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Or'), lenInput, h('small', { class: 'phint' }, unit[d.every] || 'days')),
-      segRow('If I miss', [['mark', '✗ Mark it missed'], ['restart', '↺ Start again']], d.onMiss || 'mark', (v) => set({ onMiss: v })),
-      h('p', { class: 'phint' }, 'Tap ✓ each time you do it, or ½ when you only did part. Missing one marks it red, warns this item and everything it is connected to. In the calendar view you can tap any past day to fix it.'));
-    openPop({ ...anchorFor(btn), title: '🗓 Habit rules', width: 440, body });
+      segRow('For', presets, custom ? -1 : d.length || 0, (v) => set({ length: v }, true)),
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, ''), h('div', { class: 'row' }, lenInput, h('small', { class: 'phint' }, `${{ day: 'days', week: 'weeks', hour: 'hours', '2h': '2-hour slots' }[d.every]}`), h('span', { class: 'spacer' }), h('small', { class: 'phint' }, 'Starts'), h('input', { type: 'date', class: 'date-in', value: d.start, onchange: (e) => e.target.value && set({ start: e.target.value }) }))),
+      segRow('If I miss', [['mark', 'Mark it red, keep going'], ['restart', 'Start again from 1']], d.onMiss || 'mark', (v) => set({ onMiss: v })),
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Show it'), h('div', { class: 'wd-row' }, VIEW_BTNS.map(([v, l]) => h('button', { type: 'button', class: `chip${views.some((x) => (x.data?.view || 'calendar') === v) ? ' on' : ''}`, title: 'Add this view next to the habit, already connected', onclick: () => { closePop(); addProgressFor(it, v); } }, l)))),
+      h('p', { class: 'phint' }, 'Tap the big ✓ when you do it (½ if only part). Tap any day in the strip or the calendar to fix it. A miss turns it red and warns everything it is connected to.'));
+    openPop({ ...anchorFor(btn), title: fresh ? '🔁 New habit' : '🔁 Habit', width: 500, body });
+    if (fresh) setTimeout(() => name.focus(), 60);
   }
-  function addProgressFor(hb) {
-    const pr = makeItem('progress', { x: hb.x + hb.w + 70, y: hb.y, z: maxZ() + 1, title: '', data: { view: 'calendar' }, anim: { in: 'pop' } });
-    const l = makeLink({ item: hb.id }, { item: pr.id }, { style: { ...LINK_DEFAULT, ...(data.settings.linkStyle || {}) } });
-    change(() => { data.items.push(pr); data.links.push(l); });
+  // a progress view right next to the habit (or table, checklist), already connected
+  function addProgressFor(src, view = 'calendar') {
+    const big = view === 'calendar';
+    const at = freeSpot(src, big ? 340 : 280, big ? 420 : 280);
+    const pr = makeItem('progress', { ...at, w: big ? 340 : 280, h: big ? 420 : 280, z: maxZ() + 1, color: src.color || '', title: '', data: { view }, anim: { in: 'pop' } });
+    change(() => { data.items.push(pr); linkOnce(src.id, pr.id); });
     select([pr.id]);
+    setTimeout(() => glide(viewOf(pr)), 60);
+  }
+  function viewPop(btn, src) {
+    openPop({ ...anchorFor(btn), title: 'Add a progress view', width: 380, body: h('div', { class: 'pgrid' },
+      h('div', { class: 'wd-row' }, VIEW_BTNS.map(([v, l]) => h('button', { type: 'button', class: 'chip', onclick: () => { closePop(); addProgressFor(src, v); } }, l))),
+      h('p', { class: 'phint' }, 'It appears next to it, connected, and updates by itself.')) });
   }
   function progressPop(btn) {
     const it = oneSel();
     if (!it || it.type !== 'progress') return;
     const d = it.data || {};
-    const set = (patch, again = false) => { change(() => { it.data = { ...it.data, ...patch }; }); if (again) { closePop(); setTimeout(() => progressPop(btn), 30); } };
-    const feeds = data.items.filter((i) => i.type === 'habit' || i.type === 'checklist');
     const src = sourceOf(it);
-    const pickSrc = h('select', { class: 'sel-in', onchange: (e) => set({ source: e.target.value || undefined }, true) },
-      h('option', { value: '' }, src && !d.source ? `Connected: ${src.title || TYPE_LABEL[src.type]}` : 'Whatever is connected to it'),
-      ...feeds.map((f) => h('option', { value: f.id, selected: d.source === f.id }, `${f.type === 'habit' ? '🔁' : '☑'} ${f.title || TYPE_LABEL[f.type]}`)));
+    const set = (patch, again = false) => { change(() => { it.data = { ...it.data, ...patch }; }); if (again) { closePop(); setTimeout(() => progressPop(btn), 30); } };
+    const feeds = data.items.filter((i) => ['habit', 'checklist', 'table'].includes(i.type));
+    const icon = { habit: '🔁', checklist: '☑', table: '🧮' };
+    const pickSrc = h('select', { class: 'sel-in', onchange: (e) => {
+      const v = e.target.value;
+      if (v === '#') { set({ source: undefined, manual: true, target: d.target || 100 }, true); return; }
+      change(() => { it.data = { ...it.data, source: v, manual: undefined }; linkOnce(v, it.id); }); closePop(); setTimeout(() => progressPop(btn), 30);
+    } },
+      ...feeds.map((f) => h('option', { value: f.id, selected: src?.id === f.id }, `${icon[f.type]} ${f.title || TYPE_LABEL[f.type]}`)),
+      h('option', { value: '#', selected: !src }, '＃ A number I count myself'));
     const num = (label, key, ph) => h('div', { class: 'pr' }, h('span', { class: 'pl' }, label), h('input', { type: key === 'unit' ? 'text' : 'number', class: 'num-in', value: d[key] ?? '', placeholder: ph, onchange: (e) => set({ [key]: key === 'unit' ? e.target.value.slice(0, 20) : Number(e.target.value) || 0 }) }));
     const body = h('div', { class: 'pgrid' },
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Shows'), pickSrc),
       segRow('Look', PROGRESS_VIEWS, d.view || (src?.type === 'habit' ? 'calendar' : 'ring'), (v) => set({ view: v })),
-      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Fed by'), pickSrc),
+      src?.type === 'table' ? segRow('Period', [['month', 'This month'], ['year', 'This year'], ['all', 'All time']], d.period || 'month', (v) => set({ period: v })) : null,
+      src?.type === 'table' || !src ? num('Goal', 'target', 'e.g. 1000000') : null,
       src ? null : num('Now at', 'value', '0'),
-      src ? null : num('Goal', 'target', 'e.g. 100'),
       src ? null : num('Each tap', 'step', '1'),
-      src ? null : num('Unit', 'unit', 'e.g. TZS, km, videos'),
-      h('p', { class: 'phint' }, src ? 'It follows the habit or checklist feeding it. Drag a connection from another habit into it to switch.' : 'Count anything: tap ＋ when you sell, post or save. The line view draws your history.'));
-    openPop({ ...anchorFor(btn), title: '◔ Progress', width: 460, body });
+      src ? null : num('Unit', 'unit', 'TZS, videos, km'),
+      h('p', { class: 'phint' }, src?.type === 'table' ? 'The ring fills as the table’s total grows towards your goal.' : src ? 'It updates by itself whenever you tick.' : 'Tap ＋ when you sell, post or save. The line view draws your history.'));
+    openPop({ ...anchorFor(btn), title: '◔ Progress', width: 480, body });
   }
   function checkSchedPop(btn) {
     const it = oneSel();
@@ -2171,7 +2227,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     presenting = startPresenting({ root, sf, getData: () => data, els, byId, startId, readonly, saveSettings: (patch) => { Object.assign(data.settings, patch); save(); }, onEnd: () => { presenting = null; resetStage(); }, setToolLaser: () => setTool('laser') });
   }
 
-  const ctx = { get share() { return share; }, readonly, source: (it) => sourceOf(it) };
+  const ctx = { get share() { return share; }, readonly, source: (it) => sourceOf(it), candidates: (types) => data.items.filter((i) => types.includes(i.type)) };
   sf.setGround(data.settings.ground || 'dots');
   render();
   requestAnimationFrame(() => fitAll(false));
