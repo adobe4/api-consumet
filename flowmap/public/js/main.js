@@ -8,6 +8,9 @@ import { showAuth, brand } from './auth-ui.js';
 import { initPanels, openTab, render as renderPanels } from './panels.js';
 import { openProjectEditor, openLinkEditor, openActionDialog, openHelp, openSettings, dialogHooks } from './dialogs.js';
 import { toast, closeAllModals, hasModal } from './ui-common.js';
+import { popOpen, closePop } from './pop.js';
+import { onBack, appReady } from './native.js';
+import { initPwa } from './pwa.js';
 import { sfx, sound } from './audio.js';
 import { openBrainSettings } from './brain-ui.js';
 import { getMapStyle } from './mapstyle.js';
@@ -57,6 +60,7 @@ async function enterApp(isNew) {
   updateAll();
   boot.classList.add('gone');
   setMode(store_ls.get('flowmap.mode', 'tracker'));
+  appReady();
   if (isNew || !store_ls.get('flowmap.seenHelp', false)) { store_ls.set('flowmap.seenHelp', true); setTimeout(openHelp, 400); }
   else if (renderer.replay) { maybeMorningReplay(); maybeWeekReview(); }
   if (sound.enabled && currentAlerts().some((a) => a.level === 'critical')) setTimeout(sfx.alarm, 700);
@@ -68,6 +72,7 @@ async function start() {
   }
   boot.classList.add('gone');
   showAuth(authEl, (isNew) => enterApp(isNew));
+  appReady();
 }
 
 // ======================= app shell =======================
@@ -114,6 +119,22 @@ async function buildApp() {
   initSheet();
   $('stage').addEventListener('pointerdown', () => { if (phone() && sheetState() !== 'peek') setSheet('peek'); });
   window.addEventListener('resize', () => renderer.resize());
+  // the phone's back button closes the newest thing first: dialogs, then menus and modes, then the open board
+  const esc = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  onBack(() => {
+    if (appEl.classList.contains('board-mode')) return !!boardsUi?.back();
+    if (document.querySelector('.ctxmenu')) { esc(); return true; }
+    if (appEl.classList.contains('immersive')) { toggleImmersive(); return true; }
+    if (S.tool) { setTool(null); return true; }
+    if (S.selection) { select(null); return true; }
+    if (phone() && sheetState() !== 'peek') { setSheet('peek'); return true; }
+    return false;
+  });
+  onBack(() => {
+    if (popOpen()) { closePop(); return true; }
+    if (hasModal()) { esc(); return true; }
+    return false;
+  });
 }
 
 // Swap the map picture in place. A canvas that once held WebGL cannot give a 2D context (or the other way
@@ -388,3 +409,4 @@ function updateTimeline() {
 }
 
 start();
+initPwa();

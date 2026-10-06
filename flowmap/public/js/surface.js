@@ -12,6 +12,7 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const ease = (t) => 1 - Math.pow(1 - t, 3);
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 export const GRID = 22; // floor pattern pitch in world units
+import { haptic } from './native.js';
 
 let uid = 0;
 export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onContext, onDoubleClick, className = '' } = {}) {
@@ -148,14 +149,45 @@ export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onCon
   buildDefs();
 
   // ---------- input: pan, pinch, wheel ----------
+  // Finger moves arrive faster than the screen draws (120 Hz+ on many phones): the camera follows every one,
+  // but the world is redrawn once per frame.
+  let applyRaf = 0;
+  const applySoon = () => { if (!applyRaf) applyRaf = requestAnimationFrame(() => { applyRaf = 0; apply(); }); };
   const pointers = new Map();
-  let pan = null, pinch = null, spaceDown = false;
+  let pan = null, pinch = null, spaceDown = false, lastType = 'mouse';
+  // a flick keeps the floor gliding and slowing down, like paper sliding on a table
+  let trail = [];
+  function fling() {
+    const now = performance.now(), last = trail[trail.length - 1];
+    const pts = last && now - last.t < 70 ? trail.filter((p) => last.t - p.t < 120) : []; // a finger that rested before lifting does not glide
+    trail = [];
+    if (pts.length < 2 || calmMotion()) return;
+    const a = pts[0], b = pts[pts.length - 1], dt = Math.max(1, b.t - a.t);
+    let vx = (b.x - a.x) / dt, vy = (b.y - a.y) / dt; // px per ms
+    const speed = Math.hypot(vx, vy);
+    if (speed < 0.35) return;
+    const cap = 4.5 / speed; if (cap < 1) { vx *= cap; vy *= cap; }
+    let t0 = now;
+    const step = (t) => {
+      const dt2 = Math.min(40, t - t0); t0 = t;
+      cam.tx += vx * dt2; cam.ty += vy * dt2;
+      const f = Math.pow(0.9945, dt2); vx *= f; vy *= f;
+      apply();
+      if (Math.hypot(vx, vy) > 0.02) anim = requestAnimationFrame(step);
+    };
+    anim = requestAnimationFrame(step);
+  }
+  // touch double tap: phones do not always send dblclick, so it is detected here (and the real one, if it
+  // follows, is ignored)
+  let lastTap = null, synthDbl = 0;
   const onKey = (e) => { if (e.code === 'Space' && !e.target.closest?.('input, textarea, [contenteditable="true"]')) { spaceDown = e.type === 'keydown'; root.classList.toggle('grab', spaceDown); } };
   window.addEventListener('keydown', onKey); window.addEventListener('keyup', onKey);
   root.addEventListener('pointerdown', (e) => {
     const pt = local(e);
-    pointers.set(e.pointerId, pt);
+    lastType = e.pointerType;
+    pointers.set(e.pointerId, { ...pt, t0: performance.now(), sx: pt.x, sy: pt.y, ui: !!e.target.closest?.('button, input, textarea, select, a, label, [contenteditable="true"], .sf-overlay') });
     cancelAnimationFrame(anim);
+    trail = [];
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       pan = null;
@@ -172,9 +204,10 @@ export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onCon
     }
   });
   root.addEventListener('pointermove', (e) => {
-    if (!pointers.has(e.pointerId)) return;
+    const was = pointers.get(e.pointerId);
+    if (!was) return;
     const pt = local(e);
-    pointers.set(e.pointerId, pt);
+    pointers.set(e.pointerId, { ...was, x: pt.x, y: pt.y });
     if (pinch && pointers.size >= 2) {
       const [a, b] = [...pointers.values()];
       const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
@@ -183,20 +216,32 @@ export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onCon
       // the point under the fingers stays under them: two fingers moving together pan
       cam.tx = cx - w.x * cam.k; cam.ty = cy - w.y * cam.k;
       pinch = { cx, cy, d };
-      apply();
+      applySoon();
       return;
     }
     if (pan) {
-      if (!pan.moved && Math.hypot(pt.x - pan.sx, pt.y - pan.sy) > 3) pan.moved = true;
+      if (!pan.moved && Math.hypot(pt.x - pan.sx, pt.y - pan.sy) > (e.pointerType === 'mouse' ? 3 : 6)) pan.moved = true;
       cam.tx = pan.tx + pt.x - pan.sx; cam.ty = pan.ty + pt.y - pan.sy;
-      apply();
+      if (e.pointerType !== 'mouse') { trail.push({ t: performance.now(), x: pt.x, y: pt.y }); if (trail.length > 12) trail.shift(); }
+      applySoon();
     }
   });
   const end = (e) => {
+    const p = pointers.get(e.pointerId);
     pointers.delete(e.pointerId);
+    const wasPinch = !!pinch;
     if (pointers.size < 2) pinch = null;
+    if (e.type === 'pointerup' && p && !p.ui && e.pointerType !== 'mouse' && !wasPinch && !pointers.size) {
+      const pt = local(e), now = performance.now();
+      const still = Math.hypot(pt.x - p.sx, pt.y - p.sy) < 10 && now - p.t0 < 350;
+      if (still && lastTap && now - lastTap.t < 330 && Math.hypot(pt.x - lastTap.x, pt.y - lastTap.y) < 32) {
+        lastTap = null; synthDbl = now;
+        onDoubleClick?.(e, toWorld(pt.x, pt.y));
+      } else lastTap = still ? { t: now, x: pt.x, y: pt.y } : null;
+    }
     if (!pointers.size) {
       if (pan && !pan.moved) root.dispatchEvent(new CustomEvent('sf-tap', { detail: { e, world: toWorld(pan.sx, pan.sy) } }));
+      else if (pan?.moved && e.type === 'pointerup') fling();
       pan = null; root.classList.remove('panning');
     }
   };
@@ -213,21 +258,26 @@ export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onCon
       zoomAt(pt.x, pt.y, cam.k * Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015)));
     } else { cam.tx -= e.deltaX; cam.ty -= e.deltaY; apply(); }
   }, { passive: false });
-  root.addEventListener('contextmenu', (e) => { e.preventDefault(); const pt = local(e); onContext?.(e, toWorld(pt.x, pt.y)); });
-  root.addEventListener('dblclick', (e) => { const pt = local(e); onDoubleClick?.(e, toWorld(pt.x, pt.y)); });
+  root.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (lastType !== 'mouse' && e.pointerType !== 'mouse') return; // a long press already opened it (below)
+    const pt = local(e); onContext?.(e, toWorld(pt.x, pt.y));
+  });
+  root.addEventListener('dblclick', (e) => { if (performance.now() - synthDbl < 600) return; const pt = local(e); onDoubleClick?.(e, toWorld(pt.x, pt.y)); });
   // long press on touch = context menu
   let lp = null;
   root.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse') return;
     clearTimeout(lp?.t);
     const start = { x: e.clientX, y: e.clientY };
-    lp = { start, t: setTimeout(() => { if (pointers.size === 1 && !(pan?.moved)) { const pt = local(e); pan = null; root.classList.remove('panning'); onContext?.(e, toWorld(pt.x, pt.y)); } }, 550) };
+    lp = { start, t: setTimeout(() => { if (pointers.size === 1 && !(pan?.moved)) { const pt = local(e); pan = null; lastTap = null; root.classList.remove('panning'); haptic('heavy'); onContext?.(e, toWorld(pt.x, pt.y)); } }, 500) };
   });
   root.addEventListener('pointermove', (e) => { if (lp && Math.hypot(e.clientX - lp.start.x, e.clientY - lp.start.y) > 8) clearTimeout(lp.t); });
   root.addEventListener('pointerup', () => clearTimeout(lp?.t));
+  root.addEventListener('pointercancel', () => clearTimeout(lp?.t));
 
   function destroy() {
-    cancelAnimationFrame(anim); ro.disconnect();
+    cancelAnimationFrame(anim); cancelAnimationFrame(applyRaf); ro.disconnect();
     window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey);
     root.remove();
   }

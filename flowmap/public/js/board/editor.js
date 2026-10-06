@@ -1,6 +1,7 @@
 // The board editor: an infinite tactile canvas for planning, explaining and presenting.
 // Items are DOM elements on the shared surface; connections and drawings are SVG in the same world space.
 import { h, clear, debounce, setText, raw } from '../util.js';
+import { saveFile, printPage, haptic } from '../native.js';
 import { icon as svgIcon } from '../icons.js';
 import { api } from '../api.js';
 import { S, projects, project, notify, saveSettings, updateAiKey, keyModels, nvidiaModels } from '../store.js';
@@ -192,6 +193,10 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       } else { status.textContent = 'Not saved, retrying…'; status.dataset.s = 'err'; setTimeout(() => save(), 4000); }
     } finally { saving = false; if (pending) { pending = false; save(); } }
   }, 700);
+  // a phone may freeze or close the app soon after it leaves the screen: save what is waiting at once
+  const onHide = () => { if (document.hidden) save.flush(); };
+  document.addEventListener('visibilitychange', onHide);
+  window.addEventListener('pagehide', save.flush);
   // save right now (before the AI reads the board on the server)
   async function flushSave() {
     for (let i = 0; i < 80 && saving; i++) await new Promise((r) => setTimeout(r, 100));
@@ -583,9 +588,12 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   function track(e, move, up) {
     const target = sf.root;
     target.setPointerCapture?.(e.pointerId);
-    const mv = (ev) => { if (ev.pointerId === e.pointerId) move(ev); };
-    const end = (ev) => { if (ev.pointerId !== e.pointerId) return; target.removeEventListener('pointermove', mv); target.removeEventListener('pointerup', end); target.removeEventListener('pointercancel', end); up(ev); };
-    const cancel = () => { target.removeEventListener('pointermove', mv); target.removeEventListener('pointerup', end); target.removeEventListener('pointercancel', end); drag = null; before = null; };
+    // fingers report moves faster than the screen draws: do the work once per frame, with the newest position
+    let pend = null, raf = 0;
+    const flush = () => { cancelAnimationFrame(raf); raf = 0; if (pend) { const ev = pend; pend = null; move(ev); } };
+    const mv = (ev) => { if (ev.pointerId !== e.pointerId) return; pend = ev; if (!raf) raf = requestAnimationFrame(flush); };
+    const end = (ev) => { if (ev.pointerId !== e.pointerId) return; flush(); target.removeEventListener('pointermove', mv); target.removeEventListener('pointerup', end); target.removeEventListener('pointercancel', end); up(ev); };
+    const cancel = () => { cancelAnimationFrame(raf); pend = null; target.removeEventListener('pointermove', mv); target.removeEventListener('pointerup', end); target.removeEventListener('pointercancel', end); drag = null; before = null; };
     target.addEventListener('pointermove', mv); target.addEventListener('pointerup', end); target.addEventListener('pointercancel', end);
     sf.root.addEventListener('sf-cancel', cancel, { once: true });
     const origUp = up;
@@ -1483,15 +1491,11 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const sheet = h('div', { id: 'print-root' }, invoiceBody(it.data || {}, { editable: false, print: true, accent: it.color || '' }));
     document.body.append(sheet);
     document.documentElement.classList.add('printing');
-    const done = () => { document.documentElement.classList.remove('printing'); sheet.remove(); window.removeEventListener('afterprint', done); };
-    window.addEventListener('afterprint', done);
-    setTimeout(() => { window.print(); setTimeout(done, 1500); }, 60);
+    const done = () => { document.documentElement.classList.remove('printing'); sheet.remove(); };
+    setTimeout(() => printPage(`Invoice ${it.data?.no || ''}`.trim()).then(done), 60);
   }
   function download(name, text, type = 'text/csv') {
-    const url = URL.createObjectURL(new Blob([text], { type }));
-    const a = h('a', { href: url, download: name });
-    document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    saveFile(name, new Blob([text], { type })).catch((e) => notify(e.message, 'error'));
   }
   function tablePop(btn) {
     const it = oneSel();
@@ -2374,13 +2378,25 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   return {
     root,
     destroy() {
-      destroyed = true; save.flush?.(); clearInterval(trackTimer);
+      destroyed = true; save.flush(); clearInterval(trackTimer);
+      document.removeEventListener('visibilitychange', onHide); window.removeEventListener('pagehide', save.flush);
       window.removeEventListener('keydown', onKey); document.removeEventListener('paste', onPaste); document.removeEventListener('fullscreenchange', onFs);
       window.removeEventListener('flowmap-theme', offTheme); window.removeEventListener('flowmap-motion', offTheme);
       presenting?.end?.(); closePop(); closeMenu();
       sf.destroy(); root.remove();
     },
     present,
+    // the phone's back button: undo the last "mode" first (typing, presenting, a menu, a selection)
+    back() {
+      if (editing) { document.activeElement?.blur?.(); return true; }
+      if (presenting) { presenting.end?.(); return true; }
+      if (document.getElementById('app')?.classList.contains('immersive')) { toggleFull(); return true; }
+      if (picking) { endPick(); return true; }
+      if (menuEl) { closeMenu(); return true; }
+      if (sel.size) { select([]); return true; }
+      if (!readonly && tool !== 'select' && tool !== 'hand') { setTool('select'); return true; }
+      return false;
+    },
     design: (request, opts) => runDesign(request, opts),
     lock: setLocked,
     fit: fitAll,

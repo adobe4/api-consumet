@@ -10,7 +10,10 @@
     var t = resolved();
     document.documentElement.setAttribute('data-theme', t);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', t === 'light' ? '#f3eee7' : '#0a0a0b');
+    var bar = t === 'light' ? '#e8e5e0' : '#1d1c1a';
+    if (meta) meta.setAttribute('content', bar);
+    // the Android app paints its status and navigation bars to match
+    try { if (window.FlowMapAndroid && window.FlowMapAndroid.setBars) window.FlowMapAndroid.setBars(bar, t === 'dark'); } catch (e) { /* older app */ }
     try { window.dispatchEvent(new CustomEvent('flowmap-theme', { detail: t })); } catch (e) { /* very old browser */ }
   }
   window.flowmapTheme = {

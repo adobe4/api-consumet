@@ -1,0 +1,53 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Release signing comes from android/keystore.properties (never committed). Without it the build is signed
+// with the debug key, which installs fine but cannot update an app signed with the real key.
+def ksFile = rootProject.file('keystore.properties')
+def ks = new Properties()
+if (ksFile.exists()) ksFile.withInputStream { ks.load(it) }
+
+android {
+    namespace 'com.flowmap.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.flowmap.app'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+        // the site the app opens; a test build can point at a local server with -PhomeUrl=http://10.0.2.2:8820/
+        buildConfigField 'String', 'HOME_URL', "\"${project.findProperty('homeUrl') ?: 'https://flowmap-tau.vercel.app/'}\""
+    }
+
+    signingConfigs {
+        release {
+            if (ksFile.exists()) {
+                storeFile rootProject.file(ks['storeFile'])
+                storePassword ks['storePassword']
+                keyAlias ks['keyAlias']
+                keyPassword ks['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig ksFile.exists() ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

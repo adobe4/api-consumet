@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.flowmap.app",
+      "sha256_cert_fingerprints": ["EA:3D:05:B2:F2:23:74:27:6F:E3:5F:15:46:2A:15:C4:D1:1B:FD:13:2C:E8:79:18:15:3B:BE:C9:6A:6D:5A:49"]
+    }
+  }
+]

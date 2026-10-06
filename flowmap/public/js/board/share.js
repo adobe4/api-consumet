@@ -4,6 +4,7 @@ import { h, clear, setText } from '../util.js';
 import { api } from '../api.js';
 import { openModal } from '../ui-common.js';
 import { notify } from '../store.js';
+import { canShare, shareText } from '../native.js';
 
 const when = (s) => { const d = new Date(s.replace(' ', 'T') + (s.endsWith('Z') ? '' : 'Z')); return Number.isNaN(d) ? s : d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
 
@@ -38,7 +39,7 @@ export async function openShareDialog(board) {
       h('div', { class: 'row', style: 'margin-top:12px' },
         h('button', { type: 'button', class: 'btn primary', onclick: save }, on ? 'Save changes' : '🔗 Create the link'),
         on ? h('button', { type: 'button', class: 'btn', onclick: () => set('off') }, 'Turn off the link') : null),
-      on ? h('div', { class: 'share-link' }, h('input', { type: 'text', readonly: true, value: url(), onclick: (e) => e.target.select() }), h('button', { type: 'button', class: 'btn', onclick: (e) => { const btnEl = e.currentTarget; navigator.clipboard?.writeText(url()).then(() => { const b = btnEl; setText(b, '✓ Copied'); setTimeout(() => { setText(b, '⧉ Copy link'); }, 1500); }).catch(() => {}); } }, '⧉ Copy link')) : null,
+      on ? h('div', { class: 'share-link' }, h('input', { type: 'text', readonly: true, value: url(), onclick: (e) => e.target.select() }), h('button', { type: 'button', class: 'btn', onclick: (e) => { const btnEl = e.currentTarget; navigator.clipboard?.writeText(url()).then(() => { const b = btnEl; setText(b, '✓ Copied'); setTimeout(() => { setText(b, '⧉ Copy link'); }, 1500); }).catch(() => {}); } }, '⧉ Copy link'), canShare() ? h('button', { type: 'button', class: 'btn primary', onclick: () => shareText({ title: board.name, text: board.name, url: url() }) }, '📤 Send') : null) : null,
       on ? h('div', { class: 'sec' }, `People who opened it · ${info.viewers.length}${info.seats ? ` of ${info.seats}` : ''}`) : null,
       on ? (info.viewers.length ? h('div', { class: 'share-list' }, info.viewers.map((v, i) => h('div', { class: 'share-v' }, h('span', null, `👤 ${v.label || `Person ${i + 1}`}`), h('small', null, `first ${when(v.firstSeen)} · last ${when(v.lastSeen)}`), h('button', { type: 'button', class: 'btn sm ghost', title: 'Free this place: this person loses access', onclick: async () => { info = await api('DELETE', `/api/boards/${board.id}/share/viewers/${v.id}`); paint(); } }, 'Remove')))) : h('p', { class: 'hint' }, 'Nobody has opened it yet.')) : null,
       on ? h('button', { type: 'button', class: 'btn sm ghost danger', style: 'margin-top:10px', onclick: async () => { info = await api('POST', `/api/boards/${board.id}/share/reset`); notify('New link made. The old one no longer works.', 'good'); paint(); } }, '↻ Make a new link (the old one stops working)') : null,

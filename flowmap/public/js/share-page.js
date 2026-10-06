@@ -4,6 +4,8 @@ import { h, clear, store_ls } from './util.js';
 import { on } from './store.js';
 import { toast } from './ui-common.js';
 import { createEditor } from './board/editor.js';
+import { onBack, appReady } from './native.js';
+import { initPwa } from './pwa.js';
 
 on('toast', ({ message, kind }) => toast(message, kind));
 
@@ -21,7 +23,7 @@ async function call(method, url, body) {
   if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status });
   return data;
 }
-const ready = () => { boot.classList.add('gone'); setTimeout(() => boot.remove(), 450); };
+const ready = () => { boot.classList.add('gone'); setTimeout(() => boot.remove(), 450); appReady(); };
 
 function card(...kids) {
   gate.hidden = false;
@@ -77,6 +79,7 @@ function show(board, viewer, opts = {}) {
   const root = h('div', { class: 'boards' });
   host.append(root);
   const ed = createEditor(root, { board: { ...board, version: board.version || 0 }, share: { token, viewer, access: opts.access || 'tap' } });
+  onBack(() => ed.back());
   addEventListener('resize', () => ed.resize());
   // the owner chose to open it as a presentation
   if (opts.start === 'present') setTimeout(() => ed.present(), 600);
@@ -99,3 +102,4 @@ async function start() {
   ask(meta);
 }
 start();
+initPwa();

@@ -419,7 +419,14 @@ export function openSettings() {
   const paintStyle = () => clear(styleHost).append(chipGroup(MAP_STYLES.map(({ value, label }) => ({ value, label })), getMapStyle(), (v) => { setMapStyle(v); paintStyle(); }),
     h('div', { class: 'hint' }, MAP_STYLES.find((m) => m.value === getMapStyle()).hint));
   paintStyle();
+  const appVer = (() => { try { return window.FlowMapAndroid?.version?.() || ''; } catch { return ''; } })();
   const body = h('div', null,
+    h('div', { class: 'sec' }, 'Phone app'),
+    appVer
+      ? h('p', { class: 'hint' }, `📱 You are in the FlowMap Android app (version ${appVer}). It always shows the newest FlowMap, so it rarely needs updating.`)
+      : h('div', null,
+        h('div', { class: 'row wrap' }, h('a', { class: 'btn primary', href: '/download/flowmap.apk', download: 'FlowMap.apk' }, '📱 Get the Android app')),
+        h('div', { class: 'hint' }, 'Open this on your Android phone and tap the button. When the file has downloaded, tap it. The first time, Android asks you to allow installs from your browser: allow it, then tap Install. You stay signed in to the same account.')),
     h('div', { class: 'sec' }, 'Appearance'),
     field('Theme', themeHost),
     field('Map style', styleHost),

@@ -976,3 +976,13 @@
 .demo-shelf > .sec { font: 700 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 6px 0 10px; }
 .demo-shelf .tpls { margin-bottom: 18px; }
 .bt .bt-move { justify-self: start; margin: 6px 6px 0; }
+
+/* ---------- phones and the Android app ---------- */
+html, body { overscroll-behavior: none; }
+button, a, [role="button"], .bt, .tplc { touch-action: manipulation; }
+/* a board open on a phone gets the whole screen: its own bar has ← Boards */
+@media (max-width: 760px) { .app.board-mode.board-open .topbar { display: none; } .app.board-mode.board-open { grid-template-rows: minmax(0, 1fr); } }
+.update-pill { position: fixed; left: 50%; bottom: calc(86px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 400; padding: 12px 18px; border: 0; border-radius: 999px; font: 700 14px var(--font); color: #1a0d04; background: linear-gradient(135deg, #ffb020, #ff6b2c); box-shadow: 0 10px 28px rgba(255, 120, 40, 0.38); cursor: pointer; white-space: nowrap; animation: pill-in 0.4s var(--spring, ease-out); }
+@keyframes pill-in { from { opacity: 0; transform: translate(-50%, 16px); } }
+/* keyboard shortcuts mean nothing on a touch screen */
+@media (hover: none) and (pointer: coarse) { .ctxmenu kbd { display: none; } }

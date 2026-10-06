@@ -68,6 +68,7 @@ export function createBoards(host) {
   let query = '', sortBy = store_ls.get('flowmap.boardSort', 'recent'), aiOpen = false;
   function home() {
     editor?.destroy(); editor = null; open = null;
+    document.getElementById('app')?.classList.remove('board-open');
     store_ls.del('flowmap.board');
     const mine = boards.filter((b) => !b.demo), demos = boards.filter((b) => b.demo);
     const search = h('input', { type: 'search', class: 'bh-search', placeholder: 'Search boards', value: query, oninput: (e) => { query = e.target.value; paintGrid(); } });
@@ -192,11 +193,21 @@ export function createBoards(host) {
       editor?.destroy();
       clear(root);
       open = b;
+      document.getElementById('app')?.classList.add('board-open');
       store_ls.set('flowmap.board', b.id);
       editor = createEditor(root, { board: b, onBack: () => { load().then(home); }, onRenamed: (name, icon) => { b.name = name; b.icon = icon; } });
       if (presentNow) setTimeout(() => editor.present(), 500);
     } catch (e) { notify(e.message, 'error'); store_ls.del('flowmap.board'); home(); }
   }
 
-  return { show, hide, resize: () => editor?.resize(), get active() { return !!editor; } };
+  // back button: the board handles its own steps first, then closes back to the boards list
+  function back() {
+    if (root.hidden) return false;
+    if (document.querySelector('.bd-menu')) { document.querySelector('.bd-menu').remove(); return true; }
+    if (!editor) return false;
+    if (editor.back()) return true;
+    load().then(home);
+    return true;
+  }
+  return { show, hide, back, resize: () => editor?.resize(), get active() { return !!editor; } };
 }

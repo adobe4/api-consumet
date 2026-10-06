@@ -1,5 +1,6 @@
 // Small DOM + formatting helpers. Text always goes in as text nodes, never as HTML.
 import { hasGlyph, glyphs, stripGlyphs } from './icons.js';
+import { saveFile } from './native.js';
 
 // what people typed: always shown exactly as written (no icon swapping)
 export const raw = (s) => document.createTextNode(s == null ? '' : String(s));
@@ -74,15 +75,15 @@ export function relDay(s, today) {
 }
 
 export const debounce = (fn, ms) => {
-  let t;
-  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  let t, args = null;
+  const run = () => { clearTimeout(t); if (!args) return; const a = args; args = null; fn(...a); };
+  const d = (...a) => { args = a; clearTimeout(t); t = setTimeout(run, ms); };
+  d.flush = run; // do the waiting call now (leaving the page, the phone app going to the background)
+  return d;
 };
 
 export function download(filename, text, type = 'application/json') {
-  const a = h('a', { href: URL.createObjectURL(new Blob([text], { type })), download: filename });
-  document.body.append(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  return saveFile(filename, new Blob([text], { type }));
 }
 
 export const store_ls = {
