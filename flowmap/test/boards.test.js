@@ -236,3 +236,30 @@ test('assets: save a design, list it, use it, delete it; only your own', async (
   await call('DELETE', `/api/assets/${made.body.id}`, null, A);
   assert.equal((await call('GET', '/api/assets', null, A)).body.length, 0);
 });
+
+test('AI tools build trackers and business items with their settings', async () => {
+  const key = (await call('POST', '/api/agent-keys', { name: 'Tracker' }, A)).body.key;
+  const tool = async (name, args) => {
+    const r = await fetch(`${BASE}/api/mcp/${key}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+    const j = await r.json();
+    assert.ok(!j.result.isError, j.result.content[0].text);
+    return JSON.parse(j.result.content[0].text);
+  };
+  const made = await tool('create_board', { name: 'Challenge', items: [
+    { ref: 'h', type: 'habit', title: 'Post a TikTok', every: 'day', length: 182, onMiss: 'restart', x: 0, y: 0 },
+    { ref: 'p', type: 'progress', view: 'calendar', x: 400, y: 0 },
+    { ref: 'c', type: 'checklist', every: 'week', items: ['Review'], x: 0, y: 300 },
+    { ref: 't', type: 'table', template: 'expenses', x: 0, y: 600 },
+    { ref: 'x', type: 'text', text: 'Big', style: { family: 'display' }, x: 0, y: -100 },
+  ], connections: [{ from: 'h', to: 'p' }] });
+  const b = await tool('get_board', { board: made.created.id });
+  const by = (t) => b.items.find((i) => i.type === t);
+  assert.equal(by('habit').data.every, 'day');
+  assert.equal(by('habit').data.length, 182);
+  assert.equal(by('habit').data.onMiss, 'restart');
+  assert.match(by('habit').data.start, /^\d{4}-\d\d-\d\d$/);
+  assert.equal(by('progress').data.view, 'calendar');
+  assert.equal(by('checklist').data.every, 'week');
+  assert.equal(by('table').title, 'Spending');
+  assert.equal(by('text').style.family, 'display');
+});

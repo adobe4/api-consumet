@@ -144,6 +144,7 @@ const STYLE_SCHEMA = {
     size: { type: 'number', description: 'Text size in px, 8 to 200 (14 normal, 20 large, 32 heading, 52 huge)' },
     font: { type: 'string', enum: FONT_SIZES, description: 'Older size names; prefer size' }, align: { type: 'string', enum: ALIGNS },
     hand: { type: 'boolean', description: 'Handwritten lettering' },
+    family: { type: 'string', enum: ['sans', 'round', 'display', 'serif', 'hand', 'marker', 'mono'], description: 'Font: sans (clean), round (friendly), display (tall poster capitals), serif (elegant), hand (handwritten), marker (bold marker pen), mono (typewriter)' },
     strokeW: { type: 'number', description: 'A line around the item, px (0 = none)' }, strokeC: HEX, strokeD: { type: 'string', enum: ['solid', 'dashed', 'dotted'] },
     bold: { type: 'boolean' }, muted: { type: 'boolean', description: 'Softer, quieter text' }, textColor: HEX,
   },
@@ -212,6 +213,7 @@ function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
     if (FONT_SIZES.includes(st.font)) { s.font = st.font; delete s.size; }
     if (finite(st.size)) s.size = Math.round(Math.max(8, Math.min(200, st.size)) * 2) / 2;
     if (typeof st.hand === 'boolean') { if (st.hand) s.hand = true; else delete s.hand; }
+    if (['sans', 'round', 'display', 'serif', 'hand', 'marker', 'mono'].includes(st.family)) { s.family = st.family; if (st.family === 'hand') s.hand = true; else delete s.hand; }
     if (finite(st.strokeW)) s.strokeW = Math.max(0, Math.min(24, st.strokeW));
     if (hex(st.strokeC)) s.strokeC = hex(st.strokeC);
     if (['solid', 'dashed', 'dotted'].includes(st.strokeD)) s.strokeD = st.strokeD;
@@ -298,7 +300,7 @@ function itemFromSpec(a, origin) {
   return it;
 }
 // what an AI sees of an item: everything that shapes how it looks, nothing bulky
-const DATA_KEYS = ['jump', 'jumpLabel', 'paper', 'lift', 'pin', 'shape', 'cover', 'tap', 'back', 'items', 'url', 'movable', 'kind', 'metal', 'notes', 'num', 'flipped', 'projectId', 'name'];
+const DATA_KEYS = ['jump', 'jumpLabel', 'paper', 'lift', 'pin', 'shape', 'cover', 'tap', 'back', 'items', 'url', 'movable', 'kind', 'metal', 'notes', 'num', 'flipped', 'projectId', 'name', 'every', 'start', 'length', 'onMiss', 'days', 'view', 'source', 'value', 'target', 'unit', 'step', 'period', 'currency', 'status', 'no'];
 function itemView(i) {
   const data = {};
   for (const k of DATA_KEYS) if (i.data?.[k] !== undefined) data[k] = k === 'notes' || k === 'back' ? String(i.data[k]).slice(0, 600) : i.data[k];
