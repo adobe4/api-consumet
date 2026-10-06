@@ -28,7 +28,7 @@ const TOOLS = [
   ['note', '🗒️', 'Sticky note (N)', 'n'], ['card', '▭', 'Card (C)', 'c'], ['text', 'i:type', 'Text (T)', 't'], ['shape', '◆', 'Shapes (S)', 's'],
   ['frame', '▦', 'Frame / slide (F)', 'f'], ['flip', '🂠', 'Flip card', ''], ['checklist', '☑', 'Checklist', ''], ['prompt', '✦', 'Prompt with copy button (P)', 'p'],
   ['hide', '🙈', 'Hide: a blur or cover you tap away to reveal (R)', 'r'],
-  ['connector', '⤳', 'Connect (L)', 'l'], ['arrow', 'i:arrow-right', 'Big arrow (A): drag to draw, then bend it with the round handles', 'a'], ['pen', '✏️', 'Draw (D)', 'd'], ['highlight', '🖍️', 'Highlighter', ''], ['eraser', '⌫', 'Eraser (E)', 'e'],
+  ['connector', '⤳', 'Connect (L)', 'l'], ['arrow', 'i:arrow-right', 'Big arrow (A): drag to draw, then bend it with the round handles', 'a'], ['line', '╱', 'Line (Shift+A): drag to draw, bend it like an arrow', ''], ['pen', '✏️', 'Draw (D)', 'd'], ['highlight', '🖍️', 'Highlighter', ''], ['eraser', '⌫', 'Eraser (E)', 'e'],
   ['sticker', '😀', 'Stickers & arrows', ''], ['clip', 'i:paperclip', 'Paper clips, pins & tape (U)', 'u'], ['image', '🖼️', 'Image: link or upload', 'i'], ['file', '📎', 'Attach a text file', ''], ['video', '🎬', 'Video from this device', ''],
   ['link', '🔗', 'Web link with preview', ''], ['media', '🎬', 'Video or post cards for research (YouTube, TikTok, Instagram…)', ''], ['asset', '🧩', 'My assets: designs you saved', ''], ['project', '📊', 'Live project from your tracker', ''], ['laser', 'i:spotlight', 'Laser pointer (X)', 'x'],
 ];
@@ -227,6 +227,13 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     el.style.setProperty('--c', it.color || (it.type === 'note' ? '#ffb020' : it.type === 'shape' ? '#ff8a5c' : 'var(--accent)'));
     if (s.textColor) el.style.setProperty('--tc', s.textColor); else el.style.removeProperty('--tc');
     if (typeof s.radius === 'number') el.style.setProperty('--r', `${s.radius}px`); else el.style.removeProperty('--r');
+    // the alignment you chose wins over each item's own default
+    el.classList.toggle('al-set', !!s.align);
+    if (s.align) el.style.setProperty('--ta', s.align); else el.style.removeProperty('--ta');
+    for (const c of [...el.classList]) if (c.startsWith('ff-') || c.startsWith('tbg-')) el.classList.remove(c);
+    if (s.family && s.family !== 'sans') el.classList.add(s.family === 'hand' ? 'hand' : `ff-${s.family}`);
+    if (it.type === 'text' && s.tbg) { el.classList.add(s.tbgMode === 'box' ? 'tbg-box' : 'tbg-text'); el.style.setProperty('--tbg', s.tbg); el.style.setProperty('--tpx', `${s.tbgX ?? 14}px`); el.style.setProperty('--tpy', `${s.tbgY ?? 6}px`); }
+    else ['--tbg', '--tpx', '--tpy'].forEach((k) => el.style.removeProperty(k));
     el.style.fontSize = typeof s.size === 'number' ? `${s.size}px` : '';
     const sw = Number(s.strokeW) || 0;
     el.classList.toggle('stroked', sw > 0);
@@ -374,7 +381,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (ah) { startArrowHandle(e, ah.dataset.p); return 'handled'; }
     const handle = e.target.closest('.hd');
     if (handle) { startHandle(e, handle.dataset.h, w); return 'handled'; }
-    if (tool === 'arrow') { startArrowCreate(e, w); return 'handled'; }
+    if (tool === 'arrow' || tool === 'line') { startArrowCreate(e, w, tool === 'line'); return 'handled'; }
     if (tool === 'pen' || tool === 'highlight') { startInk(e, w); return 'handled'; }
     if (tool === 'eraser') { startErase(e); return 'handled'; }
     if (tool === 'connector') { startConnect(e, w, hitItem(e)); return 'handled'; }
@@ -501,6 +508,31 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   const wOf = (ev) => { const p = sf.local(ev); return sf.toWorld(p.x, p.y); };
   const snapOn = () => data.settings.snap !== false;
   const snap = (v) => (snapOn() ? Math.round(v / 11) * 11 : v);
+  // smart guides: line up edges and centres with nearby items while moving or resizing (hold Alt to skip)
+  const guideLayer = svgEl('g', { class: 'bd-guides' }, sf.over);
+  const guidesOn = (ev) => data.settings.guides !== false && !ev.altKey;
+  function guideTargets(skip) {
+    const v = sf.cam, k = v.k || 1, r = sf.root.getBoundingClientRect();
+    const a = sf.toWorld(0, 0), b = sf.toWorld(r.width, r.height), m = 400 / k;
+    return data.items.filter((i) => !skip.has(i.id) && i.type !== 'ink' && i.type !== 'arrow' && i.x < b.x + m && i.x + i.w > a.x - m && i.y < b.y + m && i.y + i.h > a.y - m);
+  }
+  // xs/ys: candidate lines on the moving box. returns the shift that lines one up, and the guides to draw
+  function guideFit(xs, ys, box, targets) {
+    const tol = 6 / (sf.cam.k || 1);
+    let bx = null, by = null;
+    for (const t of targets) {
+      const tx = [t.x, t.x + t.w / 2, t.x + t.w], ty = [t.y, t.y + t.h / 2, t.y + t.h];
+      for (const x of xs) for (const q of tx) { const d = q - x; if (Math.abs(d) <= tol && (!bx || Math.abs(d) < Math.abs(bx.d) - 0.01)) bx = { d, q, ts: [t] }; else if (bx && Math.abs(q - x - bx.d) < 0.01 && q === bx.q) bx.ts.push(t); }
+      for (const y of ys) for (const q of ty) { const d = q - y; if (Math.abs(d) <= tol && (!by || Math.abs(d) < Math.abs(by.d) - 0.01)) by = { d, q, ts: [t] }; else if (by && Math.abs(q - y - by.d) < 0.01 && q === by.q) by.ts.push(t); }
+    }
+    return { dx: bx ? bx.d : null, dy: by ? by.d : null, draw: (after) => {
+      clear(guideLayer);
+      const b = after || { x: box.x + (bx ? bx.d : 0), y: box.y + (by ? by.d : 0), w: box.w, h: box.h };
+      if (bx) { const all = [b, ...bx.ts]; svgEl('line', { x1: bx.q, x2: bx.q, y1: Math.min(...all.map((i) => i.y)) - 12, y2: Math.max(...all.map((i) => i.y + i.h)) + 12 }, guideLayer); }
+      if (by) { const all = [b, ...by.ts]; svgEl('line', { y1: by.q, y2: by.q, x1: Math.min(...all.map((i) => i.x)) - 12, x2: Math.max(...all.map((i) => i.x + i.w)) + 12 }, guideLayer); }
+    } };
+  }
+  const clearGuides = () => clear(guideLayer);
 
   function startMove(e, w, tapToDrop = null) {
     const ids = [...sel].map(byId).filter((i) => i && !i.locked);
@@ -510,6 +542,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     for (const f of ids.filter((i) => i.type === 'frame')) for (const it of data.items) if (!carry.has(it.id) && inside(it, f)) carry.add(it.id);
     const moving = [...carry].map(byId).map((i) => ({ it: i, x: i.x, y: i.y, pts: null }));
     const lead = ids[0];
+    const bb = bounds(moving.map((m) => m.it)), box0 = bb && { x: bb.x0, y: bb.y0, w: bb.w, h: bb.h };
+    let targets = null;
     drag = { kind: 'move', moved: false };
     begin();
     track(e, (ev) => {
@@ -517,10 +551,19 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       let dx = p.x - w.x, dy = p.y - w.y;
       if (!drag.moved && Math.hypot(dx, dy) * sf.cam.k < 4) return;
       drag.moved = true; ctxBar.hidden = true; root.classList.add('dragging');
+      const rawX = dx, rawY = dy;
       if (snapOn()) { const m = moving.find((m) => m.it === lead) || moving[0]; dx = snap(m.x + dx) - m.x; dy = snap(m.y + dy) - m.y; }
+      if (guidesOn(ev) && box0) {
+        targets ||= guideTargets(carry);
+        const b = { x: box0.x + rawX, y: box0.y + rawY, w: box0.w, h: box0.h };
+        const g = guideFit([b.x, b.x + b.w / 2, b.x + b.w], [b.y, b.y + b.h / 2, b.y + b.h], b, targets);
+        if (g.dx !== null) dx = rawX + g.dx;
+        if (g.dy !== null) dy = rawY + g.dy;
+        g.draw();
+      } else clearGuides();
       for (const m of moving) { m.it.x = m.x + dx; m.it.y = m.y + dy; const el = els.get(m.it.id); if (el) { el.style.left = `${m.it.x}px`; el.style.top = `${m.it.y}px`; } if (m.it.type === 'ink') renderInk(m.it); }
       renderLinks(); updateSel();
-    }, () => { root.classList.remove('dragging'); const moved = drag?.moved; drag = null; if (moved) commit(); else { before = null; if (tapToDrop) sel.delete(tapToDrop); } updateSel(); });
+    }, () => { clearGuides(); root.classList.remove('dragging'); const moved = drag?.moved; drag = null; if (moved) commit(); else { before = null; if (tapToDrop) sel.delete(tapToDrop); } updateSel(); });
   }
   function startMarquee(e, w, add = false) {
     const start = sf.local(e);
@@ -547,6 +590,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     drag = { kind: hd };
     begin();
     const keepRatio = ['sticker', 'image'].includes(it.type);
+    let targets = null;
     track(e, (ev) => {
       const p = wOf(ev);
       if (hd === 'rot') {
@@ -563,11 +607,19 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
         if (hd.includes('n')) { hh = o.h - dy; y = o.y + dy; }
         if (keepRatio || ev.shiftKey) { const r = o.w / o.h; if (hd.length === 2 || hd === 'e' || hd === 'w') hh = ww / r; else ww = hh * r; if (hd.includes('n')) y = o.y + o.h - hh; if (hd.includes('w')) x = o.x + o.w - ww; }
         if (snapOn()) { const x2 = snap(x + ww), y2 = snap(y + hh); if (hd.includes('w')) x = snap(x); if (hd.includes('n')) y = snap(y); if (hd.includes('e')) ww = x2 - x; if (hd.includes('s')) hh = y2 - y; }
+        if (guidesOn(ev) && !keepRatio && !ev.shiftKey) {
+          targets ||= guideTargets(new Set([it.id]));
+          const ex = hd.includes('e') ? [x + ww] : hd.includes('w') ? [x] : [], ey = hd.includes('s') ? [y + hh] : hd.includes('n') ? [y] : [];
+          const g = guideFit(ex, ey, { x, y, w: ww, h: hh }, targets);
+          if (g.dx !== null) { if (hd.includes('w')) { x += g.dx; ww -= g.dx; } else ww += g.dx; }
+          if (g.dy !== null) { if (hd.includes('n')) { y += g.dy; hh -= g.dy; } else hh += g.dy; }
+          g.draw({ x, y, w: ww, h: hh });
+        } else clearGuides();
         it.x = x; it.y = y; it.w = Math.max(20, ww); it.h = Math.max(20, hh);
       }
       const el = els.get(it.id); if (el) layout(el, it); if (it.type === 'ink') renderInk(it);
       renderLinks(); updateSel();
-    }, () => { drag = null; commit(); updateSel(); });
+    }, () => { clearGuides(); drag = null; commit(); updateSel(); });
   }
   function startCreate(e, w) {
     const type = tool;
@@ -1051,11 +1103,31 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const set = (patch) => change(() => its.forEach((i) => { i.style = { ...i.style, ...patch }; }));
     openPop({ ...anchorFor(btn), title: 'Text', width: 380, body: h('div', { class: 'pgrid' },
       sizeRow(its),
-      segRow('Align', [['left', '⇤'], ['center', '↔'], ['right', '⇥']], f.style?.align || 'center', (v) => set({ align: v })),
+      segRow('Align', [['left', '⇤'], ['center', '↔'], ['right', '⇥']], f.style?.align || (['text', 'prompt', 'card', 'checklist', 'link', 'media'].includes(f.type) ? 'left' : 'center'), (v) => set({ align: v })),
       toggleRow('Bold', (f.style?.weight || 0) >= 700, (v) => set({ weight: v ? 800 : 0 })),
       toggleRow('Soft colour', !!f.style?.muted, (v) => set({ muted: v })),
-      toggleRow('Handwriting', !!f.style?.hand, (v) => set({ hand: v || undefined }))) });
+      fontRow(its),
+      its.some((i) => i.type === 'text') ? textBgRows(its.filter((i) => i.type === 'text')) : null) });
   }
+  // ---------- fonts ----------
+  const FONTS = [['sans', 'Clean', 'Manrope'], ['round', 'Round', 'Fredoka'], ['display', 'Poster', 'Bebas Neue'], ['serif', 'Elegant', 'Playfair Display'], ['hand', 'Hand', 'Caveat'], ['marker', 'Marker', 'Permanent Marker'], ['mono', 'Mono', 'Space Mono']];
+  function fontRow(its) {
+    const cur = its[0].style?.family || (its[0].style?.hand ? 'hand' : 'sans');
+    const row = h('div', { class: 'chips' }, FONTS.map(([id, label, fam]) => h('button', { type: 'button', class: `chip ff-chip${cur === id ? ' on' : ''}`, style: { fontFamily: `"${fam}"`, fontSize: '15px' }, onclick: () => change(() => its.forEach((i) => { i.style = { ...i.style, family: id }; delete i.style.hand; if (id === 'hand') i.style.hand = true; })) }, label)));
+    return h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Font'), row);
+  }
+  // a coloured shape behind text: hugging the words (width and height by padding) or filling the box
+  function textBgRows(its) {
+    const f = its[0], st = f.style || {};
+    const set = (patch) => change(() => its.forEach((i) => { i.style = { ...i.style, ...patch }; }));
+    return h('div', { class: 'pgrid' },
+      swatchRow('Background', ['', '#1c1916', '#ffffff', '#ffd54a', '#ff8a5c', '#ff4d5e', '#2fb4a0', '#b8e04a', '#e8b86b', '#f5f1ea'], st.tbg || '', (c) => set({ tbg: c || undefined })),
+      st.tbg ? segRow('Shape', [['text', 'Behind the words'], ['box', 'Fill the box']], st.tbgMode || 'text', (v) => set({ tbgMode: v })) : null,
+      st.tbg ? rangeRow('Width', st.tbgX ?? 14, 0, 120, 1, (v) => set({ tbgX: v })) : null,
+      st.tbg ? rangeRow('Height', st.tbgY ?? 6, 0, 80, 1, (v) => set({ tbgY: v })) : null,
+      st.tbg ? rangeRow('Corners', st.radius ?? 10, 0, 60, 1, (v) => set({ radius: v })) : null);
+  }
+
   // text size in px: drag the slider or type a number; one undo step per change
   const sizeOf = (i) => (typeof i.style?.size === 'number' ? i.style.size : FONT_PX[i.style?.font || (i.type === 'text' ? 'l' : 'm')] || 14.5);
   function sizeRow(its) {
@@ -1391,8 +1463,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       layout(els.get(it.id), it); render();
     }, () => { drag = null; commit(); updateSel(); });
   }
-  function startArrowCreate(e, w) {
-    const it = makeItem('arrow', { x: w.x, y: w.y, w: 40, h: 40, z: maxZ() + 1, color: data.settings.arrowColor || '#ff8a5c', data: { body: data.settings.arrowBody || 26, head: 'triangle', tail: 'none', pts: [[0, 0], [0, 0], [0, 0]], w0: 40, h0: 40 }, anim: { in: 'draw' } });
+  function startArrowCreate(e, w, line = false) {
+    const it = makeItem('arrow', { x: w.x, y: w.y, w: 40, h: 40, z: maxZ() + 1, color: line ? data.settings.lineColor || '#1c1916' : data.settings.arrowColor || '#ff8a5c', data: { body: line ? 4 : data.settings.arrowBody || 26, head: 'none', tail: 'none', ...(line ? { line: true } : { head: 'triangle' }), pts: [[0, 0], [0, 0], [0, 0]], w0: 40, h0: 40 }, anim: { in: 'draw' } });
     let moved = false;
     begin(); data.items.push(it); drag = { kind: 'create' };
     track(e, (ev) => {
@@ -1405,7 +1477,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     }, () => {
       drag = null;
       // a tap without dragging: a ready-made arrow pointing right
-      if (!moved) { it.x = 0; it.y = 0; it.w = 1; it.h = 1; refitArrow(it, [[w.x - 130, w.y], [w.x, w.y - 30], [w.x + 130, w.y]]); }
+      if (!moved) { it.x = 0; it.y = 0; it.w = 1; it.h = 1; refitArrow(it, [[w.x - 130, w.y], [w.x, it.data.line ? w.y : w.y - 30], [w.x + 130, w.y]]); }
       render(); commit(); select([it.id]);
       if (!toolLock) setTool('select');
     });
@@ -1655,6 +1727,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       theme ? segRow('Theme', [['system', 'Device'], ['light', 'Light'], ['dark', 'Dark']], theme.pref || 'system', (v) => theme.set(v)) : null,
       segRow('Floor', [['dots', 'Dots'], ['grid', 'Grid'], ['plain', 'Plain']], data.settings.ground || 'dots', (v) => { data.settings.ground = v; sf.setGround(v); renderLinks(); save(); }),
       readonly ? null : toggleRow('Snap to grid', data.settings.snap !== false, (v) => { data.settings.snap = v; save(); }),
+      readonly ? null : toggleRow('Snap guides (line up with other things)', data.settings.guides !== false, (v) => { data.settings.guides = v; save(); }),
+      readonly ? null : toggleRow('Always open locked, as an interactive board', !!data.settings.openLocked, (v) => { data.settings.openLocked = v; save(); if (v) setLocked(true); }),
       readonly ? null : h('div', { class: 'psec' }, 'New connections'),
       readonly ? null : linkStyleBody({ ...LINK_DEFAULT, ...(data.settings.linkStyle || {}) }, (patch) => { data.settings.linkStyle = { ...LINK_DEFAULT, ...(data.settings.linkStyle || {}), ...patch }; save(); }, { fitWidth: true })) });
   }
@@ -1664,6 +1738,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (destroyed || !root.isConnected || root.closest('[hidden]') || e.target.closest?.('input, textarea, [contenteditable="true"]') || document.querySelector('.scrim, .pres')) return;
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
     if (k === 'escape' && picking) { endPick(); return; }
+    if (!mod && k === 'a' && e.shiftKey && !readonly && !locked) { e.preventDefault(); setTool('line'); return; }
     if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
     if (mod && k === 'y') { e.preventDefault(); doRedo(); return; }
     if (readonly) { if (k === 'x') setTool(tool === 'laser' ? 'hand' : 'laser'); return; }
@@ -1716,7 +1791,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   let presenting = null;
   function present(startId) {
     closePop(); closeMenu(); select([]); if (editing) document.activeElement?.blur?.();
-    presenting = startPresenting({ root, sf, getData: () => data, els, byId, startId, readonly, onEnd: () => { presenting = null; resetStage(); }, setToolLaser: () => setTool('laser') });
+    presenting = startPresenting({ root, sf, getData: () => data, els, byId, startId, readonly, saveSettings: (patch) => { Object.assign(data.settings, patch); save(); }, onEnd: () => { presenting = null; resetStage(); }, setToolLaser: () => setTool('laser') });
   }
 
   const ctx = { get share() { return share; }, readonly };
@@ -1724,6 +1799,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   render();
   requestAnimationFrame(() => fitAll(false));
   setTool(readonly ? 'hand' : 'select');
+  if (!readonly && data.settings.openLocked) setLocked(true); // a board used like an app opens ready to use
   updateUndoBtns();
   updateStageBar();
   const offTheme = () => renderLinks();

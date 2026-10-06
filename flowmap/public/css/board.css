@@ -578,3 +578,50 @@
 .asset-tile:hover .asset-del { opacity: 1; }
 @media (hover: none) { .asset-del { opacity: 1; } }
 .md-miss { font-size: 11.5px; line-height: 1.35; color: var(--muted); }
+
+/* ---------- more fonts ---------- */
+@font-face { font-family: "Bebas Neue"; font-weight: 400; font-display: swap; src: url("/fonts/bebas-neue-400.woff2") format("woff2"); }
+@font-face { font-family: "Playfair Display"; font-weight: 400; font-display: swap; src: url("/fonts/playfair-display-400.woff2") format("woff2"); }
+@font-face { font-family: "Playfair Display"; font-weight: 700 900; font-display: swap; src: url("/fonts/playfair-display-700.woff2") format("woff2"); }
+@font-face { font-family: "Permanent Marker"; font-weight: 400; font-display: swap; src: url("/fonts/permanent-marker-400.woff2") format("woff2"); }
+@font-face { font-family: "Space Mono"; font-weight: 400; font-display: swap; src: url("/fonts/space-mono-400.woff2") format("woff2"); }
+@font-face { font-family: "Space Mono"; font-weight: 700; font-display: swap; src: url("/fonts/space-mono-700.woff2") format("woff2"); }
+@font-face { font-family: "Fredoka"; font-weight: 400; font-display: swap; src: url("/fonts/fredoka-400.woff2") format("woff2"); }
+@font-face { font-family: "Fredoka"; font-weight: 700; font-display: swap; src: url("/fonts/fredoka-700.woff2") format("woff2"); }
+.bi.ff-display .ed, .bi.ff-display .ttl, .bi.ff-display .txt { font-family: "Bebas Neue", Impact, sans-serif; font-weight: 400; letter-spacing: 0.01em; line-height: 1.02; }
+.bi.ff-serif .ed, .bi.ff-serif .ttl, .bi.ff-serif .txt { font-family: "Playfair Display", Georgia, serif; letter-spacing: -0.01em; }
+.bi.ff-marker .ed, .bi.ff-marker .ttl, .bi.ff-marker .txt { font-family: "Permanent Marker", "Caveat", cursive; font-weight: 400; letter-spacing: 0; }
+.bi.ff-mono .ed, .bi.ff-mono .ttl, .bi.ff-mono .txt { font-family: "Space Mono", ui-monospace, monospace; letter-spacing: -0.02em; }
+.bi.ff-round .ed, .bi.ff-round .ttl, .bi.ff-round .txt { font-family: "Fredoka", "Manrope", sans-serif; letter-spacing: 0; }
+.ff-chip { min-width: 54px; }
+
+/* ---------- the alignment you choose wins everywhere ---------- */
+.bi.al-set .ed, .bi.al-set .cb, .bi.al-set .ttl, .bi.al-set .txt, .bi.al-set.t-checklist, .bi.al-set.t-prompt, .bi.al-set .face { text-align: var(--ta) !important; }
+.bi.t-shape > .ed { align-self: stretch; }
+
+/* ---------- stickers grow and shrink with their box ---------- */
+.bi.t-sticker { container-type: size; }
+.t-sticker .emo, .t-sticker.f-l .emo, .t-sticker.f-xl .emo, .t-sticker.f-s .emo { font-size: 82cqmin; }
+
+/* ---------- hints like "Title" or "Write something…" only while you work on that item ---------- */
+.bi:not(.sel):not(.editing) .ed:empty::before { content: none; }
+
+/* ---------- a background behind text, sized by its padding (or filling the box) ---------- */
+.bi.t-text.tbg-text .ed { display: inline-block; align-self: var(--tbg-align, flex-start); background: var(--tbg); padding: var(--tpy, 6px) var(--tpx, 14px); border-radius: var(--r); max-width: 100%; }
+.bi.t-text.tbg-text.al-center .ed, .bi.t-text.tbg-text:not(.al-left):not(.al-right).al-center .ed { --tbg-align: center; }
+.bi.t-text.tbg-text.al-right .ed { --tbg-align: flex-end; }
+.bi.t-text.tbg-text.al-center .ed { align-self: center; } .bi.t-text.tbg-text.al-right .ed { align-self: flex-end; } .bi.t-text.tbg-text.al-left .ed { align-self: flex-start; }
+.bi.t-text.tbg-box { background: var(--tbg); padding: var(--tpy, 6px) var(--tpx, 14px); }
+
+/* ---------- snap guides ---------- */
+.bd-guides line { stroke: #ff3d7f; stroke-width: 1px; vector-effect: non-scaling-stroke; stroke-dasharray: 4 3; }
+
+/* ---------- presenting: a pointer that follows the mouse while Q (or W, flipped) is held ---------- */
+.pres-ptr { position: absolute; left: 0; top: 0; z-index: 30; pointer-events: none; font-size: var(--ps, 72px); line-height: 1; width: var(--ps, 72px); height: var(--ps, 72px); display: grid; place-items: center; filter: drop-shadow(3px 6px 6px rgba(0, 0, 0, 0.35)); will-change: transform; }
+.pres-ptr img { width: 100%; height: 100%; object-fit: contain; }
+.pres-ptr.flip > * { transform: scaleX(-1); }
+.pres-ptr-pick { pointer-events: auto; position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 40; width: min(420px, calc(100% - 24px)); display: grid; gap: 10px; padding: 14px; border-radius: 18px; background: var(--raise); box-shadow: var(--raised); }
+.pres-ptr-pick .emo-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.pres-ptr-pick .emo-grid button { width: 44px; height: 44px; border-radius: 12px; border: 0; background: var(--bg); font-size: 26px; cursor: pointer; }
+.pres-ptr-pick .emo-grid button.on { box-shadow: 0 0 0 2px var(--accent); }
+.pres-ptr-pick small { color: var(--muted); }

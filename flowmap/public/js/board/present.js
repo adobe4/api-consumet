@@ -1,9 +1,9 @@
 // Presenting a board: frames become slides and the camera glides between them. Built for screen recording:
 // the controls hide themselves, and a laser pointer, a spotlight and a pen draw on top of everything.
-import { h } from '../util.js';
+import { h, raw } from '../util.js';
 import { inside } from '/shared/board.js';
 
-export function startPresenting({ root, sf, getData, els, byId, startId, onEnd }) {
+export function startPresenting({ root, sf, getData, els, byId, startId, onEnd, saveSettings }) {
   const data = getData();
   let slides = data.order.map(byId).filter((f) => f && f.type === 'frame');
   if (!slides.length) slides = data.items.filter((i) => i.type === 'frame').sort((a, b) => (Math.abs(a.y - b.y) > 200 ? a.y - b.y : a.x - b.x));
@@ -27,12 +27,71 @@ export function startPresenting({ root, sf, getData, els, byId, startId, onEnd }
     h('i', { class: 'pdiv' }),
     tb('pointer', '🖐', 'Move and click (M)'), tb('laser', '🔴', 'Laser pointer (L)'), tb('spot', '🔦', 'Spotlight (S)'), tb('pen', '✏️', 'Draw on screen (P)'),
     h('button', { type: 'button', class: 'pb', title: 'Clear drawings (C)', onclick: () => clearInk() }, '🧽'),
+    h('button', { type: 'button', class: 'pb', title: 'Your pointer: hold Q to show it, hold W to show it flipped', onclick: () => togglePick() }, raw('👉')),
     h('i', { class: 'pdiv' }),
     h('button', { type: 'button', class: 'pb', title: 'Speaker notes (N)', onclick: () => toggleNotes() }, '📝'), clock,
     h('button', { type: 'button', class: 'pb', title: 'Hide these controls (H); move the mouse to bring them back', onclick: () => hideBar(true) }, '🙈'),
     h('button', { type: 'button', class: 'pb ex', title: 'Stop presenting (Esc)', onclick: () => end() }, '✕'));
-  const wrap = h('div', { class: 'pres' }, canvas, spot, notes, bar);
+  // a big pointer (an emoji or your own PNG) that follows the mouse while Q is held; W shows it flipped
+  const PTR_EMOJI = ['👉', '👈', '👆', '👇', '☝️', '🫵', '✋', '👀', '🔍', '➡️', '⬅️', '🎯', '📍', '⭐', '🔥', '🪄', '✏️', '💡'];
+  const TIP = { '👉': 'right', '👈': 'left', '👆': 'up', '☝️': 'up', '👇': 'down', '🫵': 'center', '➡️': 'right', '⬅️': 'left', '✏️': 'left', '🪄': 'left' };
+  let ptr = { emoji: '👉', img: '', tip: '', size: 72, ...(data.settings?.pointer || {}) };
+  const ptrEl = h('div', { class: 'pres-ptr', hidden: true });
+  let held = new Set(), stick = false, pick = null;
+  const wrap = h('div', { class: 'pres' }, canvas, spot, notes, ptrEl, bar);
   root.append(wrap);
+  const tipOf = () => ptr.tip || (ptr.img ? 'right' : TIP[ptr.emoji] || 'center');
+  function drawPtr() {
+    ptrEl.style.setProperty('--ps', `${ptr.size}px`);
+    ptrEl.replaceChildren(ptr.img ? h('img', { src: ptr.img, alt: '' }) : h('span', {}, raw(ptr.emoji)));
+  }
+  function placePtr() {
+    const on = held.size > 0 || stick;
+    ptrEl.hidden = !on;
+    if (!on) return;
+    const flip = held.has('w') && !held.has('q');
+    ptrEl.classList.toggle('flip', flip);
+    const r = wrap.getBoundingClientRect(), p = pointer || { x: r.width / 2, y: r.height / 2 }, s = ptr.size;
+    // put the tip of the pointer on the mouse
+    let tip = tipOf();
+    if (flip && tip === 'right') tip = 'left'; else if (flip && tip === 'left') tip = 'right';
+    const ox = tip === 'right' ? s * 0.92 : tip === 'left' ? s * 0.08 : s / 2, oy = tip === 'down' ? s * 0.92 : tip === 'up' ? s * 0.08 : s / 2;
+    ptrEl.style.transform = `translate(${p.x - ox}px, ${p.y - oy}px)`;
+  }
+  drawPtr();
+  function keepPtr(patch) { ptr = { ...ptr, ...patch }; drawPtr(); placePtr(); saveSettings?.({ pointer: ptr }); }
+  async function shrinkImage(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = url; });
+      const k = Math.min(1, 256 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL('image/png');
+    } finally { URL.revokeObjectURL(url); }
+  }
+  function togglePick() {
+    if (pick) { pick.remove(); pick = null; return; }
+    const file = h('input', { type: 'file', accept: 'image/png,image/webp,image/gif,image/jpeg', hidden: true, onchange: async () => { const f = file.files[0]; if (f) { keepPtr({ img: await shrinkImage(f), tip: ptr.tip || 'right' }); render(); } } });
+    const body = h('div', { class: 'pres-ptr-pick', onpointerdown: (e) => e.stopPropagation() });
+    const render = () => {
+      const tips = [['', 'Auto'], ['right', '→'], ['left', '←'], ['up', '↑'], ['down', '↓'], ['center', '•']];
+      body.replaceChildren(
+        h('b', {}, 'Pointer'),
+        h('small', {}, 'Hold Q to show it and move the mouse. Hold W to show it flipped.'),
+        h('div', { class: 'emo-grid' }, ...PTR_EMOJI.map((em) => h('button', { type: 'button', class: !ptr.img && ptr.emoji === em ? 'on' : '', onclick: () => { keepPtr({ emoji: em, img: '', tip: '' }); render(); } }, raw(em))),
+          h('button', { type: 'button', class: ptr.img ? 'on' : '', title: 'Use your own picture (PNG with a see-through background works best)', onclick: () => file.click() }, ptr.img ? h('img', { src: ptr.img, alt: '', style: 'width:30px;height:30px;object-fit:contain' }) : raw('🖼️'))),
+        h('label', { class: 'row' }, h('small', {}, 'Size '), h('input', { type: 'range', min: 28, max: 220, value: ptr.size, oninput: (e) => { keepPtr({ size: +e.target.value }); stick = true; placePtr(); } })),
+        h('div', { class: 'row' }, h('small', {}, 'It points '), ...tips.map(([v, l]) => h('button', { type: 'button', class: `btn sm${(ptr.tip || '') === v ? ' primary' : ''}`, onclick: () => { keepPtr({ tip: v }); render(); } }, l))),
+        h('div', { class: 'row' },
+          h('button', { type: 'button', class: `btn sm${stick ? ' primary' : ''}`, title: 'Show it all the time, without holding a key (handy on a touchscreen)', onclick: () => { stick = !stick; placePtr(); render(); } }, stick ? 'Always on' : 'Only while holding Q / W'),
+          h('button', { type: 'button', class: 'btn sm', onclick: () => togglePick() }, 'Done')),
+        file);
+    };
+    render();
+    pick = body;
+    wrap.append(pick);
+  }
 
   // ---------- slides ----------
   function go(n) {
@@ -97,14 +156,17 @@ export function startPresenting({ root, sf, getData, els, byId, startId, onEnd }
     const p = local(e);
     if (mode === 'pen') { drawing = { color: penColor, pts: [[p.x, p.y]] }; strokes.push(drawing); kick(); }
   });
-  wrap.addEventListener('pointermove', (e) => {
+  // listen on the whole board: in pointer and spotlight mode the overlay lets the mouse through
+  const onMove = (e) => {
     const p = local(e);
     pointer = p;
+    if (!ptrEl.hidden) placePtr();
     showBarSoon(e);
     if (mode === 'laser') { trail.push({ ...p, t: performance.now() }); kick(); }
     if (mode === 'spot') { spot.style.setProperty('--x', `${p.x}px`); spot.style.setProperty('--y', `${p.y}px`); }
     if (mode === 'pen' && drawing) { drawing.pts.push([p.x, p.y]); kick(); }
-  });
+  };
+  root.addEventListener('pointermove', onMove);
   canvas.addEventListener('pointerup', () => { drawing = null; });
   function clearInk() { strokes.length = 0; kick(); }
   function toggleNotes() { notes.hidden = !notes.hidden; }
@@ -123,6 +185,8 @@ export function startPresenting({ root, sf, getData, els, byId, startId, onEnd }
 
   const onKey = (e) => {
     const k = e.key.toLowerCase();
+    if (e.target.closest?.('input, textarea, [contenteditable="true"]')) return;
+    if (k === 'q' || k === 'w') { e.preventDefault(); e.stopPropagation(); if (!e.repeat) { held.add(k); placePtr(); } return; }
     if (['arrowright', 'pagedown', ' ', 'enter'].includes(k)) { e.preventDefault(); go(idx + 1); }
     else if (['arrowleft', 'pageup', 'backspace'].includes(k)) { e.preventDefault(); go(idx - 1); }
     else if (k === 'home') go(0);
@@ -139,6 +203,10 @@ export function startPresenting({ root, sf, getData, els, byId, startId, onEnd }
     e.stopPropagation();
   };
   window.addEventListener('keydown', onKey, true);
+  const onKeyUp = (e) => { const k = e.key.toLowerCase(); if (held.delete(k)) { e.stopPropagation(); placePtr(); } };
+  const onBlur = () => { held.clear(); placePtr(); };
+  window.addEventListener('keyup', onKeyUp, true);
+  window.addEventListener('blur', onBlur);
   const onFs = () => { if (!document.fullscreenElement) end(); };
   setTimeout(() => document.addEventListener('fullscreenchange', onFs), 600);
 
@@ -148,6 +216,9 @@ export function startPresenting({ root, sf, getData, els, byId, startId, onEnd }
     ended = true;
     cancelAnimationFrame(raf); clearInterval(tick); clearTimeout(hideTimer);
     window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('keyup', onKeyUp, true);
+    window.removeEventListener('blur', onBlur);
+    root.removeEventListener('pointermove', onMove);
     document.removeEventListener('fullscreenchange', onFs);
     wrap.remove();
     root.classList.remove('presenting');
