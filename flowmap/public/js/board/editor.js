@@ -2058,21 +2058,71 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     return holder;
   }
   function aiPop(btn) {
-    const st = { keyId: S.user?.settings?.aiActive, ask: S.user?.settings?.designAsk !== false };
-    const box = h('textarea', { class: 'ai-in', rows: 4, placeholder: 'What should the AI design or change? “Redesign this into a beautiful tutorial deck”, “Add a slide about pricing”, “Make every title bigger and centred”…' });
+    const st = { keyId: S.user?.settings?.aiActive, ask: S.user?.settings?.designAsk !== false, mode: S.user?.settings?.aiMode === 'session' ? 'session' : 'edit' };
+    const picked = [...sel].filter((id) => byId(id));
+    st.scope = picked.length ? picked : null;
+    const box = h('textarea', { class: 'ai-in', rows: 4, placeholder: picked.length ? `What should change in the ${picked.length} selected item${picked.length === 1 ? '' : 's'}? “Make these look like real paper notes”, “Turn this into a numbered list”…` : 'What should the AI change or make? “Make every title bigger and centred”, “Add a slide about pricing”, “Redesign this into a beautiful tutorial deck”…' });
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go.click(); } });
     const chip = (t) => h('button', { type: 'button', class: 'chip', onclick: () => { box.value = t; box.focus(); } }, t);
     const prefs = Array.isArray(S.user?.settings?.designPrefs) ? S.user.settings.designPrefs : [];
-    const go = h('button', { type: 'button', class: 'btn primary', onclick: () => { if (box.value.trim().length < 3) { notify('Say what to design first', 'error'); return; } closePop(); runDesign(box.value.trim(), st); } }, '✨ Start');
-    openPop({ anchor: btn, title: '✨ AI designer', width: 460, body: h('div', { class: 'pgrid' },
+    const hint = h('small', { class: 'phint' });
+    const askRow = toggleRow('Ask me questions first', st.ask, (v) => { st.ask = v; saveSettings({ designAsk: v }).catch(() => {}); });
+    const paintMode = () => {
+      askRow.hidden = st.mode !== 'session';
+      hint.textContent = st.mode === 'edit'
+        ? `It reads ${st.scope ? 'the selected items' : 'the whole board'} as code, rewrites it in one go and FlowMap applies only what changed. One Undo puts it back.`
+        : 'It studies the board, asks you, then designs one section at a time and polishes the whole. Best for a big redesign. One Undo puts it all back.';
+    };
+    const go = h('button', { type: 'button', class: 'btn primary', onclick: () => {
+      if (box.value.trim().length < 3) { notify('Say what to change first', 'error'); return; }
+      closePop();
+      if (st.mode === 'session') runDesign(box.value.trim(), st); else runCodeEdit(box.value.trim(), st);
+    } }, '✨ Go');
+    paintMode();
+    openPop({ anchor: btn, title: '✨ AI', width: 480, body: h('div', { class: 'pgrid' },
       box,
       h('div', { class: 'chips' }, DESIGN_CHIPS.map(chip)),
+      segRow('How', [['edit', '⚡ Edit in one go'], ['session', '🎨 Design session']], st.mode, (v) => { st.mode = v; saveSettings({ aiMode: v }).catch(() => {}); paintMode(); }),
+      picked.length ? toggleRow(`Only the ${picked.length} selected item${picked.length === 1 ? '' : 's'}`, true, (v) => { st.scope = v ? picked : null; paintMode(); }) : null,
+      askRow,
       keyRow(st),
-      toggleRow('Ask me questions first', st.ask, (v) => { st.ask = v; saveSettings({ designAsk: v }).catch(() => {}); }),
       prefs.length || S.user?.settings?.designDirection ? h('details', { class: 'ai-prefs' }, h('summary', null, `What it remembers about your taste (${prefs.length + (S.user.settings.designDirection ? 1 : 0)})`),
         h('ul', null, S.user.settings.designDirection ? h('li', null, `Style: ${S.user.settings.designDirection}`) : null, prefs.slice(-12).map((p) => h('li', null, raw(p)))),
         h('button', { type: 'button', class: 'btn sm', onclick: async () => { await saveSettings({ designPrefs: [], designDirection: null }); notify('Forgotten. It will ask again.', 'good'); closePop(); } }, 'Forget it')) : null,
-      h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, h('small', { class: 'phint' }, 'It studies the board, asks you, then designs one section at a time. One Undo puts it all back.'), go)) });
+      h('div', { class: 'row', style: 'justify-content:space-between;align-items:center;gap:12px' }, hint, go)) });
     setTimeout(() => box.focus(), 50);
+  }
+  // one quick edit: the board (or the selection) goes to the AI as code and comes back edited
+  async function runCodeEdit(request, opts = {}) {
+    if (session) { notify('The AI is already working', 'error'); return; }
+    if (!(S.user?.aiKeys || []).length) { openBrainSettings(); notify('Add an AI key first', 'error'); return; }
+    const panel = sessionPanel();
+    session = { stop: false };
+    const scope = opts.scope?.filter((id) => byId(id)) || null;
+    panel.setSteps([{ title: scope ? `Reading the ${scope.length} selected item${scope.length === 1 ? '' : 's'} as code` : 'Reading the board as code' }, { title: 'Rewriting it' }, { title: 'Applying only what changed, then checking it' }]);
+    const before0 = snapshot();
+    try {
+      await flushSave();
+      await Promise.all([document.fonts?.load('600 24px "Caveat"'), document.fonts?.load('800 24px Manrope')]).catch(() => {});
+      panel.mark(0, 'ok', 'done');
+      panel.mark(1, 'work', 'the AI is editing…');
+      let img = null;
+      if (scope) { const bb = bounds(scope.map(byId)); try { img = snapshotBoard(data, { x: bb.x0, y: bb.y0, w: bb.w, h: bb.h }, { maxW: 1400 }); } catch { img = null; } }
+      else img = picture(null, 1600);
+      const r = await api('POST', `/api/boards/${board.id}/ai`, { prompt: request, keyId: opts.keyId, scope, images: [img].filter(Boolean) });
+      takeBoard(r.board);
+      panel.mark(1, 'ok', 'done');
+      panel.mark(2, 'ok', `${r.stats ? [r.stats.changed && `${r.stats.changed} changed`, r.stats.added && `${r.stats.added} added`, r.stats.deleted && `${r.stats.deleted} removed`, r.stats.links && `${r.stats.links} connections`].filter(Boolean).join(', ') : ''}`);
+      setText(panel.about, `${r.summary || 'Done.'} Undo puts it back.`);
+      if (before0 !== snapshot()) { undo.push(before0); redo = []; updateUndoBtns(); }
+    } catch (e) {
+      panel.mark(1, 'fail', e.message.slice(0, 160));
+      setText(panel.about, e.message);
+      notify(e.message, 'error');
+    } finally {
+      panel.end();
+      session = null;
+    }
   }
   // the questions: buttons for yes/no and choices, a box for text, all optional
   function askOwner(questions) {

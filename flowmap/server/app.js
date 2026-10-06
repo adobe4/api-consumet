@@ -19,6 +19,7 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
   const authLimit = makeLimiter(12, 10 * 60 * 1000);
   const brainLimit = makeLimiter(20, 60 * 60 * 1000);
   const designLimit = makeLimiter(160, 60 * 60 * 1000); // one design session is several short steps
+  const editLimit = makeLimiter(120, 60 * 60 * 1000); // quick edits: the owner tries things
   const previewLimit = makeLimiter(300, 60 * 60 * 1000);
 
   // ---------- helpers ----------
@@ -386,11 +387,16 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     return { ...out, board: boardOut(await getBoard(db, user.id, b.id)) };
   }, { agents: false });
   route('POST', '/api/boards/:id/ai', async ({ user, params, body }) => {
-    if (!brainLimit(`brain:${user.id}`)) throw new HttpError(429, 'The AI already ran many times this hour. Try again later.');
+    if (!editLimit(`edit:${user.id}`)) throw new HttpError(429, 'The AI already ran many times this hour. Try again later.');
     const request = String(body.prompt || '').trim();
     if (request.length < 3) throw new HttpError(400, 'Say what to change');
     const b = await getBoard(db, user.id, params.id);
-    const out = await runBoardEdit(ctxFor(user), aiOf(user), { id: b.id, name: b.name }, request).catch((e) => { console.error(`board AI failed (board ${b.id}): ${e.message}`); throw e; });
+    let chain = aiOf(user);
+    const k = chain.findIndex((x) => x.id === body.keyId);
+    if (k > 0) chain = [chain[k], ...chain.slice(0, k), ...chain.slice(k + 1)];
+    const images = (Array.isArray(body.images) ? body.images : []).filter((u) => typeof u === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(u) && u.length < 3_000_000).slice(0, 2);
+    const scope = Array.isArray(body.scope) ? body.scope.filter((x) => typeof x === 'string').slice(0, 200) : null;
+    const out = await runBoardEdit(ctxFor(user), chain, { id: b.id, name: b.name }, request, { scope, images }).catch((e) => { console.error(`board AI failed (board ${b.id}): ${e.message}`); throw e; });
     return { ...out, board: boardOut(await getBoard(db, user.id, b.id)) };
   }, { agents: false });
   route('GET', '/api/boards/:id', async ({ user, params }) => boardOut(await getBoard(db, user.id, params.id)));

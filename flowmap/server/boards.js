@@ -193,7 +193,7 @@ const hex = (v) => (typeof v === 'string' && /^#[0-9a-f]{3,8}$/i.test(v.trim()) 
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 
 // apply what the AI asked for to one item; unknown or invalid values are ignored
-function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
+export function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
   if (finite(o.x)) it.x = o.x + dx;
   if (finite(o.y)) it.y = o.y + dy;
   if (finite(o.w) && o.w > 4) it.w = Math.min(20000, o.w);
@@ -286,7 +286,7 @@ function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
   it.data = d;
   return it;
 }
-function itemFromSpec(a, origin) {
+export function itemFromSpec(a, origin) {
   const o = a && typeof a === 'object' ? a : {};
   const type = ITEM_TYPES.includes(o.type) && o.type !== 'ink' ? o.type : 'card';
   const it = makeItem(type, { x: origin.x, y: origin.y });
@@ -423,6 +423,28 @@ export const BOARD_TOOLS = [
       const out = addInto(d, a, origin);
       await saveBoard(db, uid, r.id, { data: d });
       return { board: r.id, added: out.ids.length, ids: out.ids.slice(0, 300), refs: out.refs, connections: out.connections };
+    } },
+  { name: 'get_board_code', description: 'Read a board as BOARD CODE: simple HTML-like markup where frames hold their contents (child x/y relative to the frame), text is the element body and styles are attributes. The easiest way to understand a board and to redesign it: read the code, edit it like a web page, send it back with edit_board_code. Pass items (ids) to read only some of it.',
+    input_schema: { type: 'object', properties: { board: BOARD_ARG, items: { type: 'array', items: { type: 'string' }, description: 'Optional: only these item ids (real ids from get_board)' } }, required: ['board'] },
+    run: async ({ db, uid }, a) => {
+      const { toCode, CODE_GUIDE } = await import('./boardcode.js');
+      const r = await findBoard(db, uid, a.board), d = parse(r.data);
+      const scope = Array.isArray(a.items) && a.items.length ? a.items.map(String) : null;
+      const c = toCode(d, { name: r.name, scope });
+      return { board: r.id, version: r.version, mode: c.count > 120 && !scope ? 'patch' : 'full', code: c.code, guide: CODE_GUIDE,
+        howToEdit: 'Send the edited code to edit_board_code with the same version. mode "full": send the complete code; anything left out is deleted, attributes left out are cleared. mode "patch": send <board> with only the elements you change (id + changed attributes, inside their <frame id> wrapper), new elements in full, and <delete id="..."/>. Give new elements ids like n1, n2. Put <summary>one sentence</summary> first.' };
+    } },
+  { name: 'edit_board_code', description: `Apply edited BOARD CODE (from get_board_code) to the board. FlowMap works out what changed and applies only that: moved, restyled, rewritten, added and deleted items and connections. ${DESIGN_TIPS}`,
+    input_schema: { type: 'object', properties: { board: BOARD_ARG, version: { type: 'number', description: 'The version get_board_code returned' }, code: { type: 'string', description: 'The edited board code, <board> ... </board>' }, mode: { type: 'string', enum: ['full', 'patch'] }, items: { type: 'array', items: { type: 'string' }, description: 'The same items you passed to get_board_code, if any' }, request: { type: 'string', description: 'What the owner asked for (so big deletions are only made when asked)' } }, required: ['board', 'version', 'code'] },
+    run: async ({ db, uid }, a) => {
+      const { toCode, applyCode } = await import('./boardcode.js');
+      const r = await findBoard(db, uid, a.board), d = parse(r.data);
+      if (Number(a.version) !== r.version) throw new HttpError(409, 'The board changed since you read it. Read it again with get_board_code.');
+      const scope = Array.isArray(a.items) && a.items.length ? a.items.map(String) : null;
+      const ctx = toCode(d, { name: r.name, scope });
+      const out = applyCode(d, String(a.code || ''), ctx, { mode: a.mode === 'patch' ? 'patch' : 'full', request: String(a.request || 'edit'), scope });
+      await saveBoard(db, uid, r.id, { data: out.data, version: r.version });
+      return { board: r.id, ...out.stats, summary: out.summary, complete: out.complete, designCheck: lintBoard(out.data, out.touched) };
     } },
   { name: 'edit_board_items', description: `Change anything on a board: move, resize, rotate, restack, recolour, rewrite, restyle (finish, shadow, corners, font size, alignment, bold, text colour), animate, change a shape, sticker, checklist, flip back, cover or clip, or delete items. Also restyle or delete connections, restyle many items at once (restyle), and change the floor or board name. Read the board with get_board first so you use real ids. ${DESIGN_TIPS}`,
     input_schema: { type: 'object', properties: {

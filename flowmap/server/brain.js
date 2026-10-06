@@ -5,7 +5,8 @@ import { simulate, alerts, suggestions, KIND_KEYS, RESOURCE_KEYS, TASK_TYPES, KI
 import { RES, HttpError, fromRow, toCols, readWorld, insertSql, ownedProjectIds } from './models.js';
 import { scanAll, scanProject, dayIn } from './sync.js';
 import { goalProgress, groupOf } from '../shared/goals.js';
-import { lintBoard, BOARD_TOOLS } from './boards.js';
+import { lintBoard, BOARD_TOOLS, getBoard, saveBoard } from './boards.js';
+import { toCode, applyCode, CODE_GUIDE } from './boardcode.js';
 
 const round = (n, d = 0) => (Number.isFinite(n) ? Math.round(n * 10 ** d) / 10 ** d : null);
 const PROJECT_ARG = { type: 'string', description: 'Project id or name' };
@@ -500,10 +501,74 @@ async function askPlan(ai, system, messages, deadline, what) {
   }
   throw new HttpError(502, `The AI answered in a way FlowMap could not read (${lastErr?.message}). Try again, or pick another model in 🧠 Brain.${what === 'design' ? '' : ''}`);
 }
-export async function runBoardEdit(ctx, chain, board, request) {
-  // one shared deadline across fallback keys, well inside the 300 s function limit
+// Editing the open board: the AI reads the board as code (like HTML), edits it like a developer edits a page,
+// and FlowMap applies only what changed. One round trip, any chat model, and a picture of the board when the
+// model can see. opts.scope: the selected items, so only those are shown and changed.
+export async function runBoardEdit(ctx, chain, board, request, opts = {}) {
   const deadline = Date.now() + 230000;
-  return withFallback(chain, (ai) => editOnce(ctx, ai, board, request, deadline));
+  return withFallback(chain, (ai) => codeEditOnce(ctx, ai, board, request, opts, deadline));
+}
+const CODE_DESIGN = DESIGN_GUIDE.replace(/style\.textColor/g, 'text-color').replace(/style\.(\w+)/g, '$1').replace(/"finish"/g, 'finish');
+const CODE_SYSTEM = (mode, scoped) => `You are the designer of one board inside FlowMap, a creator's planning and presentation canvas. The owner is looking at the board right now and asks you to change it.
+You get the board as BOARD CODE, a small HTML-like language. Edit it the way a skilled front-end developer and designer edits a web page: read it, understand the layout and hierarchy, then rewrite what needs to change.
+${CODE_GUIDE}
+DESIGN:
+${CODE_DESIGN}
+HOW TO WORK:
+- Do exactly what the owner asks and keep everything they did not ask to change.
+- When they ask to improve, redesign, perfect, fix or add more: really design. Move and resize things into clean layouts, set proper text sizes, use the right element for each job (paper notes, number chips on dark bars, flip cards, checklists, stickers, clips, connections, jump links), add what is missing, give each slide its own layout. Be creative, not generic.
+- Nothing may overlap by accident or stick out of its frame, and all text must fit its box (a line needs about size x 1.4 px of height and holds about w / (size x 0.56) characters).
+- Keep the id of every element you keep. Give new elements a new id like n1, n2 (so links and jumps can point at them). You may change an element's tag to turn it into another kind of item.
+- If a picture is attached, it shows how the board renders right now: use it to judge spacing and balance.
+- Write any new text in the language the owner used.
+${scoped ? 'SCOPE: the owner selected some items; the code shows only those (frames marked "context" are only there so you know where things sit: do not change them). Change only what is shown.\n' : ''}ANSWER FORMAT:
+${mode === 'full'
+    ? 'Reply with the COMPLETE edited board code, from <board ...> to </board>, and nothing else. Put <summary>one short sentence saying what you changed</summary> as the first line inside <board>. Copy every element you do not change exactly as it is: anything you leave out is deleted.'
+    : 'The board is big, so reply with a PATCH: <board> with <summary>one short sentence</summary> first, then only the elements you change or add. For an element you change, write its tag and id with only the attributes that change (and its new text if the text changes); attributes you leave out stay as they are. Keep changed elements inside their <frame id="..."> wrapper so their x/y stay relative to it. New elements need all their attributes. <delete id="i7"/> removes an element. End with </board>.'}`;
+
+async function codeEditOnce(ctx, ai, ref, request, { scope = null, images = [] } = {}, deadline) {
+  if (!ai?.apiKey) throw new HttpError(400, 'Add an AI key in the 🧠 Brain settings first, or connect your own AI agent over MCP');
+  if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in the 🧠 Brain settings');
+  const row = await getBoard(ctx.db, ctx.uid, ref.id);
+  const data = JSON.parse(row.data);
+  const ids = new Set(data.items.map((i) => i.id));
+  const sc = Array.isArray(scope) ? scope.filter((id) => ids.has(id)).slice(0, 200) : [];
+  const scoped = sc.length ? sc : null;
+  const count = scoped ? scoped.length : data.items.filter((i) => i.type !== 'ink').length;
+  const mode = count > 120 ? 'patch' : 'full';
+  const code = toCode(data, { name: row.name, scope: scoped });
+  const brief = await projectBrief({ ...ctx, source: 'ai' });
+  const messages = [{ role: 'user', content: `${brief ? `${brief}\n\n` : ''}BOARD CODE${scoped ? ' (the selected items)' : ''}:\n${code.code}\n\nTHE OWNER ASKS: ${String(request).slice(0, 4000)}` }];
+  let result = null, lastErr = null;
+  for (let attempt = 0; attempt < 2 && !result; attempt++) {
+    let text;
+    try { text = await chatOnce(ai, CODE_SYSTEM(mode, !!scoped), messages, deadline, 16000, attempt ? [] : images); } catch (e) {
+      throw new HttpError(502, e.name === 'TimeoutError' ? 'The AI took too long. Try a faster model in 🧠 Brain, or select fewer items.' : e.message);
+    }
+    try { result = applyCode(data, text, code, { mode, request, scope: scoped }); } catch (e) {
+      lastErr = e;
+      messages.push({ role: 'assistant', content: String(text).slice(0, 3000) }, { role: 'user', content: `That was not usable (${e.message}). Reply again with ONLY the board code, from <board> to </board>.` });
+    }
+  }
+  if (!result) throw new HttpError(502, `The AI answered in a way FlowMap could not read (${lastErr?.message}). Try again, or pick another model in 🧠 Brain.`);
+  const { stats } = result;
+  const edits = stats.changed + stats.added + stats.deleted + stats.links;
+  if (!edits) throw new HttpError(502, `The AI did not change anything${result.summary ? `: ${result.summary}` : ''}. Try saying exactly what to change.`);
+  await saveBoard(ctx.db, ctx.uid, row.id, { data: result.data });
+  let summary = result.summary || 'Done';
+  if (stats.keptBack) summary += ` (It wanted to delete ${stats.keptBack} things; FlowMap kept them. Ask "delete …" if you really want that.)`;
+  if (!result.complete) summary += ' (The answer was cut short, so only the finished parts were applied.)';
+  // a quick check of what changed: overlaps, things sticking out of frames, text that will not fit
+  const issues = lintBoard(result.data, result.touched);
+  if (issues.length && deadline - Date.now() > 60000) {
+    try {
+      const fixCode = toCode(result.data, { name: row.name, scope: [...result.touched].filter((id) => result.data.items.some((i) => i.id === id)) });
+      const text = await chatOnce(ai, CODE_SYSTEM('patch', true), [{ role: 'user', content: `BOARD CODE (what you just changed):\n${fixCode.code}\n\nFlowMap checked it and found:\n- ${issues.slice(0, 20).join('\n- ')}\nFix every one with a patch (move, resize, shrink text), keeping the design.` }], deadline, 8000);
+      const fixed = applyCode(result.data, text, fixCode, { mode: 'patch', request: '', scope: [...result.touched] });
+      if (fixed.stats.changed + fixed.stats.added + fixed.stats.deleted) { await saveBoard(ctx.db, ctx.uid, row.id, { data: fixed.data }); summary += ` Checked and tidied ${issues.length} spot${issues.length === 1 ? '' : 's'}.`; }
+    } catch { /* the edit itself is saved; the tidy-up is a bonus */ }
+  }
+  return { summary: summary.slice(0, 600), edits, stats };
 }
 
 // Editing the open board: the whole board goes in one compact message and the AI answers with one JSON plan,
@@ -593,18 +658,6 @@ async function chatCall(ai, system, messages, deadline, maxTokens, images = []) 
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`AI provider: ${plainError(r.status, errMsg(j))}${r.status === 400 ? ' (HTTP 400)' : ''}`);
   return anth ? (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('') : j.choices?.[0]?.message?.content || '';
-}
-async function editOnce(ctx, ai, board, request, deadline) {
-  if (!ai?.apiKey) throw new HttpError(400, 'Add an AI key in the 🧠 Brain settings first, or connect your own AI agent over MCP');
-  if (ai.provider !== 'anthropic' && !ai.model) throw new HttpError(400, 'Choose a model name in the 🧠 Brain settings');
-  const bctx = { ...ctx, source: 'ai' };
-  const view = await callTool(bctx, 'get_board', { board: board.id });
-  const plan = await askPlan(ai, EDIT_PLAN_SYSTEM(view.name), [{ role: 'user', content: `${compactBoard(view)}\n\nTHE OWNER ASKS: ${String(request).slice(0, 4000)}` }], deadline, 'edit');
-  const out = await applyPlan(bctx, view.id, plan);
-  // check only what the AI touched, so the owner's own choices are never "fixed"
-  const touched = new Set([...(Array.isArray(plan.changes) ? plan.changes.map((c) => String(c?.id)) : []), ...(out.added || [])]);
-  out.summary = await reviewRound(bctx, ai, view.id, touched, out.summary, deadline);
-  return out;
 }
 // apply a plan with the same tools agents use, so the rules (valid colours, sizes, kinds) are the same
 export async function applyPlan(bctx, boardId, plan) {

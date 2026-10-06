@@ -116,8 +116,8 @@ test('the board AI reads the open board and restyles it', async () => {
   const db = await openDb({ dataDir: dir });
   const uid = (await db.run('INSERT INTO users (email, name, pass, settings) VALUES (?, ?, ?, ?)', 'd@example.com', 'D', 'x', '{}')).lastInsertRowid;
   const b = await createBoard(db, uid, { name: 'Plain', data: { v: 1, items: [{ id: 'n1', type: 'note', x: 0, y: 0, w: 200, h: 120, text: 'Hi' }], links: [], order: [], settings: {} } });
-  // a designer model that reads the board from the message and answers with a JSON plan, with some chatter
-  // and thinking around it (as many models do); the first answer is broken, so it gets one retry
+  // a designer model that reads the board as code from the message and answers with the edited code, with some
+  // chatter and thinking around it (as many models do); the first answer is broken, so it gets one retry
   const seen = [];
   const designer = http.createServer((req, res) => {
     let body = '';
@@ -126,9 +126,11 @@ test('the board AI reads the open board and restyles it', async () => {
       const j = JSON.parse(body);
       seen.push(j);
       const user = j.messages.find((m) => m.role === 'user').content;
-      const id = JSON.parse(user.split('\n').find((l) => l.startsWith('{"id"'))).id;
-      const content = seen.length === 1 ? 'Sure! Here is the plan: {"changes": [' :
-        `<think>The owner wants it nicer.</think>Here you go:\n\`\`\`json\n${JSON.stringify({ summary: 'Made the note teal, lined and lifted it.', floor: 'grid', changes: [{ id, color: '#2fb4a0', rot: -2, paper: 'lined', pin: 'tape', style: { size: 26, hand: true } }], add: [{ type: 'clip', clip: 'pin', x: 80, y: -10 }] })}\n\`\`\``;
+      const code = user.slice(user.indexOf('<board'), user.indexOf('</board>') + 8);
+      const edited = code
+        .replace('<board ', '<board floor="grid" ').replace(/ floor="dots"/, '')
+        .replace(/<note id="(i\d+)"([^>]*)>Hi<\/note>/, '<summary>Made the note teal, lined and lifted it.</summary>\n  <note id="$1"$2 color="#2fb4a0" rot="-2" paper="lined" pin="tape" size="26" hand>Hi there</note>\n  <clip id="n1" x="80" y="-10" w="54" h="62" kind="pin"/>');
+      const content = seen.length === 1 ? 'Sure! Here is the plan: {"changes": [' : `<think>The owner wants it nicer.</think>Here you go:\n\`\`\`html\n${edited}\n\`\`\``;
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content } }] }));
     });
@@ -140,9 +142,10 @@ test('the board AI reads the open board and restyles it', async () => {
     assert.equal(out.summary, 'Made the note teal, lined and lifted it.');
     assert.equal(seen.length, 2, 'one retry after an unreadable answer');
     assert.ok(!seen[0].tools, 'no tool schemas: works with any chat model');
+    assert.match(seen[0].messages.find((m) => m.role === 'user').content, /<note id="i1" x="0" y="0" w="200" h="120"[^>]*>Hi<\/note>/, 'the board arrives as code');
     const d = JSON.parse((await getBoard(db, uid, b.id)).data);
     const note = d.items.find((i) => i.id === 'n1');
-    assert.deepEqual([note.color, note.rot, note.data.paper, note.data.pin, note.style.size, note.style.hand, d.settings.ground], ['#2fb4a0', -2, 'lined', 'tape', 26, true, 'grid']);
+    assert.deepEqual([note.text, note.color, note.rot, note.data.paper, note.data.pin, note.style.size, note.style.hand, d.settings.ground], ['Hi there', '#2fb4a0', -2, 'lined', 'tape', 26, true, 'grid']);
     assert.ok(d.items.some((i) => i.type === 'clip' && i.data.kind === 'pin'));
   } finally { designer.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
