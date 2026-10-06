@@ -18,8 +18,8 @@ import { linkStyleBody } from '../looks.js';
 import { startPresenting } from './present.js';
 import { habitDefaults, habitState, tick as tickHabit, cycleCell, markChecklist, boardStatus, periodKey, EVERY, EVERY_LABEL } from './track.js';
 import { PROGRESS_VIEWS } from './track-ui.js';
-import { TABLE_TEMPLATES, TEMPLATE_LABEL, COL_TYPES, COL_LABEL, STAT_FNS, STAT_PERIODS, newCol, newRow, dateKey, invoiceDefaults, invoiceTotals, nextInvoiceNo, isNumeric, isMoney, toCSV } from './biz.js';
-import { STAT_VIEWS, invoiceBody, orderedRows } from './biz-ui.js';
+import { cellValue, TABLE_TEMPLATES, TEMPLATE_LABEL, COL_TYPES, COL_LABEL, STAT_FNS, STAT_PERIODS, newCol, newRow, dateKey, invoiceDefaults, invoiceTotals, nextInvoiceNo, isNumeric, isMoney, toCSV } from './biz.js';
+import { STAT_VIEWS, invoiceBody, invoiceText, nounOf, fmtCell } from './biz-ui.js';
 import { openShareDialog } from './share.js';
 import { openModal } from '../ui-common.js';
 
@@ -721,9 +721,9 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (type === 'prompt') { it.title = 'Prompt'; }
       if (type === 'habit') { it.title = ''; it.data = { ...habitDefaults(), length: 30 }; }
       if (type === 'progress') { it.data = { view: 'ring' }; }
-      if (type === 'table') { const tp = TABLE_TEMPLATES.sales(); it.title = tp.title; it.data = { cols: tp.cols, rows: [], currency: 'TZS', fresh: true }; }
+      if (type === 'table') { const tp = TABLE_TEMPLATES.sales(); it.title = tp.title; it.data = { kind: 'sales', cols: tp.cols, rows: [], currency: 'TZS', fresh: true }; }
       if (type === 'stat') { const tb = data.items.filter((i) => i.type === 'table'); it.data = { view: 'months', ...(tb.length === 1 ? { source: tb[0].id } : {}) }; }
-      if (type === 'invoice') { const last = data.items.filter((i) => i.type === 'invoice').pop(); it.data = { ...invoiceDefaults(), ...(last ? { no: nextInvoiceNo(last.data?.no), from: last.data?.from, currency: last.data?.currency, pay: last.data?.pay, taxPct: last.data?.taxPct } : {}) }; it.style = { shadow: 'float' }; }
+      if (type === 'invoice') { const last = data.items.filter((i) => i.type === 'invoice').pop(); it.data = { ...invoiceDefaults(), ...(data.settings.invoiceFrom || {}), ...(last ? { no: nextInvoiceNo(last.data?.no) } : {}) }; it.style = { shadow: 'float' }; }
       if (type === 'hide') { it.title = 'Tap to reveal'; it.data = { cover: 'blur', tap: 'reveal' }; it.anim = {}; }
       if (type === 'link') { it.data.url = ''; }
       if (type === 'clip') { [it.w, it.h] = CLIP_SIZE[clipKind]; it.x = snap(w.x - it.w / 2); it.y = snap(w.y - it.h / 2); it.data = { kind: clipKind, metal: clipMetal }; it.color = clipColor; it.rot = clipKind === 'tape' ? -3 : -8; it.anim = {}; }
@@ -750,6 +750,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (type === 'link') setTimeout(() => linkUrlPrompt(it), 60);
       if (type === 'table') setTimeout(() => { select([it.id]); tablePop(); }, 80);
       if (type === 'habit') setTimeout(() => { select([it.id]); habitPop(undefined, { fresh: true }); }, 80);
+      if (type === 'invoice') setTimeout(() => invoiceForm(it, 'to.name'), 80);
     });
   }
   function startConnect(e, w, fromId) {
@@ -1324,83 +1325,159 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   }
   function toggleMovable(its) { const v = !its.every((i) => i.data?.movable); change(() => its.forEach((i) => { i.data = { ...i.data, movable: v }; })); notify(v ? '✋ Movable: when the board is locked or presenting, this can be dragged around' : 'No longer movable when locked', 'info'); }
   // ---------- business tools: tables, stats, invoices ----------
-  // a small input laid over a cell or field; Enter or leaving saves, Esc cancels, Tab moves on
-  let inline = null;
-  function closeInline(commit) { if (!inline) return; const x = inline; inline = null; x.box.remove(); if (commit && x.input.value !== x.start) x.save(x.input.value); }
-  function inlineEdit(find, { value, kind = 'text', options = null }, save, onTab) {
-    closeInline(true); // saving the last field redraws the item, so look for the new one only after
-    const target = find();
-    if (!target) return;
-    const r = target.getBoundingClientRect(), R = sf.overlay.getBoundingClientRect();
-    const input = kind === 'multi' ? h('textarea', { rows: 3 }) : h('input', { type: kind === 'date' ? 'date' : 'text', inputmode: kind === 'number' ? 'decimal' : null, autocomplete: 'off' });
-    let list = null;
-    if (options?.length) { const id = `dl${Math.random().toString(36).slice(2, 7)}`; list = h('datalist', { id }, options.map((o) => h('option', { value: o }))); input.setAttribute('list', id); }
-    input.value = value ?? '';
-    const box = h('div', { class: `inl-ed k-${kind}`, style: { left: `${r.left - R.left}px`, top: `${r.top - R.top}px`, minWidth: `${Math.max(r.width, kind === 'multi' ? 260 : 140)}px`, minHeight: `${r.height}px` }, onpointerdown: (e) => e.stopPropagation() }, input, list);
-    sf.overlay.append(box);
-    inline = { input, box, save, start: input.value };
-    input.focus(); if (kind !== 'date') input.select?.();
-    input.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Escape') { e.preventDefault(); closeInline(false); }
-      else if (e.key === 'Enter' && (kind !== 'multi' || e.ctrlKey || e.metaKey)) { e.preventDefault(); closeInline(true); }
-      else if (e.key === 'Tab' && onTab) { e.preventDefault(); const v = input.value, st = inline?.start; inline = null; box.remove(); if (v !== st) save(v); setTimeout(() => onTab(e.shiftKey), 0); }
-    });
-    input.addEventListener('blur', () => setTimeout(() => { if (inline?.input === input) closeInline(true); }, 120));
-  }
+  // ---------- forms: one clear window to add or change a row, or a whole invoice ----------
   const toNum = (v) => { const n = Number(String(v).replace(/[,\s_]/g, '')); return Number.isFinite(n) ? n : ''; };
-  const cellEl = (it, r, c) => els.get(it.id)?.querySelector(`[data-act="tb-cell"][data-r="${r}"][data-c="${c}"]`);
-  function editCell(it, rowId, colId) {
-    const t0 = it.data, col0 = t0.cols.find((c) => c.id === colId);
-    if (!col0 || !t0.rows.some((r) => r.id === rowId)) return;
-    const kind = col0.type === 'date' ? 'date' : col0.type === 'number' || col0.type === 'money' ? 'number' : 'text';
-    const grab = () => cellEl(it, rowId, colId);
-    const cur = t0.rows.find((r) => r.id === rowId);
-    inlineEdit(grab, { value: cur.c?.[colId] ?? '', kind, options: col0.type === 'select' ? col0.options || [] : null }, (v) => {
-      let val = kind === 'number' ? (String(v).trim() === '' ? '' : toNum(v)) : String(v).trim().slice(0, 500);
-      const tt = it.data, cc = tt.cols?.find((c) => c.id === colId), rr = tt.rows?.find((r) => r.id === rowId);
-      if (!cc || !rr) return;
+  const field = (label, input, hint) => h('label', { class: 'ff' }, h('span', null, label), input, hint ? h('small', null, hint) : null);
+  const submitOnEnter = (m) => m.el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && e.target.tagName !== 'TEXTAREA') { e.preventDefault(); m.el.querySelector('footer .btn.primary')?.click(); } });
+  function rowForm(it, rowId = null, focusCol = null) {
+    const t = it.data || {}, cur = t.currency ?? 'TZS', noun = nounOf(it);
+    const row = rowId ? (t.rows || []).find((r) => r.id === rowId) : null;
+    const inputs = new Map(), previews = new Map();
+    const collect = () => { const c = {}; for (const [id, get] of inputs) c[id] = get(); return c; };
+    const refresh = () => { const r = { c: collect() }; for (const [id, el] of previews) { const col = t.cols.find((x) => x.id === id); el.textContent = fmtCell(col, cellValue(t, r, col)) || '—'; } };
+    const body = h('div', { class: 'rowform' }, (t.cols || []).map((col) => {
+      const v = row ? row.c?.[col.id] : col.type === 'date' ? dateKey() : '';
+      if (col.type === 'calc') { const el = h('b', { class: 'ff-calc' }); previews.set(col.id, el); return field(`${col.name}${col.money && cur ? ` (${cur})` : ''}`, el, 'Worked out for you'); }
+      if (col.type === 'check') {
+        const b = h('button', { type: 'button', class: 'tgl', 'aria-pressed': String(!!v), onclick: () => { b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); } });
+        inputs.set(col.id, () => b.getAttribute('aria-pressed') === 'true');
+        return h('div', { class: 'ff ff-row' }, h('span', null, col.name), b);
+      }
+      let input;
+      if (col.type === 'date') input = h('input', { type: 'date', value: v || '' });
+      else if (col.type === 'number' || col.type === 'money') input = h('input', { type: 'text', inputmode: 'decimal', value: v === '' || v == null ? '' : String(v), placeholder: '0', oninput: refresh });
+      else input = h('input', { type: 'text', value: v ?? '', maxlength: 500, oninput: refresh });
+      inputs.set(col.id, () => (col.type === 'number' || col.type === 'money' ? (String(input.value).trim() === '' ? '' : toNum(input.value)) : String(input.value).trim().slice(0, 500)));
+      input.dataset.col = col.id;
+      if (col.type === 'select') {
+        const chips = h('div', { class: 'wd-row' }, (col.options || []).map((o) => h('button', { type: 'button', class: `chip${o === v ? ' on' : ''}`, onclick: (e) => { input.value = o; chips.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === e.currentTarget)); } }, o)));
+        input.placeholder = 'Pick one or type a new one';
+        return h('div', { class: 'ff' }, h('span', null, col.name), chips, input);
+      }
+      return field(`${col.name}${col.type === 'money' && cur ? ` (${cur})` : ''}`, input);
+    }));
+    const save = () => {
+      const c = collect();
+      const empty = Object.entries(c).every(([id, x]) => x === '' || x === false || t.cols.find((col) => col.id === id)?.type === 'date');
+      if (!row && empty) return true;
       change(() => {
-        if (cc.type === 'select' && val && !(cc.options || []).includes(val)) cc.options = [...(cc.options || []), val].slice(0, 40);
-        rr.c = { ...rr.c, [colId]: val };
-        it.data = { ...tt, fresh: undefined };
+        for (const col of t.cols) if (col.type === 'select' && c[col.id] && !(col.options || []).includes(c[col.id])) col.options = [...(col.options || []), c[col.id]].slice(0, 40);
+        if (row) row.c = { ...row.c, ...c }; else t.rows = [...(t.rows || []), newRow(c)];
+        it.data = { ...t, fresh: undefined };
       });
-    }, (back) => {
-      // Tab: the next cell you can type in, then on to the next row
-      const cols = it.data.cols.filter((c) => c.type !== 'calc' && c.type !== 'check'), rows = orderedRows(it.data);
-      let ri = rows.findIndex((r) => r.id === rowId), ci = cols.findIndex((c) => c.id === colId) + (back ? -1 : 1);
-      if (ci >= cols.length) { ci = 0; ri++; } else if (ci < 0) { ci = cols.length - 1; ri--; }
-      if (rows[ri] && cols[ci]) editCell(it, rows[ri].id, cols[ci].id);
-    });
+      return true;
+    };
+    const m = openModal({ title: row ? `Change this ${noun}` : `New ${noun}`, body, actions: [
+      row ? { label: 'Delete', kind: 'danger', onClick: () => { change(() => { it.data = { ...t, rows: t.rows.filter((r) => r.id !== row.id) }; }); } } : null,
+      row ? null : { label: 'Add + another', onClick: () => { save(); setTimeout(() => rowForm(it), 40); } },
+      { label: row ? 'Save' : 'Add', kind: 'primary', onClick: save },
+    ].filter(Boolean) });
+    submitOnEnter(m);
+    refresh();
+    if (focusCol) setTimeout(() => m.el.querySelector(`[data-col="${focusCol}"]`)?.focus(), 60);
   }
-  const getPath = (o, path) => path.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
-  function setPath(o, path, v) { const c = structuredClone(o); const ks = path.split('.'); let a = c; for (const k of ks.slice(0, -1)) { a[k] ??= {}; a = a[k]; } a[ks[ks.length - 1]] = v; return c; }
+  async function shrinkImage(file, max = 240) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = url; });
+      const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL('image/png');
+    } finally { URL.revokeObjectURL(url); }
+  }
+  // the whole invoice in one form; the board keeps a clean paper preview
+  function invoiceForm(it, focus = '') {
+    const d = structuredClone({ ...invoiceDefaults(), ...it.data });
+    d.from ||= {}; d.to ||= {}; d.lines ||= [];
+    const totalsEl = h('div', { class: 'if-totals' });
+    const paintTotals = () => { const tt = invoiceTotals(d), cur = d.currency ? `${d.currency} ` : ''; clear(totalsEl).append(h('span', null, `Subtotal ${cur}${fmtMoneyLocal(tt.sub)}`), tt.discount ? h('span', null, `Discount −${fmtMoneyLocal(tt.discount)}`) : null, tt.tax ? h('span', null, `Tax ${fmtMoneyLocal(tt.tax)}`) : null, h('b', null, `Total ${cur}${fmtMoneyLocal(tt.total)}`)); };
+    const inp = (get, set, attrs = {}) => { const el = h(attrs.tag || 'input', { type: attrs.tag === 'textarea' ? null : attrs.type || 'text', value: get() ?? '', placeholder: attrs.ph || '', inputmode: attrs.num ? 'decimal' : null, rows: attrs.rows || null, 'data-f': attrs.f || null, oninput: (e) => { set(attrs.num ? toNum(e.target.value) || 0 : e.target.value); paintTotals(); } }); if (attrs.tag === 'textarea') el.value = get() ?? ''; return el; };
+    const lines = h('div', { class: 'if-lines' });
+    const paintLines = () => {
+      clear(lines).append(
+        h('div', { class: 'if-line head' }, h('span', null, 'What'), h('span', null, 'Qty'), h('span', null, 'Price'), h('span', null, 'Amount'), h('span')),
+        ...d.lines.map((l, i) => {
+          const amt = h('b', { class: 'if-amt' });
+          const upd = () => { amt.textContent = fmtMoneyLocal((Number(l.q) || 0) * (Number(l.p) || 0)); };
+          upd();
+          return h('div', { class: 'if-line' },
+            inp(() => l.d, (v) => { l.d = v; }, { ph: 'Item or service', f: i === 0 ? 'lines' : null }),
+            inp(() => l.q, (v) => { l.q = v; upd(); }, { num: true, ph: '1' }),
+            inp(() => l.p, (v) => { l.p = v; upd(); }, { num: true, ph: '0' }),
+            amt,
+            h('button', { type: 'button', class: 'tb-del', title: 'Remove', onclick: () => { d.lines.splice(i, 1); paintLines(); paintTotals(); } }, '×'));
+        }),
+        h('button', { type: 'button', class: 'chip', onclick: () => { d.lines.push({ d: '', q: 1, p: 0 }); paintLines(); lines.querySelector('.if-line:last-of-type input')?.focus(); } }, '＋ Add item'));
+    };
+    paintLines(); paintTotals();
+    const logoBox = h('div', { class: 'if-logo' });
+    const paintLogo = () => clear(logoBox).append(d.logo ? h('img', { src: d.logo, alt: 'Logo' }) : null,
+      h('button', { type: 'button', class: 'chip', onclick: async () => { const [f] = await pickFiles('image/*'); if (f) { d.logo = await shrinkImage(f); paintLogo(); } } }, d.logo ? 'Change logo' : '＋ Add your logo'),
+      d.logo ? h('button', { type: 'button', class: 'chip', onclick: () => { delete d.logo; paintLogo(); } }, 'Remove') : null);
+    paintLogo();
+    const status = segRow('Status', [['draft', 'Draft'], ['sent', 'Sent'], ['paid', '✓ Paid']], d.status || 'draft', (v) => { d.status = v; });
+    const body = h('div', { class: 'invform' },
+      h('section', null, h('h4', null, 'From you'), logoBox,
+        field('Business name', inp(() => d.from.name, (v) => { d.from.name = v; }, { f: 'from.name', ph: 'e.g. Blonxin Media' })),
+        field('Details', inp(() => d.from.details, (v) => { d.from.details = v; }, { tag: 'textarea', rows: 2, f: 'from.details', ph: 'Address, phone, email, TIN' }))),
+      h('section', null, h('h4', null, 'Bill to'),
+        field('Client', inp(() => d.to.name, (v) => { d.to.name = v; }, { f: 'to.name', ph: 'Client or company name' })),
+        field('Details', inp(() => d.to.details, (v) => { d.to.details = v; }, { tag: 'textarea', rows: 2, f: 'to.details', ph: 'Address, phone' }))),
+      h('section', { class: 'if-row3' },
+        field('Invoice no.', inp(() => d.no, (v) => { d.no = v; }, { f: 'no' })),
+        field('Date', inp(() => d.date, (v) => { d.date = v; }, { type: 'date', f: 'date' })),
+        field('Due', inp(() => d.due, (v) => { d.due = v; }, { type: 'date', f: 'due' })),
+        field('Currency', inp(() => d.currency, (v) => { d.currency = String(v).trim().slice(0, 6); }, { ph: 'TZS' }))),
+      h('section', null, h('h4', null, 'What you charge for'), lines),
+      h('section', { class: 'if-row3' },
+        field('Discount', inp(() => d.discount || '', (v) => { d.discount = v; }, { num: true, ph: '0' })),
+        field('Tax %', inp(() => d.taxPct || '', (v) => { d.taxPct = Math.min(100, Math.max(0, v)); }, { num: true, ph: '0 (VAT 18)' })), totalsEl),
+      h('section', null,
+        field('How to pay', inp(() => d.pay, (v) => { d.pay = v; }, { tag: 'textarea', rows: 2, f: 'pay', ph: 'M-Pesa 0700 000 000 (Name) · Bank: …' })),
+        field('Note', inp(() => d.notes, (v) => { d.notes = v; }, { tag: 'textarea', rows: 2, f: 'notes', ph: 'Thank you for your business.' }))),
+      status);
+    const m = openModal({ title: `🧾 Invoice ${d.no || ''}`, body, wide: true, actions: [
+      { label: 'Cancel' },
+      { label: 'Save', kind: 'primary', onClick: () => {
+        d.lines = d.lines.filter((l) => l.d || Number(l.p) || Number(l.q) !== 1);
+        change(() => {
+          it.data = d;
+          // the next invoice starts with your details already filled in
+          data.settings.invoiceFrom = { from: d.from, pay: d.pay, currency: d.currency, logo: d.logo, taxPct: d.taxPct, notes: d.notes };
+        });
+      } },
+    ] });
+    submitOnEnter(m);
+    if (focus) setTimeout(() => { const el = m.el.querySelector(`[data-f="${focus}"]`); if (el) { el.focus(); el.scrollIntoView?.({ block: 'center' }); } }, 60);
+  }
+  const fmtMoneyLocal = (n) => (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
   function bizAction(it, act, btn) {
     const d = it.data || {};
-    // a shared view can browse the stats, nothing more
-    if (readonly) { if (act.startsWith('st-')) { it.data = { ...d, ...(act === 'st-period' ? { period: btn.dataset.v, offset: 0 } : { offset: Math.min(0, (Number(d.offset) || 0) + (act === 'st-prev' ? -1 : 1)) }) }; render(); } else if (act === 'inv-print') printInvoice(it); return; }
-    if (act === 'tb-cell') editCell(it, btn.dataset.r, btn.dataset.c);
+    // a shared view can browse, copy and print, nothing more
+    if (readonly) {
+      if (act.startsWith('st-') || act === 'tb-show') { it.data = { ...d, ...(act === 'tb-show' ? { show: btn.dataset.v } : act === 'st-period' ? { period: btn.dataset.v, offset: 0 } : { offset: Math.min(0, (Number(d.offset) || 0) + (act === 'st-prev' ? -1 : 1)) }) }; render(); }
+      else if (act === 'inv-print') printInvoice(it); else if (act === 'inv-copy') copyInvoice(it);
+      return;
+    }
+    if (act === 'tb-row') rowForm(it, btn.dataset.r);
+    else if (act === 'tb-add') rowForm(it);
+    else if (act === 'tb-show') change(() => { it.data = { ...d, show: btn.dataset.v }; });
     else if (act === 'tb-check') change(() => { const row = d.rows.find((r) => r.id === btn.dataset.r); if (row) { row.c = { ...row.c, [btn.dataset.c]: !row.c?.[btn.dataset.c] }; it.data = { ...d }; } });
-    else if (act === 'tb-add') {
-      const c = {};
-      for (const col of d.cols || []) if (col.type === 'date') c[col.id] = dateKey();
-      const row = newRow(c);
-      change(() => { it.data = { ...d, rows: [...(d.rows || []), row], fresh: undefined }; });
-      const first = (d.cols || []).find((col) => !['calc', 'check', 'date'].includes(col.type));
-      if (first) setTimeout(() => { const w = els.get(it.id)?.querySelector('.tb-wrap'); const td = cellEl(it, row.id, first.id); if (w && td) td.scrollIntoView({ block: 'nearest' }); editCell(it, row.id, first.id); }, 30);
-    } else if (act === 'tb-del') change(() => { it.data = { ...d, rows: d.rows.filter((r) => r.id !== btn.dataset.r) }; });
     else if (act === 'st-prev' || act === 'st-next') change(() => { it.data = { ...d, offset: Math.min(0, (Number(d.offset) || 0) + (act === 'st-prev' ? -1 : 1)) }; });
     else if (act === 'st-period') change(() => { it.data = { ...d, period: btn.dataset.v, offset: 0 }; });
-    else if (act === 'inv-edit') {
-      const f = btn.dataset.f, kind = btn.dataset.kind;
-      inlineEdit(() => els.get(it.id)?.querySelector(`[data-act="inv-edit"][data-f="${f}"]`), { value: getPath({ ...invoiceDefaults(), ...d }, f) ?? '', kind }, (v) => change(() => { it.data = setPath({ ...invoiceDefaults(), ...it.data }, f, kind === 'number' ? (toNum(v) || 0) : String(v).slice(0, 2000)); }));
-    } else if (act === 'inv-add') change(() => { const dd = { ...invoiceDefaults(), ...d }; it.data = { ...dd, lines: [...(dd.lines || []), { d: '', q: 1, p: 0 }] }; });
-    else if (act === 'inv-del') change(() => { const dd = { ...invoiceDefaults(), ...d }; it.data = { ...dd, lines: dd.lines.filter((_, i) => i !== Number(btn.dataset.i)) }; });
+    else if (act === 'inv-edit') invoiceForm(it, btn.dataset.f);
+    else if (act === 'inv-paid') change(() => { it.data = { ...invoiceDefaults(), ...d, status: d.status === 'paid' ? 'sent' : 'paid' }; });
+    else if (act === 'inv-copy') copyInvoice(it);
     else if (act === 'inv-print') printInvoice(it);
+  }
+  function copyInvoice(it) {
+    const text = invoiceText(it.data || {});
+    navigator.clipboard?.writeText(text).then(() => notify('📋 Copied. Paste it in WhatsApp or SMS.', 'info')).catch(() => openModal({ title: 'Copy this', body: h('textarea', { class: 'copybox', rows: 14, readonly: true }, text), actions: [{ label: 'Done' }] }));
   }
   function printInvoice(it) {
     document.getElementById('print-root')?.remove();
-    const sheet = h('div', { id: 'print-root' }, invoiceBody(it.data || {}, { editable: false, print: true }));
+    const sheet = h('div', { id: 'print-root' }, invoiceBody(it.data || {}, { editable: false, print: true, accent: it.color || '' }));
     document.body.append(sheet);
     document.documentElement.classList.add('printing');
     const done = () => { document.documentElement.classList.remove('printing'); sheet.remove(); window.removeEventListener('afterprint', done); };
@@ -1427,11 +1504,11 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       c.type === 'select' ? h('input', { class: 'num-in wide', value: (c.options || []).join(', '), placeholder: 'Food, Rent, Transport', onchange: (e) => set((nd) => { nd.cols[i].options = e.target.value.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 40); }, false) }) : null,
       h('button', { type: 'button', class: 'tb-del', title: 'Remove this column', onclick: () => set((nd) => { nd.cols.splice(i, 1); }) }, '×'));
     const body = h('div', { class: 'pgrid' },
-      !(d.rows || []).length ? h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Start from'), h('div', { class: 'wd-row' }, Object.keys(TABLE_TEMPLATES).map((k) => h('button', { type: 'button', class: 'chip', onclick: () => { const tp = TABLE_TEMPLATES[k](); change(() => { it.title = tp.title; it.data = { ...d, cols: tp.cols, rows: [], fresh: undefined }; }); closePop(); setTimeout(() => tablePop(btn), 20); } }, TEMPLATE_LABEL[k])))) : null,
+      !(d.rows || []).length ? h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Start from'), h('div', { class: 'wd-row' }, Object.keys(TABLE_TEMPLATES).map((k) => h('button', { type: 'button', class: 'chip', onclick: () => { const tp = TABLE_TEMPLATES[k](); change(() => { it.title = tp.title; it.data = { ...d, kind: k, cols: tp.cols, rows: [], fresh: undefined }; }); closePop(); setTimeout(() => tablePop(btn), 20); } }, TEMPLATE_LABEL[k])))) : null,
       h('div', { class: 'pr col' }, h('span', { class: 'pl' }, 'Columns'), h('div', { class: 'cols-ed' }, (d.cols || []).map(colRow),
         h('div', { class: 'wd-row' }, ['text', 'number', 'money', 'date', 'select', 'check', 'calc'].map((ty) => h('button', { type: 'button', class: 'chip', onclick: () => set((nd) => { nd.cols.push(newCol(ty, ty === 'calc' ? 'Result' : COL_LABEL[ty], ty === 'calc' ? { expr: '' } : {})); }) }, `＋ ${COL_LABEL[ty]}`))))),
       h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Currency'), h('input', { class: 'num-in', value: d.currency ?? 'TZS', placeholder: 'TZS', onchange: (e) => set((nd) => { nd.currency = e.target.value.trim().slice(0, 6); }, false) })),
-      segRow('Order', [['', 'As added'], ['new', 'Newest first'], ['big', 'Biggest first']], d.sort || '', (v) => set((nd) => { nd.sort = v || undefined; }, false)),
+      segRow('Order', [['new', 'Newest first'], ['added', 'As added'], ['big', 'Biggest first']], d.sort || ((d.cols || []).some((c) => c.type === 'date') ? 'new' : 'added'), (v) => set((nd) => { nd.sort = v; }, false)),
       h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn sm', onclick: () => download(`${(it.title || 'table').replace(/[^\w-]+/g, '-')}.csv`, toCSV(it.data)) }, '⬇ Export CSV'), h('button', { type: 'button', class: 'btn sm', onclick: () => { closePop(); addStatFor(it); } }, '📊 Add a stat for it')),
       h('p', { class: 'phint' }, 'Formula columns work things out for every row, e.g. [Qty] * [Price] or [Owed] - [Paid]. Totals add up at the bottom. Add rows any time, even when the board is locked.'));
     openPop({ ...anchorFor(btn), title: '🧮 Table', width: 560, body });
@@ -1475,28 +1552,30 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const it = oneSel();
     if (!it || it.type !== 'invoice') return;
     const d = { ...invoiceDefaults(), ...it.data };
-    const set = (patch) => change(() => { it.data = { ...invoiceDefaults(), ...it.data, ...patch }; });
     const tables = data.items.filter((i) => i.type === 'table');
     const tt = invoiceTotals(d);
     const body = h('div', { class: 'pgrid' },
-      segRow('Status', [['draft', 'Draft'], ['sent', 'Sent'], ['paid', '✓ Paid']], d.status || 'draft', (v) => set({ status: v })),
-      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Currency'), h('input', { class: 'num-in', value: d.currency, onchange: (e) => set({ currency: e.target.value.trim().slice(0, 6) }) })),
-      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Tax %'), h('input', { class: 'num-in', type: 'number', min: 0, max: 100, value: d.taxPct || '', placeholder: '0 (VAT is 18)', onchange: (e) => set({ taxPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }) })),
-      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Discount'), h('input', { class: 'num-in', type: 'number', min: 0, value: d.discount || '', placeholder: '0', onchange: (e) => set({ discount: Math.max(0, Number(e.target.value) || 0) }) })),
-      h('div', { class: 'row' },
-        h('button', { type: 'button', class: 'btn sm', onclick: () => { closePop(); printInvoice(it); } }, '🖨 Print / PDF'),
-        h('button', { type: 'button', class: 'btn sm', title: 'Same business details, next number, empty lines', onclick: () => { closePop(); const nx = makeItem('invoice', { x: it.x + it.w + 60, y: it.y, w: it.w, h: it.h, z: maxZ() + 1, style: { ...it.style }, data: { ...invoiceDefaults(), from: d.from, currency: d.currency, pay: d.pay, notes: d.notes, taxPct: d.taxPct, no: nextInvoiceNo(d.no), lines: [{ d: '', q: 1, p: 0 }] } }); change(() => data.items.push(nx)); select([nx.id]); } }, '＋ Next invoice')),
+      h('div', { class: 'row wrap' },
+        h('button', { type: 'button', class: 'btn sm primary', onclick: () => { closePop(); invoiceForm(it); } }, '✏️ Edit invoice'),
+        h('button', { type: 'button', class: 'btn sm', title: 'Your details filled in, the next number, no items yet', onclick: () => {
+          closePop();
+          const at = freeSpot(it, it.w, it.h);
+          const nx = makeItem('invoice', { ...at, w: it.w, h: it.h, z: maxZ() + 1, color: it.color, style: { ...it.style }, data: { ...invoiceDefaults(), ...(data.settings.invoiceFrom || { from: d.from, currency: d.currency, pay: d.pay, notes: d.notes, taxPct: d.taxPct, logo: d.logo }), no: nextInvoiceNo(d.no), lines: [{ d: '', q: 1, p: 0 }] } });
+          change(() => data.items.push(nx)); select([nx.id]); glide(viewOf(nx)); setTimeout(() => invoiceForm(nx, 'to.name'), 500);
+        } }, '＋ Next invoice'),
+        h('button', { type: 'button', class: 'btn sm', onclick: () => { closePop(); copyInvoice(it); } }, '📋 Copy as text'),
+        h('button', { type: 'button', class: 'btn sm', onclick: () => { closePop(); printInvoice(it); } }, '🖨 PDF')),
       tables.length ? h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Log it'), h('select', { class: 'sel-in', onchange: (e) => {
         const tb = byId(e.target.value);
         if (!tb) return;
+        // one row: the date, the client, quantity 1 and the invoice total
         const cols = tb.data.cols || [], c = {};
-        const dc = cols.find((x) => x.type === 'date'), tc = cols.find((x) => x.type === 'text'), mc = cols.find((x) => x.type === 'money');
-        if (dc) c[dc.id] = d.date; if (tc) c[tc.id] = d.to?.name || d.no; if (mc) c[mc.id] = tt.total;
-        const pc = cols.find((x) => x.type === 'check'); if (pc) c[pc.id] = d.status === 'paid';
+        const dc = cols.find((x) => x.type === 'date'), tc = cols.find((x) => x.type === 'text'), nc = cols.find((x) => x.type === 'number'), mc = cols.find((x) => x.type === 'money'), pc = cols.find((x) => x.type === 'check');
+        if (dc) c[dc.id] = d.date; if (tc) c[tc.id] = d.to?.name || d.no; if (nc) c[nc.id] = 1; if (mc) c[mc.id] = tt.total; if (pc) c[pc.id] = d.status === 'paid';
         change(() => { tb.data = { ...tb.data, rows: [...(tb.data.rows || []), newRow(c)] }; });
         notify(`Added ${d.no} to ${tb.title || 'the table'}`, 'info'); e.target.value = '';
       } }, h('option', { value: '' }, 'Add this invoice as a row in…'), tables.map((t) => h('option', { value: t.id }, `🧮 ${t.title || 'Table'}`)))) : null,
-      h('p', { class: 'phint' }, 'Tap any text on the invoice to change it. In the print window choose “Save as PDF” to send it on WhatsApp or email.'));
+      h('p', { class: 'phint' }, 'Tap any part of the invoice to change it. The colour button sets its accent colour. PDF opens the print window: choose “Save as PDF”.'));
     openPop({ ...anchorFor(btn), title: '🧾 Invoice', width: 470, body });
   }
 
@@ -2245,7 +2324,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       destroyed = true; save.flush?.(); clearInterval(trackTimer);
       window.removeEventListener('keydown', onKey); document.removeEventListener('paste', onPaste); document.removeEventListener('fullscreenchange', onFs);
       window.removeEventListener('flowmap-theme', offTheme); window.removeEventListener('flowmap-motion', offTheme);
-      presenting?.end?.(); closePop(); closeMenu(); closeInline(false);
+      presenting?.end?.(); closePop(); closeMenu();
       sf.destroy(); root.remove();
     },
     present,
