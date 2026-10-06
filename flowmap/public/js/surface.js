@@ -1,0 +1,471 @@
+// The flat ground everything rests on: an infinite canvas with a dotted, gridded or plain floor that pans and
+// zooms with its contents. Used by the card tracker and by boards. Items are real DOM elements (sharp text,
+// real buttons); connections are SVG in the same world space, so the floor's dots line up inside tunnels.
+const NS = 'http://www.w3.org/2000/svg';
+export const svgEl = (tag, attrs = {}, parent) => {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) n.setAttribute(k, v);
+  if (parent) parent.append(n);
+  return n;
+};
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const ease = (t) => 1 - Math.pow(1 - t, 3);
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+export const GRID = 22; // floor pattern pitch in world units
+import { haptic } from './native.js';
+
+let uid = 0;
+export function createSurface(host, { minK = 0.1, maxK = 4, onPointerDown, onContext, onDoubleClick, className = '' } = {}) {
+  const id = `sf${++uid}`;
+  const root = document.createElement('div');
+  root.className = `sf ${className}`;
+  root.dataset.ground = 'dots';
+  const world = document.createElement('div');
+  world.className = 'sf-world';
+  const under = svgEl('svg', { class: 'sf-svg sf-under', width: 1, height: 1 });
+  // moving lights live on their own layer, so animating them never repaints the filtered pipes under them
+  const flows = svgEl('svg', { class: 'sf-svg sf-flows', width: 1, height: 1 });
+  const layer = document.createElement('div');
+  layer.className = 'sf-layer';
+  const over = svgEl('svg', { class: 'sf-svg sf-over', width: 1, height: 1 });
+  world.append(under, flows, layer, over);
+  const overlay = document.createElement('div');
+  overlay.className = 'sf-overlay';
+  root.append(world, overlay);
+  host.append(root);
+  const defs = svgEl('defs', {}, under);
+
+  const cam = { tx: 0, ty: 0, k: 1 };
+  let W = 1, H = 1, anim = null, lod = 1;
+  const listeners = new Set();
+  function apply() {
+    world.style.transform = `translate(${cam.tx}px, ${cam.ty}px) scale(${cam.k})`;
+    // like paper that never gets noisy: when zoomed far out the floor pattern doubles its pitch
+    let m = 1;
+    while (GRID * cam.k * m < 13 && m < 64) m *= 2;
+    const g = GRID * cam.k * m;
+    root.style.setProperty('--gs', `${g}px`);
+    if (m !== lod) { lod = m; defs.querySelector('pattern')?.setAttribute('patternTransform', `translate(2.5 3.5) scale(${m})`); }
+    // Sharp at every zoom: while the camera moves the world is one GPU layer (smooth), and once it rests
+    // the browser draws text, icons and lines again at the new scale instead of stretching the old picture.
+    root.classList.add('moving');
+    clearTimeout(settleT);
+    settleT = setTimeout(settle, 140);
+    root.style.backgroundPosition = `${cam.tx}px ${cam.ty}px`;
+    root.style.setProperty('--gk', cam.k);
+    for (const fn of listeners) fn(cam);
+  }
+  let settleT = 0, rasterK = cam.k;
+  function settle() {
+    if (pan || pinch) { settleT = setTimeout(settle, 140); return; }
+    root.classList.remove('moving');
+    if (Math.abs(cam.k - rasterK) > 1e-3) {
+      rasterK = cam.k;
+      // the flowing-lights layer keeps its own GPU picture: rebuild it at the new scale
+      flows.style.willChange = 'auto';
+      requestAnimationFrame(() => requestAnimationFrame(() => { flows.style.willChange = ''; }));
+    }
+  }
+  const toWorld = (sx, sy) => ({ x: (sx - cam.tx) / cam.k, y: (sy - cam.ty) / cam.k });
+  const toScreen = (x, y) => ({ x: x * cam.k + cam.tx, y: y * cam.k + cam.ty });
+  const local = (e) => { const r = root.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  function zoomAt(sx, sy, k) {
+    const w = toWorld(sx, sy);
+    cam.k = clamp(k, minK, maxK);
+    cam.tx = sx - w.x * cam.k; cam.ty = sy - w.y * cam.k;
+    apply();
+  }
+  // smooth camera moves (focus, fit, presenting)
+  // arc: for long trips, glide through the world centre to centre and ease out a little mid-way, like a
+  // camera pulling back and settling in, so you see where you are going
+  function flyTo(target, ms = 650, { arc = false } = {}) {
+    cancelAnimationFrame(anim);
+    if (calmMotion()) ms = 0; // animations off: jump straight there
+    const from = { ...cam }, t0 = performance.now();
+    const c0 = { x: (W / 2 - from.tx) / from.k, y: (H / 2 - from.ty) / from.k }, c1 = { x: (W / 2 - target.tx) / target.k, y: (H / 2 - target.ty) / target.k };
+    const far = Math.hypot(c1.x - c0.x, c1.y - c0.y) * Math.min(from.k, target.k);
+    const dip = arc ? Math.min(0.55, far / (W * 3)) : 0;
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms), e = arc ? easeInOut(t) : ease(t);
+      if (arc) {
+        const k = (from.k + (target.k - from.k) * e) * (1 - dip * Math.sin(Math.PI * e));
+        const cx = c0.x + (c1.x - c0.x) * e, cy = c0.y + (c1.y - c0.y) * e;
+        cam.k = k; cam.tx = W / 2 - cx * k; cam.ty = H / 2 - cy * k;
+      } else {
+        cam.k = from.k + (target.k - from.k) * e;
+        cam.tx = from.tx + (target.tx - from.tx) * e;
+        cam.ty = from.ty + (target.ty - from.ty) * e;
+      }
+      apply();
+      if (t < 1) anim = requestAnimationFrame(step); else if (arc) Object.assign(cam, target), apply();
+    };
+    if (ms <= 0) { Object.assign(cam, target); apply(); return; }
+    anim = requestAnimationFrame(step);
+  }
+  // show a world rectangle, centred, with padding in screen pixels
+  function frameFor(b, { pad = 60, maxZoom = 1.4, insets = {} } = {}) {
+    const it = { top: 0, right: 0, bottom: 0, left: 0, ...insets };
+    const aw = Math.max(50, W - it.left - it.right - pad * 2), ah = Math.max(50, H - it.top - it.bottom - pad * 2);
+    const k = clamp(Math.min(aw / Math.max(1, b.w), ah / Math.max(1, b.h), maxZoom), minK, maxK);
+    const cx = it.left + (W - it.left - it.right) / 2, cy = it.top + (H - it.top - it.bottom) / 2;
+    return { k, tx: cx - (b.x + b.w / 2) * k, ty: cy - (b.y + b.h / 2) * k };
+  }
+  const fit = (b, opts = {}) => flyTo(frameFor(b, opts), opts.animate === false ? 0 : opts.ms ?? 600);
+  const centerOn = (x, y, k = cam.k, ms = 500) => flyTo({ k, tx: W / 2 - x * k, ty: H / 2 - y * k }, ms);
+
+  function resize() {
+    const r = root.getBoundingClientRect();
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    apply();
+  }
+  const ro = new ResizeObserver(resize);
+  ro.observe(root);
+  resize();
+
+  // ---------- floor pattern for tunnels (world space, so it lines up with the CSS floor) ----------
+  function buildDefs() {
+    defs.innerHTML = '';
+    const g = root.dataset.ground;
+    const p = svgEl('pattern', { id: `${id}-deep`, width: GRID, height: GRID, patternUnits: 'userSpaceOnUse', patternTransform: `translate(2.5 3.5) scale(${lod})` }, defs);
+    if (g === 'grid') { svgEl('rect', { x: 0, y: 0, width: GRID, height: 1, class: 'sf-deep' }, p); svgEl('rect', { x: 0, y: 0, width: 1, height: GRID, class: 'sf-deep' }, p); }
+    else if (g === 'dots') svgEl('circle', { cx: GRID / 2, cy: GRID / 2, r: 1.35, class: 'sf-deep' }, p);
+    const f = svgEl('filter', { id: `${id}-inset`, x: '-20%', y: '-20%', width: '140%', height: '140%' }, defs);
+    svgEl('feOffset', { in: 'SourceAlpha', dx: 0, dy: 3, result: 'off' }, f);
+    svgEl('feGaussianBlur', { in: 'off', stdDeviation: 2.4, result: 'blur' }, f);
+    svgEl('feComposite', { in: 'SourceAlpha', in2: 'blur', operator: 'out', result: 'inv' }, f);
+    svgEl('feFlood', { class: 'sf-inset-flood', result: 'col' }, f);
+    svgEl('feComposite', { in: 'col', in2: 'inv', operator: 'in', result: 'shadow' }, f);
+    svgEl('feComposite', { in: 'shadow', in2: 'SourceGraphic', operator: 'atop' }, f);
+    const gl = svgEl('filter', { id: `${id}-glow`, x: '-50%', y: '-50%', width: '200%', height: '200%' }, defs);
+    svgEl('feGaussianBlur', { stdDeviation: 2.2, result: 'b' }, gl);
+    svgEl('feComposite', { in: 'SourceGraphic', in2: 'b', operator: 'over' }, gl);
+    const sh = svgEl('filter', { id: `${id}-drop`, x: '-30%', y: '-30%', width: '160%', height: '160%' }, defs);
+    svgEl('feDropShadow', { dx: 3, dy: 6, stdDeviation: 4, 'flood-color': '#000', 'flood-opacity': 0.28 }, sh);
+  }
+  function setGround(kind) {
+    root.dataset.ground = ['dots', 'grid', 'plain'].includes(kind) ? kind : 'dots';
+    buildDefs();
+  }
+  buildDefs();
+
+  // ---------- input: pan, pinch, wheel ----------
+  // Finger moves arrive faster than the screen draws (120 Hz+ on many phones): the camera follows every one,
+  // but the world is redrawn once per frame.
+  let applyRaf = 0;
+  const applySoon = () => { if (!applyRaf) applyRaf = requestAnimationFrame(() => { applyRaf = 0; apply(); }); };
+  const pointers = new Map();
+  let pan = null, pinch = null, spaceDown = false, lastType = 'mouse';
+  // a flick keeps the floor gliding and slowing down, like paper sliding on a table
+  let trail = [];
+  function fling() {
+    const now = performance.now(), last = trail[trail.length - 1];
+    const pts = last && now - last.t < 70 ? trail.filter((p) => last.t - p.t < 120) : []; // a finger that rested before lifting does not glide
+    trail = [];
+    if (pts.length < 2 || calmMotion()) return;
+    const a = pts[0], b = pts[pts.length - 1], dt = Math.max(1, b.t - a.t);
+    let vx = (b.x - a.x) / dt, vy = (b.y - a.y) / dt; // px per ms
+    const speed = Math.hypot(vx, vy);
+    if (speed < 0.35) return;
+    const cap = 4.5 / speed; if (cap < 1) { vx *= cap; vy *= cap; }
+    let t0 = now;
+    const step = (t) => {
+      const dt2 = Math.min(40, t - t0); t0 = t;
+      cam.tx += vx * dt2; cam.ty += vy * dt2;
+      const f = Math.pow(0.9945, dt2); vx *= f; vy *= f;
+      apply();
+      if (Math.hypot(vx, vy) > 0.02) anim = requestAnimationFrame(step);
+    };
+    anim = requestAnimationFrame(step);
+  }
+  // touch double tap: phones do not always send dblclick, so it is detected here (and the real one, if it
+  // follows, is ignored)
+  let lastTap = null, synthDbl = 0;
+  const onKey = (e) => { if (e.code === 'Space' && !e.target.closest?.('input, textarea, [contenteditable="true"]')) { spaceDown = e.type === 'keydown'; root.classList.toggle('grab', spaceDown); } };
+  window.addEventListener('keydown', onKey); window.addEventListener('keyup', onKey);
+  root.addEventListener('pointerdown', (e) => {
+    const pt = local(e);
+    lastType = e.pointerType;
+    pointers.set(e.pointerId, { ...pt, t0: performance.now(), sx: pt.x, sy: pt.y, ui: !!e.target.closest?.('button, input, textarea, select, a, label, [contenteditable="true"], .sf-overlay') });
+    cancelAnimationFrame(anim);
+    trail = [];
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pan = null;
+      pinch = { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1 };
+      root.dispatchEvent(new CustomEvent('sf-cancel'));
+      return;
+    }
+    if (pointers.size > 2) return;
+    const wantPan = e.button === 1 || spaceDown || !onPointerDown || onPointerDown(e, toWorld(pt.x, pt.y), pt) === 'pan';
+    if (wantPan && (e.button === 0 || e.button === 1)) {
+      root.setPointerCapture(e.pointerId);
+      pan = { sx: pt.x, sy: pt.y, tx: cam.tx, ty: cam.ty, moved: false };
+      root.classList.add('panning');
+    }
+  });
+  root.addEventListener('pointermove', (e) => {
+    const was = pointers.get(e.pointerId);
+    if (!was) return;
+    const pt = local(e);
+    pointers.set(e.pointerId, { ...was, x: pt.x, y: pt.y });
+    if (pinch && pointers.size >= 2) {
+      const [a, b] = [...pointers.values()];
+      const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const w = toWorld(pinch.cx, pinch.cy);
+      cam.k = clamp(cam.k * (d / pinch.d), minK, maxK);
+      // the point under the fingers stays under them: two fingers moving together pan
+      cam.tx = cx - w.x * cam.k; cam.ty = cy - w.y * cam.k;
+      pinch = { cx, cy, d };
+      applySoon();
+      return;
+    }
+    if (pan) {
+      if (!pan.moved && Math.hypot(pt.x - pan.sx, pt.y - pan.sy) > (e.pointerType === 'mouse' ? 3 : 6)) pan.moved = true;
+      cam.tx = pan.tx + pt.x - pan.sx; cam.ty = pan.ty + pt.y - pan.sy;
+      if (e.pointerType !== 'mouse') { trail.push({ t: performance.now(), x: pt.x, y: pt.y }); if (trail.length > 12) trail.shift(); }
+      applySoon();
+    }
+  });
+  const end = (e) => {
+    const p = pointers.get(e.pointerId);
+    pointers.delete(e.pointerId);
+    const wasPinch = !!pinch;
+    if (pointers.size < 2) pinch = null;
+    if (e.type === 'pointerup' && p && !p.ui && e.pointerType !== 'mouse' && !wasPinch && !pointers.size) {
+      const pt = local(e), now = performance.now();
+      const still = Math.hypot(pt.x - p.sx, pt.y - p.sy) < 10 && now - p.t0 < 350;
+      if (still && lastTap && now - lastTap.t < 330 && Math.hypot(pt.x - lastTap.x, pt.y - lastTap.y) < 32) {
+        lastTap = null; synthDbl = now;
+        onDoubleClick?.(e, toWorld(pt.x, pt.y));
+      } else lastTap = still ? { t: now, x: pt.x, y: pt.y } : null;
+    }
+    if (!pointers.size) {
+      if (pan && !pan.moved) root.dispatchEvent(new CustomEvent('sf-tap', { detail: { e, world: toWorld(pan.sx, pan.sy) } }));
+      else if (pan?.moved && e.type === 'pointerup') fling();
+      pan = null; root.classList.remove('panning');
+    }
+  };
+  root.addEventListener('pointerup', end);
+  root.addEventListener('pointercancel', end);
+  root.addEventListener('wheel', (e) => {
+    if (e.target.closest?.('.sf-scroll')) return; // let long notes scroll
+    e.preventDefault();
+    cancelAnimationFrame(anim);
+    const pt = local(e);
+    const mouseWheel = e.deltaMode !== 0 || (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 50);
+    if (e.ctrlKey || e.metaKey || mouseWheel) {
+      const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+      zoomAt(pt.x, pt.y, cam.k * Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015)));
+    } else { cam.tx -= e.deltaX; cam.ty -= e.deltaY; apply(); }
+  }, { passive: false });
+  root.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (lastType !== 'mouse' && e.pointerType !== 'mouse') return; // a long press already opened it (below)
+    const pt = local(e); onContext?.(e, toWorld(pt.x, pt.y));
+  });
+  root.addEventListener('dblclick', (e) => { if (performance.now() - synthDbl < 600) return; const pt = local(e); onDoubleClick?.(e, toWorld(pt.x, pt.y)); });
+  // long press on touch = context menu
+  let lp = null;
+  root.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return;
+    clearTimeout(lp?.t);
+    const start = { x: e.clientX, y: e.clientY };
+    lp = { start, t: setTimeout(() => { if (pointers.size === 1 && !(pan?.moved)) { const pt = local(e); pan = null; lastTap = null; root.classList.remove('panning'); haptic('heavy'); onContext?.(e, toWorld(pt.x, pt.y)); } }, 500) };
+  });
+  root.addEventListener('pointermove', (e) => { if (lp && Math.hypot(e.clientX - lp.start.x, e.clientY - lp.start.y) > 8) clearTimeout(lp.t); });
+  root.addEventListener('pointerup', () => clearTimeout(lp?.t));
+  root.addEventListener('pointercancel', () => clearTimeout(lp?.t));
+
+  function destroy() {
+    cancelAnimationFrame(anim); cancelAnimationFrame(applyRaf); ro.disconnect();
+    window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey);
+    root.remove();
+  }
+  return {
+    root, world, layer, under, flows, over, overlay, defs, id, cam,
+    get size() { return { W, H }; },
+    toWorld, toScreen, local, zoomAt, flyTo, fit, frameFor, centerOn, setGround, resize, destroy,
+    zoomBy: (f) => { const k = clamp(cam.k * f, minK, maxK); flyTo({ k, tx: W / 2 - ((W / 2 - cam.tx) / cam.k) * k, ty: H / 2 - ((H / 2 - cam.ty) / cam.k) * k }, 260); },
+    onCamera: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+    isPanning: () => !!pan?.moved || !!pinch,
+  };
+}
+
+// ---------- connections: pipes, tubes, painted lines and plain arrows ----------
+// style: { kind: 'line'|'tunnel'|'raised'|'drawn', path: 'curved'|'straight'|'elbow', dash: 'solid'|'dashed'|'dotted',
+//          start/end: 'none'|'arrow'|'triangle'|'dot'|'diamond'|'bar', color, width, flow, speed }
+export const LINK_DEFAULT = { kind: 'line', path: 'curved', dash: 'solid', start: 'none', end: 'arrow', color: '', width: 3, flow: false };
+
+// where a line from a box's centre towards a point leaves the box
+function edgePoint(b, tx, ty) {
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2, dx = tx - cx, dy = ty - cy;
+  if (!dx && !dy) return { x: cx, y: cy };
+  const sx = dx ? (b.w / 2) / Math.abs(dx) : Infinity, sy = dy ? (b.h / 2) / Math.abs(dy) : Infinity;
+  const s = Math.min(sx, sy);
+  return { x: cx + dx * s, y: cy + dy * s };
+}
+// a point on one side of a box: s is l/r/t/b, at runs 0..1 along that side (0.5 = the middle)
+const side = (b, s, at = 0.5) => {
+  const t = Math.max(0, Math.min(1, Number.isFinite(at) ? at : 0.5));
+  return { l: { x: b.x, y: b.y + b.h * t, nx: -1, ny: 0 }, r: { x: b.x + b.w, y: b.y + b.h * t, nx: 1, ny: 0 }, t: { x: b.x + b.w * t, y: b.y, nx: 0, ny: -1 }, b: { x: b.x + b.w * t, y: b.y + b.h, nx: 0, ny: 1 } }[s];
+};
+const SIDES = ['l', 'r', 't', 'b'];
+// the side and spot on a box nearest to a point: where a dragged connection end lands
+export function nearestSide(b, p) {
+  const d = { l: Math.abs(p.x - b.x), r: Math.abs(b.x + b.w - p.x), t: Math.abs(p.y - b.y), b: Math.abs(b.y + b.h - p.y) };
+  const s = SIDES.reduce((a, k) => (d[k] < d[a] ? k : a), 'l');
+  let at = s === 'l' || s === 'r' ? (p.y - b.y) / (b.h || 1) : (p.x - b.x) / (b.w || 1);
+  at = Math.max(0, Math.min(1, at));
+  return { side: s, at: Math.abs(at - 0.5) < 0.08 ? 0.5 : Math.round(at * 100) / 100 };
+}
+
+// a: box {x,y,w,h} (optionally pinned with side + at) or point {x,y}; b likewise.
+// bend: {x,y} moves the middle of the line. Returns { d, a:{x,y,ang}, b:{x,y,ang}, mid:{x,y} }
+export function route(A, B, path = 'curved', { gap = 0, center = false, bend = null } = {}) {
+  const isBox = (o) => o && o.w !== undefined;
+  const pinA = isBox(A) && SIDES.includes(A.side) ? side(A, A.side, A.at) : null, pinB = isBox(B) && SIDES.includes(B.side) ? side(B, B.side, B.at) : null;
+  const ca = pinA || (isBox(A) ? { x: A.x + A.w / 2, y: A.y + A.h / 2 } : A), cb = pinB || (isBox(B) ? { x: B.x + B.w / 2, y: B.y + B.h / 2 } : B);
+  const dx = cb.x - ca.x, dy = cb.y - ca.y, horiz = Math.abs(dx) >= Math.abs(dy);
+  const bx = bend ? bend.x || 0 : 0, by = bend ? bend.y || 0 : 0, bent = !center && (bx || by);
+  if (path === 'straight' || center) {
+    const p = center ? ca : pinA || (!isBox(A) ? ca : edgePoint(A, cb.x, cb.y)), q = center ? cb : pinB || (!isBox(B) ? cb : edgePoint(B, ca.x, ca.y));
+    if (center && path === 'curved') {
+      const k = 0.5;
+      const d = horiz ? `M${p.x},${p.y} C${p.x + dx * k},${p.y} ${q.x - dx * k},${q.y} ${q.x},${q.y}` : `M${p.x},${p.y} C${p.x},${p.y + dy * k} ${q.x},${q.y - dy * k} ${q.x},${q.y}`;
+      return { d, a: { ...p, ang: horiz ? (dx > 0 ? Math.PI : 0) : (dy > 0 ? -Math.PI / 2 : Math.PI / 2) }, b: { ...q, ang: horiz ? (dx > 0 ? 0 : Math.PI) : (dy > 0 ? Math.PI / 2 : -Math.PI / 2) }, mid: { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 } };
+    }
+    if (bent) {
+      // a gentle curve through the moved middle
+      const c = { x: (p.x + q.x) / 2 + 2 * bx, y: (p.y + q.y) / 2 + 2 * by };
+      const aa = Math.atan2(p.y - c.y, p.x - c.x), ab = Math.atan2(q.y - c.y, q.x - c.x);
+      const p2 = { x: p.x - Math.cos(aa) * gap, y: p.y - Math.sin(aa) * gap }, q2 = { x: q.x - Math.cos(ab) * gap, y: q.y - Math.sin(ab) * gap };
+      return { d: `M${p2.x},${p2.y} Q${c.x},${c.y} ${q2.x},${q2.y}`, a: { ...p2, ang: aa }, b: { ...q2, ang: ab }, mid: { x: (p.x + q.x) / 2 + bx, y: (p.y + q.y) / 2 + by } };
+    }
+    const ang = Math.atan2(q.y - p.y, q.x - p.x);
+    const p2 = { x: p.x + Math.cos(ang) * gap, y: p.y + Math.sin(ang) * gap }, q2 = { x: q.x - Math.cos(ang) * gap, y: q.y - Math.sin(ang) * gap };
+    return { d: `M${p2.x},${p2.y} L${q2.x},${q2.y}`, a: { ...p2, ang: ang + Math.PI }, b: { ...q2, ang }, mid: { x: (p2.x + q2.x) / 2, y: (p2.y + q2.y) / 2 } };
+  }
+  const sa = pinA || (isBox(A) ? side(A, horiz ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'b' : 't')) : { ...A, nx: horiz ? Math.sign(dx) || 1 : 0, ny: horiz ? 0 : Math.sign(dy) || 1 });
+  const sb = pinB || (isBox(B) ? side(B, horiz ? (dx > 0 ? 'l' : 'r') : (dy > 0 ? 't' : 'b')) : { ...B, nx: horiz ? -(Math.sign(dx) || 1) : 0, ny: horiz ? 0 : -(Math.sign(dy) || 1) });
+  const p = { x: sa.x + sa.nx * gap, y: sa.y + sa.ny * gap }, q = { x: sb.x + sb.nx * gap, y: sb.y + sb.ny * gap };
+  if (path === 'elbow') {
+    const r = 14;
+    let pts;
+    if (!pinA && !pinB) {
+      if (horiz) { const mx = (p.x + q.x) / 2 + bx; pts = [p, { x: mx, y: p.y }, { x: mx, y: q.y }, q]; }
+      else { const my = (p.y + q.y) / 2 + by; pts = [p, { x: p.x, y: my }, { x: q.x, y: my }, q]; }
+    } else {
+      // leave each pinned side straight out, then join with square corners
+      const stub = 22, p1 = { x: p.x + sa.nx * stub, y: p.y + sa.ny * stub }, q1 = { x: q.x + sb.nx * stub, y: q.y + sb.ny * stub };
+      const aH = sa.nx !== 0, bH = sb.nx !== 0;
+      let midPts;
+      if (aH && bH) { const mx = (p1.x + q1.x) / 2 + bx; midPts = [{ x: mx, y: p1.y }, { x: mx, y: q1.y }]; }
+      else if (!aH && !bH) { const my = (p1.y + q1.y) / 2 + by; midPts = [{ x: p1.x, y: my }, { x: q1.x, y: my }]; }
+      else if (aH) midPts = [{ x: q1.x, y: p1.y }];
+      else midPts = [{ x: p1.x, y: q1.y }];
+      pts = [p, p1, ...midPts, q1, q];
+    }
+    // drop repeated points and points in the middle of a straight run
+    pts = pts.filter((c, i) => i === 0 || Math.hypot(c.x - pts[i - 1].x, c.y - pts[i - 1].y) > 0.5);
+    pts = pts.filter((c, i) => i === 0 || i === pts.length - 1 || !((Math.abs(pts[i - 1].x - c.x) < 0.5 && Math.abs(pts[i + 1].x - c.x) < 0.5) || (Math.abs(pts[i - 1].y - c.y) < 0.5 && Math.abs(pts[i + 1].y - c.y) < 0.5)));
+    let d = `M${pts[0].x},${pts[0].y}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const a = pts[i - 1], c = pts[i], n = pts[i + 1];
+      const r1 = Math.min(r, Math.hypot(c.x - a.x, c.y - a.y) / 2, Math.hypot(n.x - c.x, n.y - c.y) / 2);
+      const u1 = { x: c.x - Math.sign(c.x - a.x) * r1, y: c.y - Math.sign(c.y - a.y) * r1 }, u2 = { x: c.x + Math.sign(n.x - c.x) * r1, y: c.y + Math.sign(n.y - c.y) * r1 };
+      d += ` L${u1.x},${u1.y} Q${c.x},${c.y} ${u2.x},${u2.y}`;
+    }
+    d += ` L${q.x},${q.y}`;
+    const k = Math.floor((pts.length - 1) / 2), m1 = pts[k], m2 = pts[Math.min(pts.length - 1, k + 1)];
+    return { d, a: { ...p, ang: Math.atan2(-sa.ny, -sa.nx) }, b: { ...q, ang: Math.atan2(-sb.ny, -sb.nx) }, mid: { x: (m1.x + m2.x) / 2, y: (m1.y + m2.y) / 2 } };
+  }
+  const dist = Math.hypot(q.x - p.x, q.y - p.y), off = Math.max(40, dist * 0.42);
+  // the curve's middle sits 3/4 of the way towards its control points, so move them a third more than the bend
+  const vx = bx / 0.75, vy = by / 0.75;
+  const c1 = { x: p.x + sa.nx * off + vx, y: p.y + sa.ny * off + vy }, c2 = { x: q.x + sb.nx * off + vx, y: q.y + sb.ny * off + vy };
+  const mid = { x: 0.125 * p.x + 0.375 * c1.x + 0.375 * c2.x + 0.125 * q.x, y: 0.125 * p.y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * q.y };
+  return { d: `M${p.x},${p.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${q.x},${q.y}`, a: { ...p, ang: Math.atan2(-sa.ny, -sa.nx) }, b: { ...q, ang: Math.atan2(-sb.ny, -sb.nx) }, mid };
+}
+
+function marker(g, kind, at, size, color, cls = '') {
+  if (!kind || kind === 'none') return;
+  const { x, y, ang } = at;
+  const t = `translate(${x} ${y}) rotate(${(ang * 180) / Math.PI})`;
+  const s = size;
+  const base = { transform: t, class: `sf-mark ${cls}` };
+  if (kind === 'arrow') svgEl('path', { ...base, d: `M${-s},${-s * 0.7} L0,0 L${-s},${s * 0.7}`, fill: 'none', stroke: color, 'stroke-width': Math.max(2, s / 3.2), 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);
+  else if (kind === 'triangle') svgEl('path', { ...base, d: `M${-s * 1.1},${-s * 0.65} L${s * 0.15},0 L${-s * 1.1},${s * 0.65} Z`, fill: color }, g);
+  else if (kind === 'dot') svgEl('circle', { ...base, cx: 0, cy: 0, r: s * 0.5, fill: color }, g);
+  else if (kind === 'diamond') svgEl('path', { ...base, d: `M0,0 L${-s * 0.75},${-s * 0.5} L${-s * 1.5},0 L${-s * 0.75},${s * 0.5} Z`, fill: color }, g);
+  else if (kind === 'bar') svgEl('path', { ...base, d: `M0,${-s * 0.7} L0,${s * 0.7}`, stroke: color, 'stroke-width': Math.max(2, s / 3), 'stroke-linecap': 'round' }, g);
+}
+
+// Draw one connection into group g (cleared first). r = route(); style as above; sid = surface id (for defs).
+export function drawLink(g, r, style, sid, { hot = false, dim = false, speed = 2.4, hitId, flowG = null } = {}) {
+  g.textContent = '';
+  if (flowG) { flowG.textContent = ''; flowG.setAttribute('class', `sf-flowg${hot ? ' hot' : ''}${dim ? ' dim' : ''}`); }
+  const st = { ...LINK_DEFAULT, ...style };
+  const col = st.color || 'var(--link, #ff8a3d)';
+  const w = Math.max(1, st.width);
+  g.setAttribute('class', `sf-link k-${st.kind}${hot ? ' hot' : ''}${dim ? ' dim' : ''}`);
+  const P = (attrs, parent = g) => svgEl('path', { d: r.d, fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', ...attrs }, parent);
+  // an animated light, or with animations off, still arrows pointing the way it flows
+  const F = (attrs, arrowColor = attrs.stroke, size = 5) => (calmMotion() ? arrowsAlong(flowG || g, r.d, arrowColor, size) : P(attrs, flowG || g));
+  const dash = st.dash === 'dashed' ? `${w * 3.2} ${w * 2.4}` : st.dash === 'dotted' ? `0.1 ${Math.max(6, w * 2.2)}` : null;
+  const flowDur = `${Math.max(0.6, speed)}s`;
+  if (st.kind === 'tunnel') {
+    const tw = Math.max(8, w);
+    P({ stroke: 'var(--sh-l)', 'stroke-width': tw + 3, transform: 'translate(0 1.6)' });
+    P({ stroke: 'var(--sh-d)', 'stroke-width': tw + 3, transform: 'translate(0 -1)', opacity: 0.55 });
+    const floor = svgEl('g', { filter: `url(#${sid}-inset)` }, g);
+    P({ stroke: 'var(--floor)', 'stroke-width': tw }, floor);
+    P({ stroke: `url(#${sid}-deep)`, 'stroke-width': tw }, floor);
+    if (st.flow) F({ stroke: col, 'stroke-width': Math.max(2.5, tw * 0.3), 'stroke-dasharray': '1 21', class: 'sf-flow sf-bead', style: `animation-duration:${flowDur}` }, col, Math.max(3.5, tw * 0.3));
+    else P({ stroke: col, 'stroke-width': Math.max(2, tw * 0.18), opacity: 0.55 });
+    marker(g, st.start, r.a, Math.max(9, tw * 0.9), col); marker(g, st.end, r.b, Math.max(9, tw * 0.9), col);
+  } else if (st.kind === 'raised') {
+    const tw = Math.max(8, w);
+    P({ stroke: '#000', 'stroke-width': tw, opacity: 0.22, transform: 'translate(3 6)', filter: `url(#${sid}-drop)` });
+    P({ stroke: 'var(--raise)', 'stroke-width': tw });
+    P({ stroke: col, 'stroke-width': tw * 0.42, opacity: 0.92, 'stroke-dasharray': dash });
+    P({ stroke: 'rgba(255,255,255,0.5)', 'stroke-width': Math.max(1.5, tw * 0.14), transform: `translate(0 ${-tw * 0.2})` });
+    if (st.flow) F({ stroke: '#fff', 'stroke-width': Math.max(2.5, tw * 0.26), 'stroke-dasharray': '1 21', class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 }, '#fff', Math.max(3.5, tw * 0.28));
+    marker(g, st.start, r.a, Math.max(10, tw), col); marker(g, st.end, r.b, Math.max(10, tw), col);
+  } else if (st.kind === 'drawn') {
+    const tw = Math.max(3, w * 0.6);
+    P({ stroke: col, 'stroke-width': tw, opacity: 0.35 });
+    if (st.flow) F({ stroke: col, 'stroke-width': tw, 'stroke-dasharray': '10 10', class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.95 }, col, Math.max(4, tw * 1.3));
+    if (st.flow && calmMotion()) P({ stroke: col, 'stroke-width': tw, opacity: 0.95 });
+    else P({ stroke: col, 'stroke-width': tw, 'stroke-dasharray': dash, opacity: 0.95 });
+    marker(g, st.start, r.a, Math.max(9, tw * 2.6), col); marker(g, st.end, r.b, Math.max(9, tw * 2.6), col);
+  } else {
+    P({ stroke: col, 'stroke-width': w, 'stroke-dasharray': dash, class: 'sf-line' });
+    if (st.flow) F({ stroke: 'var(--flow-bead, #fff)', 'stroke-width': Math.max(1.5, w * 0.7), 'stroke-dasharray': `1 ${Math.max(12, w * 5)}`, class: 'sf-flow', style: `animation-duration:${flowDur}`, opacity: 0.9 }, col, Math.max(4, w * 1.8));
+    marker(g, st.start, r.a, Math.max(9, w * 3), col); marker(g, st.end, r.b, Math.max(9, w * 3), col);
+  }
+  // wide invisible stroke so thin lines are easy to hover and tap
+  P({ stroke: 'transparent', 'stroke-width': Math.max(18, w + 14), class: 'sf-hit', 'data-link': hitId ?? '' });
+}
+
+export const calmMotion = () => typeof document !== 'undefined' && document.documentElement.dataset.motion === 'calm';
+// chevrons spaced along a path, each turned to the direction of travel
+function arrowsAlong(parent, d, color, size) {
+  const probe = svgEl('path', { d, fill: 'none', stroke: 'none' }, parent);
+  const len = probe.getTotalLength?.() || 0;
+  if (len < size * 4) { probe.remove(); return; }
+  const step = Math.max(38, size * 7), n = Math.min(40, Math.floor((len - step * 0.4) / step));
+  const sw = Math.max(1.6, size * 0.45);
+  for (let i = 0; i < Math.max(1, n); i++) {
+    const t = n ? step * (i + 0.75) : len / 2;
+    const a = probe.getPointAtLength(t), b = probe.getPointAtLength(Math.min(len, t + 1));
+    const ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+    svgEl('path', { d: `M${-size},${-size} L${size * 0.55},0 L${-size},${size}`, fill: 'none', stroke: color, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: 'sf-arrow', transform: `translate(${a.x.toFixed(1)} ${a.y.toFixed(1)}) rotate(${ang.toFixed(1)})` }, parent);
+  }
+  probe.remove();
+}
+
+export function drawLabel(g, r, text) {
+  if (!text) return;
+  const t = svgEl('text', { x: r.mid.x, y: r.mid.y, class: 'sf-label', 'text-anchor': 'middle', 'dominant-baseline': 'central' }, g);
+  t.textContent = text;
+}
