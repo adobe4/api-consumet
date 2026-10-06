@@ -625,3 +625,7 @@
 .pres-ptr-pick .emo-grid button { width: 44px; height: 44px; border-radius: 12px; border: 0; background: var(--bg); font-size: 26px; cursor: pointer; }
 .pres-ptr-pick .emo-grid button.on { box-shadow: 0 0 0 2px var(--accent); }
 .pres-ptr-pick small { color: var(--muted); }
+/* connection being re-attached: the item it will land on */
+.bi.link-target { outline: 2.5px dashed var(--accent); outline-offset: 4px; }
+.lnk-hd .ahd-a, .lnk-hd .ahd-b { background: var(--accent); box-shadow: 0 0 0 2.5px #fff, 2px 2px 6px var(--sh-d); }
+.lnk-hd .ahd-m { width: 13px; height: 13px; background: var(--raise); box-shadow: 0 0 0 2.5px var(--accent), 2px 2px 6px var(--sh-d); }

@@ -80,7 +80,7 @@ export function sanitizeBoard(input) {
       ...(idOk(it.parent) ? { parent: it.parent } : {}),
     });
   }
-  const end = (e) => { const o = obj(e); return idOk(o.item) ? { item: o.item, ...(typeof o.side === 'string' ? { side: str(o.side, 8) } : {}) } : { x: num(o.x), y: num(o.y) }; };
+  const end = (e) => { const o = obj(e); return idOk(o.item) ? { item: o.item, ...(['l', 'r', 't', 'b'].includes(o.side) ? { side: o.side, ...(Number.isFinite(o.at) ? { at: num(o.at, 0.5, 0, 1) } : {}) } : {}) } : { x: num(o.x), y: num(o.y) }; };
   const outLinks = [];
   for (const raw of links) {
     const l = obj(raw);
@@ -89,6 +89,7 @@ export function sanitizeBoard(input) {
     const s = obj(l.style);
     outLinks.push({
       id: l.id, from: end(l.from), to: end(l.to), label: str(l.label, 200),
+      ...(l.bend && (Number(l.bend.x) || Number(l.bend.y)) ? { bend: { x: num(l.bend.x, 0, -1e5, 1e5), y: num(l.bend.y, 0, -1e5, 1e5) } } : {}),
       style: {
         kind: pick(s.kind, LINK_KINDS, 'line'), path: pick(s.path, LINK_PATHS, 'curved'), dash: pick(s.dash, LINK_DASH, 'solid'),
         start: pick(s.start, LINK_ENDS, 'none'), end: pick(s.end, LINK_ENDS, 'arrow'), color: str(s.color, 30), width: num(s.width, 3, 1, 60), flow: !!s.flow,

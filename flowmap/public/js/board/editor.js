@@ -8,7 +8,7 @@ import { openBrainSettings } from '../brain-ui.js';
 import { snapshotBoard } from './snapshot.js';
 import { arrowBounds, ARROW_HEADS, ARROW_HEAD_LABEL } from './arrows.js';
 import { confirmDialog } from '../ui-common.js';
-import { createSurface, route, drawLink, drawLabel, svgEl, LINK_DEFAULT } from '../surface.js';
+import { createSurface, route, nearestSide, drawLink, drawLabel, svgEl, LINK_DEFAULT } from '../surface.js';
 import { makeItem, makeLink, newId, bounds, inside, PALETTE, DEFAULT_SIZE, CLIP_SIZE, FONT_PX } from '/shared/board.js';
 import { CLIP_DEFAULT, CLIP_LABEL, METAL_LABEL, clipSvg } from './clips.js';
 import { buildItem, contentKey, SHAPE_LABEL, TYPE_LABEL } from './items.js';
@@ -76,6 +76,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   sf.overlay.append(laserCanvas);
   const ctxBar = h('div', { class: 'bctx', hidden: true });
   sf.overlay.append(ctxBar);
+  const linkHd = h('div', { class: 'arw-hd lnk-hd', hidden: true }, ...['a', 'm', 'b'].map((p) => h('i', { class: `ahd lhd ahd-${p}`, 'data-p': p, title: p === 'm' ? 'Drag to bend (double-click to straighten)' : 'Drag onto any spot of an item, or the middle of it to let it pick the side. Drop on empty space to leave it loose.' })));
+  sf.layer.append(linkHd);
 
   // top bar
   const nameEl = h('div', { class: 'bd-name', contenteditable: readonly ? 'false' : 'true', spellcheck: 'false', title: readonly ? '' : 'Rename' }, raw(name));
@@ -259,7 +261,9 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const l = pts[pts.length - 1];
     return `${d} L${l[0]},${l[1]}`;
   }
-  const endBox = (end) => { if (end?.item) { const it = byId(end.item); return it ? { x: it.x, y: it.y, w: it.w, h: it.h } : null; } return end ? { x: end.x, y: end.y } : null; };
+  const endBox = (end) => { if (end?.item) { const it = byId(end.item); return it ? { x: it.x, y: it.y, w: it.w, h: it.h, ...(end.side ? { side: end.side, at: end.at ?? 0.5 } : {}) } : null; } return end ? { x: end.x, y: end.y } : null; };
+  const linkGap = (st) => (st.kind === 'line' ? 6 : 2);
+  const linkRoute = (l, bend = l.bend) => { const A = endBox(l.from), B = endBox(l.to); if (!A || !B) return null; const st = { ...LINK_DEFAULT, ...l.style }; return route(A, B, st.path, { gap: linkGap(st), bend }); };
   function renderLinks() {
     const seen = new Set();
     for (const l of data.links) {
@@ -269,13 +273,14 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       let g = linkEls.get(l.id);
       if (!g) { g = svgEl('g', {}, linkLayer); linkEls.set(l.id, g); }
       const st = { ...LINK_DEFAULT, ...l.style };
-      const r = route(A, B, st.path, { gap: st.kind === 'line' ? 6 : 2 });
+      const r = route(A, B, st.path, { gap: linkGap(st), bend: l.bend });
       drawLink(g, r, st, sf.id, { hot: sel.has(l.id), hitId: l.id, speed: 2.2 });
       g.style.setProperty('--link', st.color || 'var(--link-default)');
       drawLabel(g, r, l.label);
       g.dataset.id = l.id;
     }
     for (const [id, g] of [...linkEls]) if (!seen.has(id)) { g.remove(); linkEls.delete(id); }
+    placeLinkHandles();
   }
   function renderSlideNumbers() {
     for (const it of data.items) if (it.type === 'frame') {
@@ -295,6 +300,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     for (const [id, p] of inkEls) p.classList.toggle('sel', sel.has(id));
     for (const [id, g] of linkEls) g.classList.toggle('hot', sel.has(id));
     const its = [...sel].map(byId).filter(Boolean);
+    placeLinkHandles();
     if (!its.length || readonly) { selBox.hidden = true; ctxBar.hidden = true; placeArrowHandles(null); if (sel.size && [...sel].some(linkById)) showCtxBar(); return; }
     const single = its.length === 1 ? its[0] : null;
     const b = single ? { x0: single.x, y0: single.y, w: single.w, h: single.h } : bounds(its);
@@ -349,7 +355,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const its = [...sel].map(byId).filter(Boolean);
     let x, y;
     if (its.length) { const bb = bounds(its); const a = sf.toScreen(bb.x0 + bb.w / 2, bb.y0); x = a.x; y = a.y - 16; }
-    else { const l = [...sel].map(linkById).filter(Boolean)[0]; const A = endBox(l.from), B = endBox(l.to); const r = route(A, B, l.style?.path); const a = sf.toScreen(r.mid.x, r.mid.y); x = a.x; y = a.y - 24; }
+    else { const l = [...sel].map(linkById).filter(Boolean)[0]; const r = linkRoute(l); if (!r) return; const a = sf.toScreen(r.mid.x, r.mid.y); x = a.x; y = a.y - 24; }
     const { W } = sf.size, cw = ctxBar.offsetWidth || 300;
     ctxBar.style.left = `${Math.max(8, Math.min(W - cw - 8, x - cw / 2))}px`;
     ctxBar.style.top = `${Math.max(66, y - 48)}px`;
@@ -377,6 +383,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     const actBtn = e.target.closest('[data-act]:not([data-act="open-file"])'); // files open with a double-click, so they can still be dragged
     if (actBtn && e.button === 0) { itemAction(actBtn, e); return 'handled'; }
     if (e.target.closest('video, a')) return 'handled';
+    const lh = e.target.closest('.lhd');
+    if (lh) { startLinkHandle(e, lh.dataset.p); return 'handled'; }
     const ah = e.target.closest('.ahd');
     if (ah) { startArrowHandle(e, ah.dataset.p); return 'handled'; }
     const handle = e.target.closest('.hd');
@@ -1200,7 +1208,9 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   function linkPop(lks, btn) {
     const f = lks[0];
     const st = { ...LINK_DEFAULT, ...f.style };
-    openPop({ ...anchorFor(btn), title: '⤳ Connection', width: 430, body: linkStyleBody(st, (patch) => change(() => lks.forEach((l) => { l.style = { ...l.style, ...patch }; })), { fitWidth: true }) });
+    const pinned = lks.some((l) => l.bend || l.from?.side || l.to?.side);
+    const reset = pinned ? h('button', { type: 'button', class: 'btn sm', style: 'margin-top:10px', title: 'Let both ends pick the best side again and straighten the bend', onclick: () => { change(() => lks.forEach((l) => { delete l.bend; for (const k of ['from', 'to']) if (l[k]?.item) l[k] = { item: l[k].item }; })); closePop(); } }, '↺ Fit automatically') : null;
+    openPop({ ...anchorFor(btn), title: '⤳ Connection', width: 430, body: h('div', null, linkStyleBody(st, (patch) => change(() => lks.forEach((l) => { l.style = { ...l.style, ...patch }; })), { fitWidth: true }), reset, h('p', { class: 'phint' }, 'Drag the round ends onto any spot of an item, or drag the middle dot to bend it.')) });
   }
   function toggleMovable(its) { const v = !its.every((i) => i.data?.movable); change(() => its.forEach((i) => { i.data = { ...i.data, movable: v }; })); notify(v ? '✋ Movable: when the board is locked or presenting, this can be dragged around' : 'No longer movable when locked', 'info'); }
   // ---------- clips ----------
@@ -1420,6 +1430,44 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       : [h('p', { class: 'phint' }, 'No assets yet. Select something you designed, right-click (or tap ⋯) and choose “Save as asset…”.')]));
     paint();
     const m = openModal({ title: '🧩 My assets', body: grid, wide: true, actions: [{ label: 'Close' }] });
+  }
+
+  // ---------- connection handles: drag an end to any spot on any item (or open space), the middle to bend ----------
+  const oneLink = () => { if (readonly || staged() || sel.size !== 1) return null; return linkById([...sel][0]) || null; };
+  function placeLinkHandles() {
+    const l = drag?.kind === 'link-end' ? null : oneLink(), r = l && linkRoute(l);
+    linkHd.hidden = !r;
+    if (!r) return;
+    Object.assign(linkHd.style, { left: '0px', top: '0px', width: '0px', height: '0px', transform: '' });
+    [r.a, r.mid, r.b].forEach((p, i) => Object.assign(linkHd.children[i].style, { left: `${p.x}px`, top: `${p.y}px` }));
+  }
+  linkHd.addEventListener('dblclick', (e) => { const l = oneLink(); if (l && e.target.closest('.ahd-m') && l.bend) { e.stopPropagation(); change(() => { delete l.bend; }); } });
+  function startLinkHandle(e, which) {
+    const l = oneLink();
+    if (!l) return;
+    const key = which === 'a' ? 'from' : 'to', other = which === 'a' ? l.to : l.from;
+    begin(); drag = { kind: 'link-end' }; linkHd.hidden = true;
+    let hot = null;
+    const mark = (id) => { if (hot === id) return; if (hot) els.get(hot)?.classList.remove('link-target'); hot = id; if (id) els.get(id)?.classList.add('link-target'); };
+    track(e, (ev) => {
+      const p = wOf(ev);
+      if (which === 'm') {
+        const base = linkRoute(l, null);
+        if (!base) return;
+        const bx = p.x - base.mid.x, by = p.y - base.mid.y;
+        if (Math.hypot(bx, by) * sf.cam.k < 10) delete l.bend; else l.bend = { x: Math.round(bx), y: Math.round(by) };
+      } else {
+        const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.bi');
+        const it = el && byId(el.dataset.id);
+        if (it && it.type !== 'ink' && it.id !== other?.item) {
+          // near the middle: let it pick the best side by itself; near an edge: pin it right there
+          const cx = Math.abs(p.x - (it.x + it.w / 2)) / (it.w / 2), cy = Math.abs(p.y - (it.y + it.h / 2)) / (it.h / 2);
+          l[key] = cx < 0.4 && cy < 0.4 ? { item: it.id } : { item: it.id, ...nearestSide(it, p) };
+          mark(it.id);
+        } else { l[key] = { x: Math.round(p.x), y: Math.round(p.y) }; mark(null); }
+      }
+      renderLinks();
+    }, () => { mark(null); drag = null; commit(); updateSel(); placeLinkHandles(); });
   }
 
   // ---------- big arrows ----------

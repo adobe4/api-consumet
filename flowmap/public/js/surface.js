@@ -254,32 +254,70 @@ function edgePoint(b, tx, ty) {
   const s = Math.min(sx, sy);
   return { x: cx + dx * s, y: cy + dy * s };
 }
-const side = (b, s) => ({ l: { x: b.x, y: b.y + b.h / 2, nx: -1, ny: 0 }, r: { x: b.x + b.w, y: b.y + b.h / 2, nx: 1, ny: 0 }, t: { x: b.x + b.w / 2, y: b.y, nx: 0, ny: -1 }, b: { x: b.x + b.w / 2, y: b.y + b.h, nx: 0, ny: 1 } }[s]);
+// a point on one side of a box: s is l/r/t/b, at runs 0..1 along that side (0.5 = the middle)
+const side = (b, s, at = 0.5) => {
+  const t = Math.max(0, Math.min(1, Number.isFinite(at) ? at : 0.5));
+  return { l: { x: b.x, y: b.y + b.h * t, nx: -1, ny: 0 }, r: { x: b.x + b.w, y: b.y + b.h * t, nx: 1, ny: 0 }, t: { x: b.x + b.w * t, y: b.y, nx: 0, ny: -1 }, b: { x: b.x + b.w * t, y: b.y + b.h, nx: 0, ny: 1 } }[s];
+};
+const SIDES = ['l', 'r', 't', 'b'];
+// the side and spot on a box nearest to a point: where a dragged connection end lands
+export function nearestSide(b, p) {
+  const d = { l: Math.abs(p.x - b.x), r: Math.abs(b.x + b.w - p.x), t: Math.abs(p.y - b.y), b: Math.abs(b.y + b.h - p.y) };
+  const s = SIDES.reduce((a, k) => (d[k] < d[a] ? k : a), 'l');
+  let at = s === 'l' || s === 'r' ? (p.y - b.y) / (b.h || 1) : (p.x - b.x) / (b.w || 1);
+  at = Math.max(0, Math.min(1, at));
+  return { side: s, at: Math.abs(at - 0.5) < 0.08 ? 0.5 : Math.round(at * 100) / 100 };
+}
 
-// a: box {x,y,w,h} or point {x,y}; b likewise. Returns { d, a:{x,y,ang}, b:{x,y,ang}, mid:{x,y} }
-export function route(A, B, path = 'curved', { gap = 0, center = false } = {}) {
+// a: box {x,y,w,h} (optionally pinned with side + at) or point {x,y}; b likewise.
+// bend: {x,y} moves the middle of the line. Returns { d, a:{x,y,ang}, b:{x,y,ang}, mid:{x,y} }
+export function route(A, B, path = 'curved', { gap = 0, center = false, bend = null } = {}) {
   const isBox = (o) => o && o.w !== undefined;
-  const ca = isBox(A) ? { x: A.x + A.w / 2, y: A.y + A.h / 2 } : A, cb = isBox(B) ? { x: B.x + B.w / 2, y: B.y + B.h / 2 } : B;
+  const pinA = isBox(A) && SIDES.includes(A.side) ? side(A, A.side, A.at) : null, pinB = isBox(B) && SIDES.includes(B.side) ? side(B, B.side, B.at) : null;
+  const ca = pinA || (isBox(A) ? { x: A.x + A.w / 2, y: A.y + A.h / 2 } : A), cb = pinB || (isBox(B) ? { x: B.x + B.w / 2, y: B.y + B.h / 2 } : B);
   const dx = cb.x - ca.x, dy = cb.y - ca.y, horiz = Math.abs(dx) >= Math.abs(dy);
+  const bx = bend ? bend.x || 0 : 0, by = bend ? bend.y || 0 : 0, bent = !center && (bx || by);
   if (path === 'straight' || center) {
-    const p = center || !isBox(A) ? ca : edgePoint(A, cb.x, cb.y), q = center || !isBox(B) ? cb : edgePoint(B, ca.x, ca.y);
-    const ang = Math.atan2(q.y - p.y, q.x - p.x);
-    const p2 = { x: p.x + Math.cos(ang) * gap, y: p.y + Math.sin(ang) * gap }, q2 = { x: q.x - Math.cos(ang) * gap, y: q.y - Math.sin(ang) * gap };
+    const p = center ? ca : pinA || (!isBox(A) ? ca : edgePoint(A, cb.x, cb.y)), q = center ? cb : pinB || (!isBox(B) ? cb : edgePoint(B, ca.x, ca.y));
     if (center && path === 'curved') {
       const k = 0.5;
       const d = horiz ? `M${p.x},${p.y} C${p.x + dx * k},${p.y} ${q.x - dx * k},${q.y} ${q.x},${q.y}` : `M${p.x},${p.y} C${p.x},${p.y + dy * k} ${q.x},${q.y - dy * k} ${q.x},${q.y}`;
       return { d, a: { ...p, ang: horiz ? (dx > 0 ? Math.PI : 0) : (dy > 0 ? -Math.PI / 2 : Math.PI / 2) }, b: { ...q, ang: horiz ? (dx > 0 ? 0 : Math.PI) : (dy > 0 ? Math.PI / 2 : -Math.PI / 2) }, mid: { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 } };
     }
+    if (bent) {
+      // a gentle curve through the moved middle
+      const c = { x: (p.x + q.x) / 2 + 2 * bx, y: (p.y + q.y) / 2 + 2 * by };
+      const aa = Math.atan2(p.y - c.y, p.x - c.x), ab = Math.atan2(q.y - c.y, q.x - c.x);
+      const p2 = { x: p.x - Math.cos(aa) * gap, y: p.y - Math.sin(aa) * gap }, q2 = { x: q.x - Math.cos(ab) * gap, y: q.y - Math.sin(ab) * gap };
+      return { d: `M${p2.x},${p2.y} Q${c.x},${c.y} ${q2.x},${q2.y}`, a: { ...p2, ang: aa }, b: { ...q2, ang: ab }, mid: { x: (p.x + q.x) / 2 + bx, y: (p.y + q.y) / 2 + by } };
+    }
+    const ang = Math.atan2(q.y - p.y, q.x - p.x);
+    const p2 = { x: p.x + Math.cos(ang) * gap, y: p.y + Math.sin(ang) * gap }, q2 = { x: q.x - Math.cos(ang) * gap, y: q.y - Math.sin(ang) * gap };
     return { d: `M${p2.x},${p2.y} L${q2.x},${q2.y}`, a: { ...p2, ang: ang + Math.PI }, b: { ...q2, ang }, mid: { x: (p2.x + q2.x) / 2, y: (p2.y + q2.y) / 2 } };
   }
-  const sa = isBox(A) ? side(A, horiz ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'b' : 't')) : { ...A, nx: horiz ? Math.sign(dx) || 1 : 0, ny: horiz ? 0 : Math.sign(dy) || 1 };
-  const sb = isBox(B) ? side(B, horiz ? (dx > 0 ? 'l' : 'r') : (dy > 0 ? 't' : 'b')) : { ...B, nx: horiz ? -(Math.sign(dx) || 1) : 0, ny: horiz ? 0 : -(Math.sign(dy) || 1) };
+  const sa = pinA || (isBox(A) ? side(A, horiz ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'b' : 't')) : { ...A, nx: horiz ? Math.sign(dx) || 1 : 0, ny: horiz ? 0 : Math.sign(dy) || 1 });
+  const sb = pinB || (isBox(B) ? side(B, horiz ? (dx > 0 ? 'l' : 'r') : (dy > 0 ? 't' : 'b')) : { ...B, nx: horiz ? -(Math.sign(dx) || 1) : 0, ny: horiz ? 0 : -(Math.sign(dy) || 1) });
   const p = { x: sa.x + sa.nx * gap, y: sa.y + sa.ny * gap }, q = { x: sb.x + sb.nx * gap, y: sb.y + sb.ny * gap };
   if (path === 'elbow') {
     const r = 14;
     let pts;
-    if (horiz) { const mx = (p.x + q.x) / 2; pts = [p, { x: mx, y: p.y }, { x: mx, y: q.y }, q]; }
-    else { const my = (p.y + q.y) / 2; pts = [p, { x: p.x, y: my }, { x: q.x, y: my }, q]; }
+    if (!pinA && !pinB) {
+      if (horiz) { const mx = (p.x + q.x) / 2 + bx; pts = [p, { x: mx, y: p.y }, { x: mx, y: q.y }, q]; }
+      else { const my = (p.y + q.y) / 2 + by; pts = [p, { x: p.x, y: my }, { x: q.x, y: my }, q]; }
+    } else {
+      // leave each pinned side straight out, then join with square corners
+      const stub = 22, p1 = { x: p.x + sa.nx * stub, y: p.y + sa.ny * stub }, q1 = { x: q.x + sb.nx * stub, y: q.y + sb.ny * stub };
+      const aH = sa.nx !== 0, bH = sb.nx !== 0;
+      let midPts;
+      if (aH && bH) { const mx = (p1.x + q1.x) / 2 + bx; midPts = [{ x: mx, y: p1.y }, { x: mx, y: q1.y }]; }
+      else if (!aH && !bH) { const my = (p1.y + q1.y) / 2 + by; midPts = [{ x: p1.x, y: my }, { x: q1.x, y: my }]; }
+      else if (aH) midPts = [{ x: q1.x, y: p1.y }];
+      else midPts = [{ x: p1.x, y: q1.y }];
+      pts = [p, p1, ...midPts, q1, q];
+    }
+    // drop repeated points and points in the middle of a straight run
+    pts = pts.filter((c, i) => i === 0 || Math.hypot(c.x - pts[i - 1].x, c.y - pts[i - 1].y) > 0.5);
+    pts = pts.filter((c, i) => i === 0 || i === pts.length - 1 || !((Math.abs(pts[i - 1].x - c.x) < 0.5 && Math.abs(pts[i + 1].x - c.x) < 0.5) || (Math.abs(pts[i - 1].y - c.y) < 0.5 && Math.abs(pts[i + 1].y - c.y) < 0.5)));
     let d = `M${pts[0].x},${pts[0].y}`;
     for (let i = 1; i < pts.length - 1; i++) {
       const a = pts[i - 1], c = pts[i], n = pts[i + 1];
@@ -288,10 +326,13 @@ export function route(A, B, path = 'curved', { gap = 0, center = false } = {}) {
       d += ` L${u1.x},${u1.y} Q${c.x},${c.y} ${u2.x},${u2.y}`;
     }
     d += ` L${q.x},${q.y}`;
-    return { d, a: { ...p, ang: Math.atan2(-sa.ny, -sa.nx) }, b: { ...q, ang: Math.atan2(-sb.ny, -sb.nx) }, mid: { x: (pts[1].x + pts[2].x) / 2, y: (pts[1].y + pts[2].y) / 2 } };
+    const k = Math.floor((pts.length - 1) / 2), m1 = pts[k], m2 = pts[Math.min(pts.length - 1, k + 1)];
+    return { d, a: { ...p, ang: Math.atan2(-sa.ny, -sa.nx) }, b: { ...q, ang: Math.atan2(-sb.ny, -sb.nx) }, mid: { x: (m1.x + m2.x) / 2, y: (m1.y + m2.y) / 2 } };
   }
   const dist = Math.hypot(q.x - p.x, q.y - p.y), off = Math.max(40, dist * 0.42);
-  const c1 = { x: p.x + sa.nx * off, y: p.y + sa.ny * off }, c2 = { x: q.x + sb.nx * off, y: q.y + sb.ny * off };
+  // the curve's middle sits 3/4 of the way towards its control points, so move them a third more than the bend
+  const vx = bx / 0.75, vy = by / 0.75;
+  const c1 = { x: p.x + sa.nx * off + vx, y: p.y + sa.ny * off + vy }, c2 = { x: q.x + sb.nx * off + vx, y: q.y + sb.ny * off + vy };
   const mid = { x: 0.125 * p.x + 0.375 * c1.x + 0.375 * c2.x + 0.125 * q.x, y: 0.125 * p.y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * q.y };
   return { d: `M${p.x},${p.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${q.x},${q.y}`, a: { ...p, ang: Math.atan2(-sa.ny, -sa.nx) }, b: { ...q, ang: Math.atan2(-sb.ny, -sb.nx) }, mid };
 }
