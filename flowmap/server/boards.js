@@ -157,6 +157,11 @@ const LOOK_PROPS = {
   emoji: { type: 'string', description: 'For type=sticker. Prefer a line icon: i:arrow-right, i:arrow-left, i:arrow-up, i:arrow-down, i:check, i:x, i:star, i:flame, i:rocket, i:lightbulb, i:target, i:zap, i:trophy, i:heart, i:thumbs-up, i:circle-alert, i:sparkles, i:banknote, i:clock, i:pin, i:flag, i:megaphone (an emoji also works)' },
   url: { type: 'string', description: 'For type=image or type=link' }, back: { type: 'string', description: 'For type=flip: text on the back, one line per row' },
   items: { type: 'array', items: { type: 'string' }, description: 'For type=checklist: the rows (start a row with [x] to tick it)' },
+  every: { type: 'string', enum: ['hour', '2h', 'day', 'week'], description: 'For type=habit (how often it is ticked) or type=checklist (ticks reset each period and it warns when a whole period is missed)' },
+  length: { type: 'number', description: 'For type=habit: a challenge length in periods (e.g. 30 days, 180 for six months); 0 = forever' },
+  onMiss: { type: 'string', enum: ['mark', 'restart'], description: 'For type=habit: a missed period is marked red, or the challenge starts again' },
+  view: { type: 'string', enum: ['ring', 'bar', 'calendar', 'line', 'number'], description: 'For type=progress: how it looks. Connect a habit or checklist into it (connections) to feed it, or give value/target to count something yourself' },
+  value: { type: 'number', description: 'For type=progress without a habit: the current number' }, target: { type: 'number', description: 'For type=progress: the goal number' }, unit: { type: 'string', description: 'For type=progress: e.g. TZS, videos, km' },
   cover: { type: 'string', enum: HIDE_COVERS, description: 'For type=hide: a cover laid over other items that the viewer taps to reveal what is underneath. Good for quiz answers, prices, the next step.' },
   clip: { type: 'string', enum: CLIP_KINDS, description: 'For type=clip: a realistic paperclip, binder clip, push pin or tape strip that sits on top of a note, card or photo. Put it over the top edge of the thing it holds, rotate it a little.' },
   metal: { type: 'string', enum: CLIP_METALS, description: 'For type=clip: silver, gold, copper, black, or color (uses the item colour)' },
@@ -228,6 +233,18 @@ function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
   if (it.type === 'flip' && typeof o.back === 'string') d.back = o.back.slice(0, 4000);
   if (it.type === 'checklist' && Array.isArray(o.items)) d.items = o.items.slice(0, 40).map((t) => { const v = String(t?.t ?? t); const done = /^\s*\[x\]/i.test(v) || t?.done === true; return { t: v.replace(/^\s*\[[x ]?\]\s*/i, '').slice(0, 200), done }; });
   if (it.type === 'hide' && HIDE_COVERS_LIST.includes(o.cover)) d.cover = o.cover;
+  if ((it.type === 'habit' || it.type === 'checklist') && ['hour', '2h', 'day', 'week'].includes(o.every)) { d.every = o.every; if (it.type === 'checklist') d.since = Date.now(); }
+  if (it.type === 'habit') {
+    if (!d.start) { const t = new Date(); d.start = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; }
+    d.every ||= 'day'; d.log ||= {};
+    if (finite(o.length)) d.length = Math.max(0, Math.min(3650, Math.round(o.length)));
+    if (o.onMiss === 'mark' || o.onMiss === 'restart') d.onMiss = o.onMiss;
+  }
+  if (it.type === 'progress') {
+    if (['ring', 'bar', 'calendar', 'line', 'number'].includes(o.view)) d.view = o.view;
+    for (const k of ['value', 'target']) if (finite(o[k])) d[k] = o[k];
+    if (typeof o.unit === 'string') d.unit = o.unit.slice(0, 20);
+  }
   if (it.type === 'note') {
     if (PAPERS.includes(o.paper)) d.paper = o.paper;
     if (LIFTS.includes(o.lift)) d.lift = o.lift;

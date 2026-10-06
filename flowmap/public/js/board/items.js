@@ -6,6 +6,8 @@ import { KINDS } from '/shared/engine.js';
 import { fileUrl, videoUrl } from './files.js';
 import { clipSvg } from './clips.js';
 import { arrowPath } from './arrows.js';
+import { habitView, progressView } from './track-ui.js';
+import { checklistState, EVERY_LABEL } from './track.js';
 
 const star = (() => { const pts = []; for (let i = 0; i < 10; i++) { const r = i % 2 ? 22 : 50, a = (i / 10) * Math.PI * 2 - Math.PI / 2; pts.push(`${50 + Math.cos(a) * r},${52 + Math.sin(a) * r}`); } return `M${pts.join(' L')}Z`; })();
 export const SHAPE_PATHS = {
@@ -15,7 +17,7 @@ export const SHAPE_PATHS = {
 export const SHAPE_LABEL = { rect: '▭ Box', round: '▢ Rounded', pill: '⬭ Pill', ellipse: '◯ Circle', diamond: '◇ Diamond', triangle: '△ Triangle', hexagon: '⬡ Hexagon', star: '☆ Star', arrow: '➜ Arrow', bubble: '💬 Speech' };
 const NS = 'http://www.w3.org/2000/svg';
 
-export const TYPE_LABEL = { note: 'Sticky note', card: 'Card', text: 'Text', shape: 'Shape', frame: 'Frame', flip: 'Flip card', image: 'Image', video: 'Video', file: 'File', link: 'Link', project: 'Project', sticker: 'Sticker', ink: 'Drawing', checklist: 'Checklist', prompt: 'Prompt', hide: 'Hide', clip: 'Clip', media: 'Video or post', arrow: 'Arrow' };
+export const TYPE_LABEL = { note: 'Sticky note', card: 'Card', text: 'Text', shape: 'Shape', frame: 'Frame', flip: 'Flip card', image: 'Image', video: 'Video', file: 'File', link: 'Link', project: 'Project', sticker: 'Sticker', ink: 'Drawing', checklist: 'Checklist', habit: 'Habit', progress: 'Progress', prompt: 'Prompt', hide: 'Hide', clip: 'Clip', media: 'Video or post', arrow: 'Arrow' };
 // typed text goes in raw: what people write is never turned into icons
 const ed = (cls, text, field, placeholder) => h('div', { class: `ed ${cls}`, 'data-field': field, 'data-ph': placeholder || '' }, raw(text || ''));
 const ellipsis = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -120,12 +122,15 @@ function buildInner(it, ctx) {
     case 'sticker': { const t = it.text || 'i:star'; return [t.startsWith('i:') ? h('span', { class: 'emo ico' }, icon(t.slice(2))) : h('span', { class: 'emo' }, raw(t))]; }
     case 'checklist': {
       const items = d.items || [];
-      const done = items.filter((x) => x.done).length;
-      return [h('div', { class: 'ckh' }, ed('ttl', it.title, 'title', 'Checklist'), h('span', null, `${done}/${items.length}`)),
+      // a checklist that resets every day (or hour, week): only this period's ticks count
+      const cs = checklistState(d), on = cs.on, done = cs.done;
+      return [h('div', { class: 'ckh' }, ed('ttl', it.title, 'title', 'Checklist'), cs.every ? h('small', { class: 'ck-every', title: `Ticks reset: ${EVERY_LABEL[cs.every].toLowerCase()}` }, '↻') : null, h('span', null, `${done}/${items.length}`)),
         h('div', { class: 'meter' }, h('i', { style: { width: `${items.length ? (done / items.length) * 100 : 0}%` } })),
-        h('div', { class: 'cks sf-scroll' }, items.map((x, i) => h('label', { class: `ck${x.done ? ' on' : ''}` }, h('button', { type: 'button', class: `check${x.done ? ' on' : ''}`, 'data-act': 'check', 'data-i': i, 'aria-label': x.done ? 'Mark not done' : 'Mark done' }, x.done ? '✓' : ''), h('span', null, raw(x.t)))),
+        h('div', { class: 'cks sf-scroll' }, items.map((x, i) => h('label', { class: `ck${on[i] ? ' on' : ''}` }, h('button', { type: 'button', class: `check${on[i] ? ' on' : ''}`, 'data-act': 'check', 'data-i': i, 'aria-label': on[i] ? 'Mark not done' : 'Mark done' }, on[i] ? '✓' : ''), h('span', null, raw(x.t)))),
           ctx.readonly ? null : h('button', { type: 'button', class: 'ckadd', 'data-act': 'check-add' }, '＋ Add item'))];
     }
+    case 'habit': return habitView(it, ctx);
+    case 'progress': return progressView(it, ctx);
     case 'prompt': return [h('div', { class: 'prh' }, h('span', null, '✦'), ed('ttl', it.title, 'title', 'Prompt'), h('button', { type: 'button', class: 'btn sm primary', 'data-act': 'copy', title: 'Copy the prompt' }, '⧉ Copy')), ed('txt selectable sf-scroll', it.text, 'text', 'Write or paste a prompt…')];
     // a cover over other things: blurred, frosted, solid or striped; tapped away while presenting
     case 'clip': return [clipSvg(it)];

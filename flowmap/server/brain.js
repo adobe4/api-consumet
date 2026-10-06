@@ -415,6 +415,7 @@ TOOLKIT, pick what the content needs (use many kinds, not only cards):
 - card: title + details (style.finish "tinted" or "soft", style.radius 18).
 - note: real paper (paper: sticky, lined, spiral, grid, index, kraft, torn, aged; pin: tape, pin or clip; rot -3..3; style.hand for handwriting). Great for ideas, tips, reminders.
 - flip: front title, back lines (tap to reveal more). checklist: actionable steps (items). hide: a cover over an answer or price, tapped away while presenting.
+- habit: a task ticked every hour/day/week (every), optionally a challenge (length, onMiss mark|restart); progress: ring|bar|calendar|line|number fed by a habit or checklist connected into it, or counting value/target. Missed habits warn every item they connect to, so connect habits to the projects they feed.
 - sticker: a line icon "i:name" (rocket, target, flame, lightbulb, trophy, banknote, clock, check, x, star, zap, heart, megaphone, flag, gift, crown, sparkles, trending-up, arrow-right, arrow-down), 64-110px, in the accent colour.
 - clip: paperclip, binder, pin or tape laid over the top edge of a note, card or photo (rot -10..10). prompt: a copyable AI prompt with a Copy button. link: a web link card. image: a picture from a URL.
 - arrow: a big bold arrow (thickness 10-60, head triangle|wide|thin|round|bar|none, tail, bend -0.5..0.5) to point at what matters; stroke on anything (style.strokeW, strokeC, strokeD solid|dashed|dotted) for a crisp outlined look.
@@ -513,7 +514,7 @@ const PLAN_SPEC = `Answer with ONE JSON object and nothing else:
  "floor": "dots" | "grid" | "plain",                       (optional)
  "changes": [ { "id": "<item id>", ...fields to change } ],   (optional; "delete": true removes the item)
  "restyle": [ { "ids": [...] or "types": [...], "color": "#hex", "style": {...}, "rot": n } ],   (optional; same look on many items)
- "add": [ { "type": "note|card|text|shape|frame|flip|sticker|checklist|clip|hide|image|link|prompt", "ref": "name", "x": n, "y": n, "w": n, "h": n, ...fields } ],   (optional; x/y are absolute)
+ "add": [ { "type": "note|card|text|shape|frame|flip|sticker|checklist|habit|progress|clip|hide|image|link|prompt", "ref": "name", "x": n, "y": n, "w": n, "h": n, ...fields } ],   (optional; x/y are absolute)
  "connect": [ { "from": "<id or ref>", "to": "<id or ref>", "label": "", "kind": "line|tunnel|raised|drawn", "flow": true } ],   (optional)
  "connections": [ { "id": "<connection id>", "delete": true | "kind"/"dash"/"color"/"width"/"flow"/"label"... } ],   (optional)
  "slides": [ "<frame id or ref>" ]   (optional; frames to add to the presenting order)
