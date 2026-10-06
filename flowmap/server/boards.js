@@ -13,9 +13,21 @@ const MAX_FILE = 1_600_000; // decoded bytes
 const FILE_MIMES = /^(image\/(png|jpe?g|gif|webp|svg\+xml)|text\/[a-z.+-]+|application\/(json|pdf|x-subrip|markdown))$/;
 
 const parse = (s) => { try { return JSON.parse(s); } catch { return emptyBoard(); } };
+// a tiny picture of the board for its tile: up to 60 boxes, scaled into 0..1000
+const KIND = { frame: 'f', note: 'n', shape: 's', text: 't', sticker: 'k', image: 'i', media: 'i', video: 'i', arrow: 'a', clip: 'p' };
+function previewOf(d) {
+  const its = (d.items || []).filter((i) => i.type !== 'ink' && i.type !== 'clip');
+  if (!its.length) return null;
+  const x0 = Math.min(...its.map((i) => i.x)), y0 = Math.min(...its.map((i) => i.y));
+  const w = Math.max(1, Math.max(...its.map((i) => i.x + i.w)) - x0), h = Math.max(1, Math.max(...its.map((i) => i.y + i.h)) - y0);
+  const k = 1000 / Math.max(w, h);
+  const pick = [...its.filter((i) => i.type === 'frame'), ...its.filter((i) => i.type !== 'frame').sort((a, b) => b.w * b.h - a.w * a.h)].slice(0, 60);
+  const r = (v) => Math.round(v * k);
+  return { w: r(w), h: r(h), s: pick.map((i) => [KIND[i.type] || 'c', r(i.x - x0), r(i.y - y0), Math.max(2, r(i.w)), Math.max(2, r(i.h)), /^#[0-9a-f]{6}$/i.test(i.color || '') ? i.color : ''].concat(i.style?.finish === 'solid' ? [1] : [])) };
+}
 const summary = (r) => {
   const d = parse(r.data);
-  return { id: r.id, name: r.name, icon: r.icon, version: r.version, createdAt: r.created_at, updatedAt: r.updated_at, items: (d.items || []).length, slides: (d.order || []).length };
+  return { id: r.id, name: r.name, icon: r.icon, version: r.version, createdAt: r.created_at, updatedAt: r.updated_at, items: (d.items || []).length, slides: (d.order || []).length, pinned: !!r.pinned, demo: !!r.demo, shared: !!(r.share_mode && r.share_mode !== 'off'), preview: previewOf(d) };
 };
 export const boardOut = (r) => ({ ...summary(r), data: parse(r.data) });
 
@@ -23,7 +35,13 @@ const clean = (data) => { try { return sanitizeBoard(data); } catch (e) { if (e 
 const nameOf = (v, d = 'Untitled board') => String(v ?? '').trim().slice(0, 80) || d;
 
 export async function listBoards(q, uid) {
-  return (await q.all('SELECT * FROM boards WHERE user_id = ? ORDER BY updated_at DESC, id DESC', uid)).map(summary);
+  return (await q.all('SELECT * FROM boards WHERE user_id = ? ORDER BY pinned DESC, updated_at DESC, id DESC', uid)).map(summary);
+}
+// pin a board on top, or move it to the Demo shelf and back
+export async function setBoardFlags(q, uid, id, { pinned, demo } = {}) {
+  const r = await getBoard(q, uid, id);
+  await q.run('UPDATE boards SET pinned = ?, demo = ? WHERE id = ? AND user_id = ?', pinned === undefined ? r.pinned || 0 : pinned ? 1 : 0, demo === undefined ? r.demo || 0 : demo ? 1 : 0, r.id, uid);
+  return summary(await getBoard(q, uid, r.id));
 }
 export async function getBoard(q, uid, id) {
   const r = await q.get('SELECT * FROM boards WHERE id = ? AND user_id = ?', Number(id), uid);
@@ -49,9 +67,11 @@ export async function seedBoards(q, uid, boards = []) {
       const g = generateBoard(spec, bb ? { origin: { x: bb.x1 + 300, y: bb.y0 } } : undefined);
       d.items.push(...g.items); d.links.push(...g.links); d.order.push(...g.order);
     }
-    await createBoard(q, uid, { name: b.name, icon: b.icon, data: d });
+    const made = await createBoard(q, uid, { name: b.name, icon: b.icon, data: d });
+    if (DEMO_NAMES.has(b.name)) await q.run('UPDATE boards SET demo = 1 WHERE id = ?', made.id);
   }
 }
+const DEMO_NAMES = new Set(['Tutorial video', 'Course outline', 'Strategy map', 'Content workflow', 'Task board', '30-day plan', 'Map of my system']);
 // version: the version the client last saw. A different one means someone else saved in between.
 export async function saveBoard(q, uid, id, { name, icon, data, version } = {}) {
   const r = await getBoard(q, uid, id);
@@ -108,7 +128,7 @@ export async function getFile(q, uid, id) {
 
 // ---------- tools for AI agents (MCP) and the built-in AI ----------
 const BOARD_ARG = { type: 'string', description: 'Board id or name' };
-async function findBoard(q, uid, ref) {
+export async function findBoard(q, uid, ref) {
   const rows = await q.all('SELECT * FROM boards WHERE user_id = ?', uid);
   const n = Number(ref);
   const s = String(ref ?? '').trim().toLowerCase();
@@ -501,11 +521,16 @@ async function viewersOf(q, uid, boardId) {
   return (await q.all('SELECT id, label, first_seen, last_seen FROM board_viewers WHERE board_id = ? AND user_id = ? ORDER BY first_seen', boardId, uid))
     .map((v) => ({ id: v.id, label: v.label, firstSeen: v.first_seen, lastSeen: v.last_seen }));
 }
+// what people with the link may do: look (locked), tap (tick, reveal, move what is movable on their screen),
+// or edit (their changes are saved to this board); where it opens; when the link stops working
+const ACCESS = ['look', 'tap', 'edit'];
+const optsOf = (r) => { let o = {}; try { o = JSON.parse(r.share_opts || '{}'); } catch { o = {}; } return { access: ACCESS.includes(o.access) ? o.access : 'tap', start: o.start === 'present' ? 'present' : 'board', expires: o.expires || null }; };
+const expired = (o) => !!o.expires && new Date(o.expires).getTime() < Date.now();
 export async function shareInfo(q, uid, id) {
   const r = await getBoard(q, uid, id);
-  return { mode: r.share_mode || 'off', token: r.share_token || null, seats: r.share_seats || 0, hasPassword: !!r.share_pass, viewers: await viewersOf(q, uid, r.id) };
+  return { mode: r.share_mode || 'off', token: r.share_token || null, seats: r.share_seats || 0, hasPassword: !!r.share_pass, opts: optsOf(r), viewers: await viewersOf(q, uid, r.id) };
 }
-export async function setShare(q, uid, id, { mode, password, seats } = {}) {
+export async function setShare(q, uid, id, { mode, password, seats, access, start, expiresInDays } = {}) {
   const r = await getBoard(q, uid, id);
   const m = SHARE_MODES.includes(mode) ? mode : r.share_mode || 'off';
   let pass = r.share_pass || '';
@@ -515,7 +540,11 @@ export async function setShare(q, uid, id, { mode, password, seats } = {}) {
   }
   if (m === 'password' && !pass) throw new HttpError(400, 'Set a password for this link');
   const n = seats === undefined ? r.share_seats || 0 : Math.max(0, Math.min(100000, Math.round(Number(seats) || 0)));
-  await q.run('UPDATE boards SET share_mode = ?, share_pass = ?, share_seats = ?, share_token = COALESCE(share_token, ?) WHERE id = ? AND user_id = ?', m, pass, n, token(), r.id, uid);
+  const o = optsOf(r);
+  if (ACCESS.includes(access)) o.access = access;
+  if (start === 'present' || start === 'board') o.start = start;
+  if (expiresInDays !== undefined) { const dd = Number(expiresInDays); o.expires = dd > 0 ? new Date(Date.now() + Math.min(3650, dd) * 864e5).toISOString() : null; }
+  await q.run('UPDATE boards SET share_mode = ?, share_pass = ?, share_seats = ?, share_opts = ?, share_token = COALESCE(share_token, ?) WHERE id = ? AND user_id = ?', m, pass, n, JSON.stringify(o), token(), r.id, uid);
   return shareInfo(q, uid, r.id);
 }
 export async function resetShare(q, uid, id) {
@@ -534,12 +563,14 @@ async function sharedBoard(q, tok) {
   if (typeof tok !== 'string' || !/^[A-Za-z0-9_-]{8,40}$/.test(tok)) throw new HttpError(404, 'This link does not exist');
   const r = await q.get('SELECT * FROM boards WHERE share_token = ?', tok);
   if (!r || !r.share_mode || r.share_mode === 'off') throw new HttpError(404, 'This link is switched off or does not exist');
+  if (expired(optsOf(r))) throw new HttpError(410, 'This link has expired. Ask the owner for a new one.');
   return r;
 }
 export async function shareMeta(q, tok) {
   const r = await sharedBoard(q, tok);
   const used = (await q.get('SELECT COUNT(*) AS n FROM board_viewers WHERE board_id = ?', r.id)).n;
-  return { name: r.name, icon: r.icon, needsPassword: r.share_mode === 'password', limited: r.share_seats > 0, full: r.share_seats > 0 && used >= r.share_seats };
+  const o = optsOf(r);
+  return { name: r.name, icon: r.icon, needsPassword: r.share_mode === 'password', limited: r.share_seats > 0, full: r.share_seats > 0 && used >= r.share_seats, access: o.access, start: o.start };
 }
 export async function openShare(q, tok, { password, viewer, label } = {}, { tryPassword } = {}) {
   const r = await sharedBoard(q, tok);
@@ -556,7 +587,17 @@ export async function openShare(q, tok, { password, viewer, label } = {}, { tryP
     key = crypto.randomBytes(18).toString('base64url');
     await q.run('INSERT INTO board_viewers (user_id, board_id, hash, label) VALUES (?, ?, ?, ?)', r.user_id, r.id, hashKey(key), String(label || '').slice(0, 60));
   }
-  return { viewer: key, board: { id: r.id, name: r.name, icon: r.icon, data: parse(r.data) } };
+  return { viewer: key, opts: optsOf(r), board: { id: r.id, name: r.name, icon: r.icon, version: r.version, data: parse(r.data) } };
+}
+// someone with an edit link saves the board: only with their viewer key, and only when the owner allows edits
+export async function saveShared(q, tok, { viewer, data, version } = {}) {
+  const r = await sharedBoard(q, tok);
+  if (optsOf(r).access !== 'edit') throw new HttpError(403, 'This link is view only');
+  const known = viewer ? await q.get('SELECT * FROM board_viewers WHERE hash = ? AND board_id = ?', hashKey(viewer), r.id) : null;
+  if (!known) throw new HttpError(403, 'Open the link again to edit');
+  await q.run("UPDATE board_viewers SET last_seen = datetime('now') WHERE id = ?", known.id);
+  const out = await saveBoard(q, r.user_id, r.id, { data, version });
+  return { version: out.version };
 }
 export async function sharedFile(q, tok, viewer, fileId) {
   const r = await sharedBoard(q, tok);

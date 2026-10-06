@@ -66,18 +66,20 @@ function ask(meta, error = '') {
 async function enter({ password, label } = {}) {
   const r = await call('POST', `/api/share/${token}/open`, { viewer: store_ls.get(KEY, undefined), password, label });
   store_ls.set(KEY, r.viewer);
-  show(r.board, r.viewer);
+  show(r.board, r.viewer, r.opts || {});
 }
 
-function show(board, viewer) {
+function show(board, viewer, opts = {}) {
   document.title = `${board.name} · FlowMap`;
   gate.hidden = true;
   app.hidden = false;
   const host = document.getElementById('boards-host');
   const root = h('div', { class: 'boards' });
   host.append(root);
-  const ed = createEditor(root, { board: { ...board, version: 0 }, share: { token, viewer } });
+  const ed = createEditor(root, { board: { ...board, version: board.version || 0 }, share: { token, viewer, access: opts.access || 'tap' } });
   addEventListener('resize', () => ed.resize());
+  // the owner chose to open it as a presentation
+  if (opts.start === 'present') setTimeout(() => ed.present(), 600);
   ready();
 }
 
@@ -85,7 +87,7 @@ async function start() {
   if (!token) return dead('This link is not complete', 'Check that you copied the whole link.');
   let meta;
   try { meta = await call('GET', `/api/share/${token}`); }
-  catch (e) { return e.status === 404 ? dead('This link is off', 'The owner stopped sharing this board, or made a new link. Ask them for the new one.') : dead('Something went wrong', e.message); }
+  catch (e) { return e.status === 410 ? dead('This link has expired', 'Ask the owner for a new link.') : e.status === 404 ? dead('This link is off', 'The owner stopped sharing this board, or made a new link. Ask them for the new one.') : dead('Something went wrong', e.message); }
   // a browser that already has its place walks straight in
   if (store_ls.get(KEY, null)) {
     try { return await enter(); } catch { store_ls.del(KEY); }

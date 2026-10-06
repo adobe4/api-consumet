@@ -153,8 +153,11 @@ CREATE INDEX IF NOT EXISTS idx_board_assets_user ON board_assets(user_id);
 
 // columns added after the first release, for databases created before them
 const ADDED = [['users', 'secrets', "TEXT NOT NULL DEFAULT ''"], ['projects', 'sources', "TEXT NOT NULL DEFAULT '[]'"], ['tasks', 'source', "TEXT NOT NULL DEFAULT ''"], ['links', 'look', "TEXT NOT NULL DEFAULT '{}'"],
-  ['boards', 'share_token', 'TEXT'], ['boards', 'share_mode', "TEXT NOT NULL DEFAULT 'off'"], ['boards', 'share_pass', "TEXT NOT NULL DEFAULT ''"], ['boards', 'share_seats', 'INTEGER NOT NULL DEFAULT 0']];
-const VERSION = 4;
+  ['boards', 'share_token', 'TEXT'], ['boards', 'share_mode', "TEXT NOT NULL DEFAULT 'off'"], ['boards', 'share_pass', "TEXT NOT NULL DEFAULT ''"], ['boards', 'share_seats', 'INTEGER NOT NULL DEFAULT 0'],
+  ['boards', 'pinned', 'INTEGER NOT NULL DEFAULT 0'], ['boards', 'demo', 'INTEGER NOT NULL DEFAULT 0'], ['boards', 'share_opts', "TEXT NOT NULL DEFAULT '{}'"]];
+const VERSION = 5;
+// the example boards older accounts were given: they move into the Demo shelf (one tap moves them back)
+const DEMO_NAMES = ['Tutorial video', 'Course outline', 'Strategy map', 'Content workflow', 'Task board', '30-day plan', 'Map of my system'];
 
 const toArgs = (args) => args.map((a) => (a === undefined ? null : typeof a === 'boolean' ? Number(a) : a));
 const plain = (row) => (row ? Object.fromEntries(Object.entries(row)) : undefined);
@@ -211,6 +214,7 @@ export async function openDb({ url, authToken, dataDir } = {}) {
       // already there on databases created with the current schema
       await client.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`).catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
     }
+    if (v > 0 && v < 5) await db.run(`UPDATE boards SET demo = 1 WHERE name IN (${DEMO_NAMES.map(() => '?').join(',')})`, ...DEMO_NAMES);
     await db.run("INSERT OR REPLACE INTO flowmap_meta (key, value) VALUES ('schema', ?)", String(VERSION));
   }
   if (url.startsWith('file:')) {

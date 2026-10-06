@@ -7,6 +7,7 @@ import { scanAll, scanProject, dayIn } from './sync.js';
 import { goalProgress, groupOf } from '../shared/goals.js';
 import { lintBoard, BOARD_TOOLS, getBoard, saveBoard } from './boards.js';
 import { toCode, applyCode, CODE_GUIDE } from './boardcode.js';
+import { RESEARCH_TOOLS, RESEARCH_GUIDE } from './research.js';
 
 const round = (n, d = 0) => (Number.isFinite(n) ? Math.round(n * 10 ** d) / 10 ** d : null);
 const PROJECT_ARG = { type: 'string', description: 'Project id or name' };
@@ -188,7 +189,7 @@ export const TOOLS = [
     } },
 ];
 const CORE_TOOLS = TOOLS.slice(); // the daily review works on the system, not on boards
-TOOLS.push(...BOARD_TOOLS);
+TOOLS.push(...BOARD_TOOLS, ...RESEARCH_TOOLS);
 const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
 export async function callTool(ctx, name, args) {
@@ -211,7 +212,7 @@ export async function handleMcp(ctx, msg) {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: {} },
         serverInfo: { name: 'flowmap', title: 'FlowMap living system', version: '2.0.0' },
-        instructions: 'You are a neuron inside the owner\'s living success system (FlowMap). Call get_overview first. Then act: adjust numbers that are clearly wrong, write short notes, and give a few concrete tasks that raise the weakest projects that matter most. Money is in TZS. You can also build boards (create_board, add_to_board): slide decks for tutorial or strategy videos, workflows, mind maps, course outlines, plans.',
+        instructions: `You are a neuron inside the owner's living success system (FlowMap). Call get_overview first. Then act: adjust numbers that are clearly wrong, write short notes, and give a few concrete tasks that raise the weakest projects that matter most. Money is in TZS. You can also build boards (create_board, add_to_board): slide decks for tutorial or strategy videos, workflows, mind maps, course outlines, plans. To change a board, read it as code with get_board_code, edit it like a web page and send it back with edit_board_code. ${RESEARCH_GUIDE}`,
       });
     }
     case 'ping': return reply({});

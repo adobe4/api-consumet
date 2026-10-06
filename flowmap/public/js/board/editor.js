@@ -38,7 +38,10 @@ const TOOLS = [
 ];
 
 export function createEditor(host, { board, share = null, onBack, onRenamed }) {
-  const readonly = !!share;
+  // a shared link: "look" is locked, "tap" lets people tick and reveal on their own screen, "edit" saves to the board
+  const access = share ? share.access || 'tap' : 'owner';
+  const readonly = !!share && access !== 'edit';
+  const guest = !!share;
   let data = { v: 1, items: [], links: [], order: [], settings: {}, ...board.data };
   data.items ||= []; data.links ||= []; data.order ||= []; data.settings ||= {};
   let version = board.version, name = board.name, icon = board.icon || '';
@@ -84,9 +87,9 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   sf.layer.append(linkHd);
 
   // top bar
-  const nameEl = h('div', { class: 'bd-name', contenteditable: readonly ? 'false' : 'true', spellcheck: 'false', title: readonly ? '' : 'Rename' }, raw(name));
-  const iconBtn = h('button', { class: 'bd-icon', type: 'button', title: readonly ? '' : 'Change icon', onclick: (e) => !readonly && pickIcon(e.currentTarget) }, icon || '🧩');
-  const status = h('span', { class: 'bd-status' }, readonly ? 'View only' : 'Saved');
+  const nameEl = h('div', { class: 'bd-name', contenteditable: guest ? 'false' : 'true', spellcheck: 'false', title: guest ? '' : 'Rename' }, raw(name));
+  const iconBtn = h('button', { class: 'bd-icon', type: 'button', title: guest ? '' : 'Change icon', onclick: (e) => !guest && pickIcon(e.currentTarget) }, icon || '🧩');
+  const status = h('span', { class: 'bd-status' }, readonly ? (access === 'look' ? 'View only' : 'View and tap') : guest ? 'You can edit' : 'Saved');
   const undoBtn = h('button', { class: 'btn icon bd-editonly', type: 'button', title: 'Undo (Ctrl+Z)', onclick: () => doUndo() }, '↶');
   const lockBtn = h('button', { class: 'btn bd-lock', type: 'button', title: 'Lock the board (K): nothing can be edited, covers tap away and only things you marked movable move. For recording and explaining.', onclick: () => setLocked(!locked) }, h('span', { class: 'lk-ic' }, '🔓'), h('span', { class: 'lbl-txt' }, 'Lock'));
   const redoBtn = h('button', { class: 'btn icon bd-editonly', type: 'button', title: 'Redo (Ctrl+Shift+Z)', onclick: () => doRedo() }, '↷');
@@ -95,9 +98,9 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     iconBtn, nameEl, status, h('span', { class: 'spacer' }),
     readonly ? null : undoBtn, readonly ? null : redoBtn,
     readonly ? null : lockBtn,
-    readonly ? null : h('button', { class: 'btn bd-editonly bd-ai', type: 'button', title: 'Ask AI to change this board: restyle, tidy, add, rewrite', onclick: (e) => aiPop(e.currentTarget) }, '✨', h('span', { class: 'lbl-txt' }, 'AI')),
+    guest ? null : h('button', { class: 'btn bd-editonly bd-ai', type: 'button', title: 'Ask AI to change this board: restyle, tidy, add, rewrite', onclick: (e) => aiPop(e.currentTarget) }, '✨', h('span', { class: 'lbl-txt' }, 'AI')),
     h('button', { class: 'btn icon', type: 'button', title: 'Floor, grid and snapping', onclick: (e) => boardLook(e.currentTarget) }, '🎨'),
-    readonly ? null : h('button', { class: 'btn bd-editonly', type: 'button', title: 'Share a link to this board', onclick: () => openShareDialog(board) }, '🔗', h('span', { class: 'lbl-txt' }, 'Share')),
+    guest ? null : h('button', { class: 'btn bd-editonly', type: 'button', title: 'Share a link to this board', onclick: () => openShareDialog(board) }, '🔗', h('span', { class: 'lbl-txt' }, 'Share')),
     h('button', { class: 'btn bd-full', type: 'button', title: 'Full screen (F11)', onclick: () => toggleFull() }, '⛶'),
     h('button', { class: 'btn primary', type: 'button', title: 'Present: slides, laser, spotlight, pen', onclick: () => present() }, '▶', h('span', { class: 'lbl-txt' }, 'Present')));
   root.append(top);
@@ -178,7 +181,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     saving = true; status.textContent = 'Saving…'; status.dataset.s = 'saving';
     try {
       const out = stageBackup.size ? { ...data, items: data.items.map((i) => (stageBackup.has(i.id) ? { ...i, ...stageBackup.get(i.id) } : i)) } : data;
-      const r = await api('PUT', `/api/boards/${board.id}`, { name, icon, data: out, version });
+      const r = guest ? await api('PUT', `/api/share/${share.token}/board`, { viewer: share.viewer, data: out, version }) : await api('PUT', `/api/boards/${board.id}`, { name, icon, data: out, version });
       version = r.version; board.version = r.version;
       status.textContent = 'Saved'; status.dataset.s = 'ok';
     } catch (e) {
@@ -193,7 +196,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   async function flushSave() {
     for (let i = 0; i < 80 && saving; i++) await new Promise((r) => setTimeout(r, 100));
     const out = stageBackup.size ? { ...data, items: data.items.map((i) => (stageBackup.has(i.id) ? { ...i, ...stageBackup.get(i.id) } : i)) } : data;
-    const r = await api('PUT', `/api/boards/${board.id}`, { name, icon, data: out, version });
+    const r = guest ? await api('PUT', `/api/share/${share.token}/board`, { viewer: share.viewer, data: out, version }) : await api('PUT', `/api/boards/${board.id}`, { name, icon, data: out, version });
     version = r.version; board.version = r.version;
   }
 
@@ -499,7 +502,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   function stageDown(e, w) {
     const t = e.target;
     tapEl = null;
-    const act = t.closest('[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="check"], [data-act="open-link"], [data-act="tick"], [data-act="tick-part"], [data-act="cell"], [data-act="hb-cell"], [data-act="prog-inc"], [data-act="prog-dec"], [data-act^="tb-"], [data-act^="st-"], [data-act="inv-edit"], [data-act="inv-add"], [data-act="inv-del"], [data-act="inv-print"]');
+    const act = t.closest(access === 'look' ? '[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="open-link"], [data-act="inv-print"], [data-act="inv-copy"], [data-act^="st-"], [data-act="tb-show"]' : '[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="check"], [data-act="open-link"], [data-act="tick"], [data-act="tick-part"], [data-act="cell"], [data-act="hb-cell"], [data-act="prog-inc"], [data-act="prog-dec"], [data-act^="tb-"], [data-act^="st-"], [data-act="inv-edit"], [data-act="inv-add"], [data-act="inv-del"], [data-act="inv-print"]');
     if (act && e.button === 0) { itemAction(act, e); return 'handled'; }
     if (t.closest('video, a')) return 'handled';
     if (tool === 'laser' && !root.classList.contains('presenting')) { laserDown(e); return 'handled'; }
@@ -509,7 +512,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (tap === 'reveal') { reveal(it, el); return 'handled'; }
     if (it.data?.jump && !it.data?.movable && it.type !== 'flip') { onTap(e, () => jumpFrom(it)); return 'handled'; }
     if (it.type === 'flip') { flip(it, true); return 'handled'; }
-    if (tap === 'move' || it.data?.movable) { stageMove(e, w, it); return 'handled'; }
+    if ((tap === 'move' || it.data?.movable) && access !== 'look') { stageMove(e, w, it); return 'handled'; }
     if (it.type !== 'frame' && tap !== 'none') tapEl = el;
     return 'pan';
   }

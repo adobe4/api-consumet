@@ -932,3 +932,47 @@
 .copybox { width: 100%; font: 13px var(--mono); }
 .row.wrap { flex-wrap: wrap; }
 @media print { #print-root .inv { border-top-width: 8px; } }
+/* ---------- boards home: search, pinned on top, tiles with a little drawing of each board ---------- */
+.bh { align-items: center; }
+.bh-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bh-search { width: min(240px, 60vw) !important; padding: 9px 14px !important; border-radius: 999px !important; }
+.bh-actions .btn.on { box-shadow: var(--sunk-sm); color: var(--accent); }
+.bh-actions .cnt { margin-left: 6px; padding: 1px 7px; border-radius: 999px; font: 800 11px var(--sans, inherit); background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.boards > .ai-box { margin-bottom: 8px; }
+.bgrid-wrap { max-width: 1180px; margin: 0 auto; }
+.bgrid-wrap > .sec { font: 700 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; }
+.sec-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.seg.mini { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--bg); box-shadow: var(--sunk-sm); text-transform: none; letter-spacing: 0; }
+.seg.mini button { border: 0; background: transparent; padding: 4px 10px; border-radius: 8px; font: 700 12px var(--sans, inherit); color: var(--muted); cursor: pointer; }
+.seg.mini button.on { background: var(--face); color: var(--text); box-shadow: var(--raised-sm); }
+.bgrid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.bgrid.pinned { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.bt { padding: 10px 10px 14px; min-height: 0; align-content: start; gap: 3px; }
+.bt::before { content: none; }
+.bt-top { position: relative; height: 130px; border-radius: 15px; overflow: hidden; background-color: var(--bg); background-image: radial-gradient(circle, var(--dot) 1px, transparent 1.4px); background-size: 12px 12px; box-shadow: var(--sunk-sm); margin-bottom: 8px; }
+.bgrid.pinned .bt-top { height: 160px; }
+.bt-prev { position: absolute; inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px); }
+.bt-prev rect { --pc: var(--accent); fill: color-mix(in srgb, var(--face) 92%, var(--text)); }
+.bt-prev .p-f { fill: color-mix(in srgb, var(--pc) 10%, var(--face)); stroke: color-mix(in srgb, var(--pc) 45%, transparent); stroke-width: 6; }
+.bt-prev .p-n { fill: var(--pc, #ffd54a); }
+.bt-prev .p-s { fill: color-mix(in srgb, var(--pc) 75%, var(--face)); }
+.bt-prev .p-s.solid { fill: var(--pc); }
+.bt-prev .p-t { fill: color-mix(in srgb, var(--text) 35%, transparent); }
+.bt-prev .p-c { fill: var(--face); stroke: color-mix(in srgb, var(--pc) 50%, transparent); stroke-width: 5; }
+.bt-prev .p-i { fill: color-mix(in srgb, #8a7b6d 55%, var(--face)); }
+.bt-prev .p-k, .bt-prev .p-a { fill: var(--pc); }
+.bt .bi-ic { position: absolute; left: 10px; bottom: 8px; top: auto; font-size: 22px; line-height: 1; padding: 6px; border-radius: 12px; background: color-mix(in srgb, var(--face) 85%, transparent); box-shadow: var(--raised-sm); }
+.bt b { margin-top: 0; padding: 0 6px; }
+.bt small { padding: 0 6px; }
+.bt-shared { position: absolute; right: 10px; bottom: 8px; font-size: 13px; padding: 4px 6px; border-radius: 10px; background: color-mix(in srgb, var(--face) 85%, transparent); }
+.bt .bt-more { position: absolute; top: 16px; right: 16px; }
+.bt-pin { position: absolute; top: 16px; right: 56px; width: 32px; height: 32px; border: 0; border-radius: 10px; background: var(--face); box-shadow: var(--raised-sm); cursor: pointer; opacity: 0; transition: opacity 0.2s; font-size: 14px; }
+.bt:hover .bt-pin, .bt-pin.on, .bt:focus-within .bt-pin { opacity: 1; }
+.bt-pin:not(.on) { filter: grayscale(1); }
+.bt.is-pinned { box-shadow: var(--raised), 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+@media (hover: none) { .bt-pin { opacity: 1; } }
+.bempty { display: grid; gap: 4px; justify-items: center; text-align: center; padding: 30px 16px; border-radius: 22px; border: 2px dashed color-mix(in srgb, var(--text) 12%, transparent); color: var(--muted); }
+.bempty b { color: var(--text); }
+.demo-shelf > .sec { font: 700 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 6px 0 10px; }
+.demo-shelf .tpls { margin-bottom: 18px; }
+.bt .bt-move { justify-self: start; margin: 6px 6px 0; }

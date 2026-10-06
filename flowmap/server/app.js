@@ -9,7 +9,7 @@ import { designStep, DIRECTIONS } from './design.js';
 import { linkPreview } from './preview.js';
 import { sanitizeBoard } from '../shared/board.js';
 import { handleMcp, runBrain, runBoardAI, runBoardEdit, AI_PROVIDERS, aiKeyList, aiChain, publicKey, testAi, cfgOfKey, listModels, bestModel, withFallback } from './brain.js';
-import { listBoards, getBoard, boardOut, createBoard, seedBoards, saveBoard, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, sharedFile } from './boards.js';
+import { listBoards, getBoard, boardOut, createBoard, seedBoards, saveBoard, setBoardFlags, deleteBoard, duplicateBoard, addFile, getFile, shareInfo, setShare, resetShare, removeViewer, shareMeta, openShare, saveShared, sharedFile } from './boards.js';
 import { generateBoard } from '../shared/board.js';
 
 const safeJson = (s) => { try { return JSON.parse(s); } catch { return {}; } };
@@ -400,6 +400,7 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
     return { ...out, board: boardOut(await getBoard(db, user.id, b.id)) };
   }, { agents: false });
   route('GET', '/api/boards/:id', async ({ user, params }) => boardOut(await getBoard(db, user.id, params.id)));
+  route('PATCH', '/api/boards/:id/flags', async ({ user, params, body }) => setBoardFlags(db, user.id, params.id, { pinned: typeof body.pinned === 'boolean' ? body.pinned : undefined, demo: typeof body.demo === 'boolean' ? body.demo : undefined }));
   route('PUT', '/api/boards/:id', async ({ user, params, body }) => saveBoard(db, user.id, params.id, body));
   route('DELETE', '/api/boards/:id', async ({ user, params }) => deleteBoard(db, user.id, params.id));
   route('POST', '/api/boards/:id/duplicate', async ({ user, params }) => duplicateBoard(db, user.id, params.id));
@@ -412,6 +413,7 @@ export function createApp({ db, secret, openSignup = true, cronSecret = '', yout
   // public side of a shared link (no account needed)
   route('GET', '/api/share/:token', async ({ params }) => shareMeta(db, params.token), { auth: false });
   route('POST', '/api/share/:token/open', async ({ params, body, req }) => openShare(db, params.token, body, { tryPassword: () => authLimit(`share:${clientIp(req)}:${params.token}`) }), { auth: false });
+  route('PUT', '/api/share/:token/board', async ({ params, body }) => saveShared(db, params.token, body), { auth: false });
   route('GET', '/api/share/:token/files/:fid', async ({ params, query }) => sharedFile(db, params.token, query.get ? query.get('viewer') : query.viewer, params.fid), { auth: false });
 
   route('DELETE', '/api/notes/:id', async ({ user, params }) => {
