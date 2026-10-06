@@ -160,6 +160,12 @@ export function progressOf(src, data, now = Date.now()) {
   return { kind: 'manual', value, target, frac: target ? Math.max(0, Math.min(1, value / target)) : 0, history: d.history || [] };
 }
 
+// a goal fed by a table: this month's (or all time's) total against the target
+export function tableProgress(st, d) {
+  const target = Number(d?.target) || 0;
+  return { kind: 'table', value: st.value, target, frac: target ? Math.max(0, Math.min(1, st.value / target)) : 0, money: st.money };
+}
+
 // Board awareness: which items are late, and which items they feed (following connections forward)
 export function boardStatus(board, now = Date.now()) {
   const state = new Map(), late = [];

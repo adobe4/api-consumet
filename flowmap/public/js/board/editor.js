@@ -18,17 +18,19 @@ import { linkStyleBody } from '../looks.js';
 import { startPresenting } from './present.js';
 import { habitDefaults, habitState, tick as tickHabit, cycleCell, markChecklist, boardStatus, periodKey, EVERY, EVERY_LABEL } from './track.js';
 import { PROGRESS_VIEWS } from './track-ui.js';
+import { TABLE_TEMPLATES, TEMPLATE_LABEL, COL_TYPES, COL_LABEL, STAT_FNS, STAT_PERIODS, newCol, newRow, dateKey, invoiceDefaults, invoiceTotals, nextInvoiceNo, isNumeric, isMoney, toCSV } from './biz.js';
+import { STAT_VIEWS, invoiceBody, orderedRows } from './biz-ui.js';
 import { openShareDialog } from './share.js';
 import { openModal } from '../ui-common.js';
 
 const COLORS = ['', ...PALETTE];
 const ICON_STICKERS = ['arrow-right', 'arrow-left', 'arrow-up', 'arrow-down', 'arrow-up-right', 'mouse-pointer-click', 'pointer', 'check', 'x', 'circle-check', 'circle-x', 'star', 'flame', 'rocket', 'lightbulb', 'target', 'zap', 'trophy', 'crown', 'heart', 'thumbs-up', 'party-popper', 'sparkles', 'badge-check', 'circle-alert', 'circle-question-mark', 'info', 'trending-up', 'trending-down', 'banknote', 'clock', 'pin', 'flag', 'megaphone', 'bell', 'gift', 'eye', 'hand'].map((n) => `i:${n}`);
 const STICKERS = ['👉', '👈', '👆', '👇', '➡️', '⬅️', '⬆️', '⬇️', '↗️', '✅', '❌', '⭐', '🔥', '🚀', '💡', '🎯', '💰', '📈', '📉', '❤️', '👏', '🎉', '😂', '🤯', '😮', '⚠️', '❓', '❗', '💯', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '🎬', '📌', '🧠', '⏰'];
-const DEF_FINISH = { note: 'tinted', card: 'soft', shape: 'solid', frame: 'raised', flip: 'soft', image: 'soft', video: 'soft', file: 'soft', link: 'soft', project: 'soft', checklist: 'soft', prompt: 'soft', text: 'none', sticker: 'none', ink: 'none', hide: 'none', clip: 'none', arrow: 'none', media: 'soft', habit: 'soft', progress: 'soft' };
+const DEF_FINISH = { note: 'tinted', card: 'soft', shape: 'solid', frame: 'raised', flip: 'soft', image: 'soft', video: 'soft', file: 'soft', link: 'soft', project: 'soft', checklist: 'soft', prompt: 'soft', text: 'none', sticker: 'none', ink: 'none', hide: 'none', clip: 'none', arrow: 'none', media: 'soft', habit: 'soft', progress: 'soft', table: 'soft', stat: 'soft', invoice: 'soft' };
 const TOOLS = [
   ['select', '↖', 'Select & move (V)', 'v'], ['multi', 'i:square-dashed-mouse-pointer', 'Select several (M): tap items to add or remove them, drag a box around them', 'm'], ['hand', '✋', 'Move the board (H or hold Space)', 'h'],
   ['note', '🗒️', 'Sticky note (N)', 'n'], ['card', '▭', 'Card (C)', 'c'], ['text', 'i:type', 'Text (T)', 't'], ['shape', '◆', 'Shapes (S)', 's'],
-  ['frame', '▦', 'Frame / slide (F)', 'f'], ['flip', '🂠', 'Flip card', ''], ['checklist', '☑', 'Checklist', ''], ['habit', '🔁', 'Habit or daily task: tick it every day (or hour, week) and keep the streak', ''], ['progress', '◔', 'Progress: a ring, bar, calendar or line. Connect a habit or checklist into it, or count a number', ''], ['prompt', '✦', 'Prompt with copy button (P)', 'p'],
+  ['frame', '▦', 'Frame / slide (F)', 'f'], ['flip', '🂠', 'Flip card', ''], ['checklist', '☑', 'Checklist', ''], ['habit', '🔁', 'Habit or daily task: tick it every day (or hour, week) and keep the streak', ''], ['progress', '◔', 'Progress: a ring, bar, calendar or line. Connect a habit, checklist or table into it, or count a number', ''], ['table', '🧮', 'Table that adds itself up: sales, spending, debts, goals', ''], ['stat', '📊', 'Stat: totals from a table by month, year or category', ''], ['invoice', '🧾', 'Invoice you can print or save as PDF', ''], ['prompt', '✦', 'Prompt with copy button (P)', 'p'],
   ['hide', '🙈', 'Hide: a blur or cover you tap away to reveal (R)', 'r'],
   ['connector', '⤳', 'Connect (L)', 'l'], ['arrow', 'i:arrow-right', 'Big arrow (A): drag to draw, then bend it with the round handles', 'a'], ['line', '╱', 'Line (Shift+A): drag to draw, bend it like an arrow', ''], ['pen', '✏️', 'Draw (D)', 'd'], ['highlight', '🖍️', 'Highlighter', ''], ['eraser', '⌫', 'Eraser (E)', 'e'],
   ['sticker', '😀', 'Stickers & arrows', ''], ['clip', 'i:paperclip', 'Paper clips, pins & tape (U)', 'u'], ['image', '🖼️', 'Image: link or upload', 'i'], ['file', '📎', 'Attach a text file', ''], ['video', '🎬', 'Video from this device', ''],
@@ -225,12 +227,13 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   }
   // ---------- trackers: what feeds a progress view, when to redraw, and warnings ----------
   let watch = { state: new Map(), late: [], hurt: new Map() };
-  const TRACKED = ['habit', 'checklist', 'progress'];
+  const TRACKED = ['habit', 'checklist', 'progress', 'stat'];
   function sourceOf(it) {
+    const kinds = it.type === 'stat' ? ['table'] : ['habit', 'checklist', 'table'];
     const id = it.data?.source;
-    if (id) { const s = byId(id); if (s) return s; }
-    for (const l of data.links) if (l.to?.item === it.id && l.from?.item) { const s = byId(l.from.item); if (s && ['habit', 'checklist'].includes(s.type)) return s; }
-    for (const l of data.links) if (l.from?.item === it.id && l.to?.item) { const s = byId(l.to.item); if (s && s.type === 'habit') return s; }
+    if (id) { const s = byId(id); if (s && kinds.includes(s.type)) return s; }
+    for (const l of data.links) if (l.to?.item === it.id && l.from?.item) { const s = byId(l.from.item); if (s && kinds.includes(s.type)) return s; }
+    for (const l of data.links) if (l.from?.item === it.id && l.to?.item) { const s = byId(l.to.item); if (s && (s.type === 'habit' || s.type === 'table')) return s; }
     return null;
   }
   // trackers change with the clock (a new day, hours left), and progress follows whatever feeds it
@@ -240,6 +243,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (it.type === 'checklist') return it.data?.every ? periodKey(it.data.every, t) : '';
     const clock = `${periodKey('hour', t)}:${Math.floor(new Date(t).getMinutes() / 10)}`;
     if (it.type === 'habit') return clock;
+    if (it.type === 'stat') { const src = sourceOf(it); return `${dateKey()}|${src ? JSON.stringify([src.id, src.title, src.data]) : ''}`; }
     const src = sourceOf(it);
     return `${clock}|${src ? JSON.stringify([src.id, src.title, src.data]) : ''}`;
   }
@@ -279,7 +283,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   const trackTimer = setInterval(() => { if (!destroyed && !drag && editing == null && data.items.some((i) => TRACKED.includes(i.type))) render(); }, 60000);
   function layout(el, it) {
     const s = it.style || {};
-    el.className = `bi t-${it.type} fin-${finishOf(it)} sh-${s.shadow || 'raised'} f-${s.font || 'm'} al-${s.align || (it.type === 'text' || it.type === 'prompt' ? 'left' : 'center')}${s.weight >= 700 ? ' bold' : ''}${s.muted ? ' muted' : ''}${it.locked ? ' locked' : ''}${sel.has(it.id) ? ' sel' : ''}${it.anim?.loop && it.anim.loop !== 'none' ? ` lp-${it.anim.loop}` : ''}${it.type === 'shape' ? ` sh-${it.data?.shape || 'round'}` : ''}${it.type === 'flip' && it.data?.flipped ? ' flipped' : ''}${editing === it.id ? ' editing' : ''}${it.type === 'hide' ? ` cv-${it.data?.cover || 'blur'} tap-${it.data?.tap || 'reveal'}` : ''}${it.data?.movable ? ' movable' : ''}${revealed.has(it.id) ? ' revealed' : ''}${it.type === 'note' ? ` pp-${it.data?.paper || 'sticky'} lift-${it.data?.lift || 'lifted'}` : ''}${s.hand ? ' hand' : ''}`;
+    el.className = `bi t-${it.type} fin-${finishOf(it)} sh-${s.shadow || 'raised'} f-${s.font || 'm'} al-${s.align || (['text', 'prompt', 'table', 'stat', 'habit', 'invoice'].includes(it.type) ? 'left' : 'center')}${s.weight >= 700 ? ' bold' : ''}${s.muted ? ' muted' : ''}${it.locked ? ' locked' : ''}${sel.has(it.id) ? ' sel' : ''}${it.anim?.loop && it.anim.loop !== 'none' ? ` lp-${it.anim.loop}` : ''}${it.type === 'shape' ? ` sh-${it.data?.shape || 'round'}` : ''}${it.type === 'flip' && it.data?.flipped ? ' flipped' : ''}${editing === it.id ? ' editing' : ''}${it.type === 'hide' ? ` cv-${it.data?.cover || 'blur'} tap-${it.data?.tap || 'reveal'}` : ''}${it.data?.movable ? ' movable' : ''}${revealed.has(it.id) ? ' revealed' : ''}${it.type === 'note' ? ` pp-${it.data?.paper || 'sticky'} lift-${it.data?.lift || 'lifted'}` : ''}${s.hand ? ' hand' : ''}`;
     const stt = watch.state.get(it.id), hurt = watch.hurt.get(it.id);
     const warn = stt === 'late' || stt === 'restarted' ? 'late' : hurt ? 'hurt' : '';
     if (warn) el.classList.add(`st-${warn}`);
@@ -407,6 +411,9 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (its.length === 1 && first.type === 'habit') kids.push(b(habitPop, '🗓', 'Schedule, challenge length and rules'), b(() => addProgressFor(first), '◔', 'Add a progress view (calendar, ring, line) fed by this habit'));
       if (its.length === 1 && first.type === 'progress') kids.push(b(progressPop, '◔', 'Progress: how it looks and what feeds it'));
       if (its.length === 1 && first.type === 'checklist') kids.push(b(checkSchedPop, '↻', 'Reset ticks every day, hour or week, and warn when missed'));
+      if (its.length === 1 && first.type === 'table') kids.push(b(tablePop, '🧮', 'Columns, formulas, currency, export'), b(() => addStatFor(first), '📊', 'Add a stat (totals by month, year or category) for this table'));
+      if (its.length === 1 && first.type === 'stat') kids.push(b(statPop, '📊', 'What it counts, period, filter and look'));
+      if (its.length === 1 && first.type === 'invoice') kids.push(b(invoicePop, '🧾', 'Status, tax, discount, print, next invoice'));
       if (its.length === 1 && first.type !== 'ink') kids.push(h('button', { type: 'button', class: `cb${first.data?.jump ? ' on' : ''}`, title: 'Jump link: tap it to glide to another place on the board', onclick: (e) => { e.stopPropagation(); jumpPop(e.currentTarget); } }, '⌖'));
       kids.push(h('button', { type: 'button', class: `cb${its.every((i) => i.data?.movable) ? ' on' : ''}`, title: 'Movable when the board is locked or presenting', onclick: (e) => { e.stopPropagation(); toggleMovable(its); } }, '✋'));
       if (its.length === 1 && first.type === 'frame') kids.push(b(() => toggleSlide(first), data.order.includes(first.id) ? '★' : '☆', data.order.includes(first.id) ? 'Remove from slides' : 'Add to slides'));
@@ -461,7 +468,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     if (tool === 'pen' || tool === 'highlight') { startInk(e, w); return 'handled'; }
     if (tool === 'eraser') { startErase(e); return 'handled'; }
     if (tool === 'connector') { startConnect(e, w, hitItem(e)); return 'handled'; }
-    if (['note', 'card', 'text', 'shape', 'frame', 'flip', 'checklist', 'prompt', 'sticker', 'link', 'hide', 'clip', 'habit', 'progress'].includes(tool)) { startCreate(e, w); return 'handled'; }
+    if (['note', 'card', 'text', 'shape', 'frame', 'flip', 'checklist', 'prompt', 'sticker', 'link', 'hide', 'clip', 'habit', 'progress', 'table', 'stat', 'invoice'].includes(tool)) { startCreate(e, w); return 'handled'; }
     const itId = hitItem(e);
     const lkId = e.target.closest?.('[data-link]')?.dataset.link;
     const multi = tool === 'multi';
@@ -492,7 +499,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
   function stageDown(e, w) {
     const t = e.target;
     tapEl = null;
-    const act = t.closest('[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="check"], [data-act="open-link"], [data-act="tick"], [data-act="tick-part"], [data-act="cell"], [data-act="prog-inc"], [data-act="prog-dec"]');
+    const act = t.closest('[data-act="copy"], [data-act="open-attach"], [data-act="open-file"], [data-act="check"], [data-act="open-link"], [data-act="tick"], [data-act="tick-part"], [data-act="cell"], [data-act="prog-inc"], [data-act="prog-dec"], [data-act^="tb-"], [data-act^="st-"], [data-act="inv-edit"], [data-act="inv-add"], [data-act="inv-del"], [data-act="inv-print"]');
     if (act && e.button === 0) { itemAction(act, e); return 'handled'; }
     if (t.closest('video, a')) return 'handled';
     if (tool === 'laser' && !root.classList.contains('presenting')) { laserDown(e); return 'handled'; }
@@ -714,6 +721,9 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (type === 'prompt') { it.title = 'Prompt'; }
       if (type === 'habit') { it.title = 'Daily habit'; it.data = habitDefaults(); }
       if (type === 'progress') { it.data = { view: 'ring' }; }
+      if (type === 'table') { const tp = TABLE_TEMPLATES.sales(); it.title = tp.title; it.data = { cols: tp.cols, rows: [], currency: 'TZS', fresh: true }; }
+      if (type === 'stat') { const tb = data.items.filter((i) => i.type === 'table'); it.data = { view: 'months', ...(tb.length === 1 ? { source: tb[0].id } : {}) }; }
+      if (type === 'invoice') { const last = data.items.filter((i) => i.type === 'invoice').pop(); it.data = { ...invoiceDefaults(), ...(last ? { no: nextInvoiceNo(last.data?.no), from: last.data?.from, currency: last.data?.currency, pay: last.data?.pay, taxPct: last.data?.taxPct } : {}) }; it.style = { shadow: 'float' }; }
       if (type === 'hide') { it.title = 'Tap to reveal'; it.data = { cover: 'blur', tap: 'reveal' }; it.anim = {}; }
       if (type === 'link') { it.data.url = ''; }
       if (type === 'clip') { [it.w, it.h] = CLIP_SIZE[clipKind]; it.x = snap(w.x - it.w / 2); it.y = snap(w.y - it.h / 2); it.data = { kind: clipKind, metal: clipMetal }; it.color = clipColor; it.rot = clipKind === 'tape' ? -3 : -8; it.anim = {}; }
@@ -738,6 +748,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       if (!toolLock) setTool('select');
       if (['note', 'card', 'text', 'prompt', 'frame'].includes(type)) startEdit(it.id);
       if (type === 'link') setTimeout(() => linkUrlPrompt(it), 60);
+      if (type === 'table') setTimeout(() => { select([it.id]); tablePop(); }, 80);
     });
   }
   function startConnect(e, w, fromId) {
@@ -856,6 +867,8 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
         if (readonly) { target.data = next; render(); return; } // a shared view ticks only on this screen
         change(() => { target.data = next; });
         if (next.log?.[key] === 'done') { const r = btn.getBoundingClientRect(); burstAt(r.left + r.width / 2, r.top + r.height / 2); }
+      } else if (act.startsWith('tb-') || act.startsWith('st-') || act.startsWith('inv-')) {
+        bizAction(it, act, btn);
       } else if (act === 'prog-inc' || act === 'prog-dec') {
         const d = it.data || {}, step = (Number(d.step) || 1) * (act === 'prog-inc' ? 1 : -1);
         const value = Math.round(((Number(d.value) || 0) + step) * 1000) / 1000;
@@ -1301,6 +1314,174 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
     openPop({ ...anchorFor(btn), title: '⤳ Connection', width: 430, body: h('div', null, linkStyleBody(st, (patch) => change(() => lks.forEach((l) => { l.style = { ...l.style, ...patch }; })), { fitWidth: true }), reset, h('p', { class: 'phint' }, 'Drag the round ends onto any spot of an item, or drag the middle dot to bend it.')) });
   }
   function toggleMovable(its) { const v = !its.every((i) => i.data?.movable); change(() => its.forEach((i) => { i.data = { ...i.data, movable: v }; })); notify(v ? '✋ Movable: when the board is locked or presenting, this can be dragged around' : 'No longer movable when locked', 'info'); }
+  // ---------- business tools: tables, stats, invoices ----------
+  // a small input laid over a cell or field; Enter or leaving saves, Esc cancels, Tab moves on
+  let inline = null;
+  function closeInline(commit) { if (!inline) return; const x = inline; inline = null; x.box.remove(); if (commit && x.input.value !== x.start) x.save(x.input.value); }
+  function inlineEdit(find, { value, kind = 'text', options = null }, save, onTab) {
+    closeInline(true); // saving the last field redraws the item, so look for the new one only after
+    const target = find();
+    if (!target) return;
+    const r = target.getBoundingClientRect(), R = sf.overlay.getBoundingClientRect();
+    const input = kind === 'multi' ? h('textarea', { rows: 3 }) : h('input', { type: kind === 'date' ? 'date' : 'text', inputmode: kind === 'number' ? 'decimal' : null, autocomplete: 'off' });
+    let list = null;
+    if (options?.length) { const id = `dl${Math.random().toString(36).slice(2, 7)}`; list = h('datalist', { id }, options.map((o) => h('option', { value: o }))); input.setAttribute('list', id); }
+    input.value = value ?? '';
+    const box = h('div', { class: `inl-ed k-${kind}`, style: { left: `${r.left - R.left}px`, top: `${r.top - R.top}px`, minWidth: `${Math.max(r.width, kind === 'multi' ? 260 : 140)}px`, minHeight: `${r.height}px` }, onpointerdown: (e) => e.stopPropagation() }, input, list);
+    sf.overlay.append(box);
+    inline = { input, box, save, start: input.value };
+    input.focus(); if (kind !== 'date') input.select?.();
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); closeInline(false); }
+      else if (e.key === 'Enter' && (kind !== 'multi' || e.ctrlKey || e.metaKey)) { e.preventDefault(); closeInline(true); }
+      else if (e.key === 'Tab' && onTab) { e.preventDefault(); const v = input.value, st = inline?.start; inline = null; box.remove(); if (v !== st) save(v); setTimeout(() => onTab(e.shiftKey), 0); }
+    });
+    input.addEventListener('blur', () => setTimeout(() => { if (inline?.input === input) closeInline(true); }, 120));
+  }
+  const toNum = (v) => { const n = Number(String(v).replace(/[,\s_]/g, '')); return Number.isFinite(n) ? n : ''; };
+  const cellEl = (it, r, c) => els.get(it.id)?.querySelector(`[data-act="tb-cell"][data-r="${r}"][data-c="${c}"]`);
+  function editCell(it, rowId, colId) {
+    const t0 = it.data, col0 = t0.cols.find((c) => c.id === colId);
+    if (!col0 || !t0.rows.some((r) => r.id === rowId)) return;
+    const kind = col0.type === 'date' ? 'date' : col0.type === 'number' || col0.type === 'money' ? 'number' : 'text';
+    const grab = () => cellEl(it, rowId, colId);
+    const cur = t0.rows.find((r) => r.id === rowId);
+    inlineEdit(grab, { value: cur.c?.[colId] ?? '', kind, options: col0.type === 'select' ? col0.options || [] : null }, (v) => {
+      let val = kind === 'number' ? (String(v).trim() === '' ? '' : toNum(v)) : String(v).trim().slice(0, 500);
+      const tt = it.data, cc = tt.cols?.find((c) => c.id === colId), rr = tt.rows?.find((r) => r.id === rowId);
+      if (!cc || !rr) return;
+      change(() => {
+        if (cc.type === 'select' && val && !(cc.options || []).includes(val)) cc.options = [...(cc.options || []), val].slice(0, 40);
+        rr.c = { ...rr.c, [colId]: val };
+        it.data = { ...tt, fresh: undefined };
+      });
+    }, (back) => {
+      // Tab: the next cell you can type in, then on to the next row
+      const cols = it.data.cols.filter((c) => c.type !== 'calc' && c.type !== 'check'), rows = orderedRows(it.data);
+      let ri = rows.findIndex((r) => r.id === rowId), ci = cols.findIndex((c) => c.id === colId) + (back ? -1 : 1);
+      if (ci >= cols.length) { ci = 0; ri++; } else if (ci < 0) { ci = cols.length - 1; ri--; }
+      if (rows[ri] && cols[ci]) editCell(it, rows[ri].id, cols[ci].id);
+    });
+  }
+  const getPath = (o, path) => path.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
+  function setPath(o, path, v) { const c = structuredClone(o); const ks = path.split('.'); let a = c; for (const k of ks.slice(0, -1)) { a[k] ??= {}; a = a[k]; } a[ks[ks.length - 1]] = v; return c; }
+  function bizAction(it, act, btn) {
+    const d = it.data || {};
+    // a shared view can browse the stats, nothing more
+    if (readonly) { if (act.startsWith('st-')) { it.data = { ...d, ...(act === 'st-period' ? { period: btn.dataset.v, offset: 0 } : { offset: Math.min(0, (Number(d.offset) || 0) + (act === 'st-prev' ? -1 : 1)) }) }; render(); } else if (act === 'inv-print') printInvoice(it); return; }
+    if (act === 'tb-cell') editCell(it, btn.dataset.r, btn.dataset.c);
+    else if (act === 'tb-check') change(() => { const row = d.rows.find((r) => r.id === btn.dataset.r); if (row) { row.c = { ...row.c, [btn.dataset.c]: !row.c?.[btn.dataset.c] }; it.data = { ...d }; } });
+    else if (act === 'tb-add') {
+      const c = {};
+      for (const col of d.cols || []) if (col.type === 'date') c[col.id] = dateKey();
+      const row = newRow(c);
+      change(() => { it.data = { ...d, rows: [...(d.rows || []), row], fresh: undefined }; });
+      const first = (d.cols || []).find((col) => !['calc', 'check', 'date'].includes(col.type));
+      if (first) setTimeout(() => { const w = els.get(it.id)?.querySelector('.tb-wrap'); const td = cellEl(it, row.id, first.id); if (w && td) td.scrollIntoView({ block: 'nearest' }); editCell(it, row.id, first.id); }, 30);
+    } else if (act === 'tb-del') change(() => { it.data = { ...d, rows: d.rows.filter((r) => r.id !== btn.dataset.r) }; });
+    else if (act === 'st-prev' || act === 'st-next') change(() => { it.data = { ...d, offset: Math.min(0, (Number(d.offset) || 0) + (act === 'st-prev' ? -1 : 1)) }; });
+    else if (act === 'st-period') change(() => { it.data = { ...d, period: btn.dataset.v, offset: 0 }; });
+    else if (act === 'inv-edit') {
+      const f = btn.dataset.f, kind = btn.dataset.kind;
+      inlineEdit(() => els.get(it.id)?.querySelector(`[data-act="inv-edit"][data-f="${f}"]`), { value: getPath({ ...invoiceDefaults(), ...d }, f) ?? '', kind }, (v) => change(() => { it.data = setPath({ ...invoiceDefaults(), ...it.data }, f, kind === 'number' ? (toNum(v) || 0) : String(v).slice(0, 2000)); }));
+    } else if (act === 'inv-add') change(() => { const dd = { ...invoiceDefaults(), ...d }; it.data = { ...dd, lines: [...(dd.lines || []), { d: '', q: 1, p: 0 }] }; });
+    else if (act === 'inv-del') change(() => { const dd = { ...invoiceDefaults(), ...d }; it.data = { ...dd, lines: dd.lines.filter((_, i) => i !== Number(btn.dataset.i)) }; });
+    else if (act === 'inv-print') printInvoice(it);
+  }
+  function printInvoice(it) {
+    document.getElementById('print-root')?.remove();
+    const sheet = h('div', { id: 'print-root' }, invoiceBody(it.data || {}, { editable: false, print: true }));
+    document.body.append(sheet);
+    document.documentElement.classList.add('printing');
+    const done = () => { document.documentElement.classList.remove('printing'); sheet.remove(); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    setTimeout(() => { window.print(); setTimeout(done, 1500); }, 60);
+  }
+  function download(name, text, type = 'text/csv') {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = h('a', { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  function tablePop(btn) {
+    const it = oneSel();
+    if (!it || it.type !== 'table') return;
+    const d = it.data || {};
+    const set = (fn, again = true) => { change(() => { const nd = structuredClone(it.data || {}); fn(nd); delete nd.fresh; it.data = nd; }); if (again) { closePop(); setTimeout(() => tablePop(btn), 20); } };
+    const names = (d.cols || []).map((c) => `[${c.name}]`).join(' ');
+    const colRow = (c, i) => h('div', { class: 'col-row' },
+      h('input', { class: 'num-in', value: c.name, 'aria-label': 'Column name', onchange: (e) => set((nd) => { nd.cols[i].name = e.target.value.slice(0, 40) || c.name; }, false) }),
+      h('select', { class: 'sel-in', 'aria-label': 'Column type', onchange: (e) => set((nd) => { nd.cols[i].type = e.target.value; if (e.target.value === 'calc' && !nd.cols[i].expr) nd.cols[i].expr = ''; }) }, COL_TYPES.map((ty) => h('option', { value: ty, selected: ty === c.type }, COL_LABEL[ty]))),
+      c.type === 'calc' ? h('input', { class: 'num-in wide', value: c.expr || '', placeholder: '[Qty] * [Price]', title: `Use the other columns in square brackets: ${names}`, onchange: (e) => set((nd) => { nd.cols[i].expr = e.target.value.slice(0, 200); }, false) }) : null,
+      c.type === 'calc' ? h('label', { class: 'mini-tg' }, h('input', { type: 'checkbox', checked: !!c.money, onchange: (e) => set((nd) => { nd.cols[i].money = e.target.checked; }, false) }), 'money') : null,
+      c.type === 'select' ? h('input', { class: 'num-in wide', value: (c.options || []).join(', '), placeholder: 'Food, Rent, Transport', onchange: (e) => set((nd) => { nd.cols[i].options = e.target.value.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 40); }, false) }) : null,
+      h('button', { type: 'button', class: 'tb-del', title: 'Remove this column', onclick: () => set((nd) => { nd.cols.splice(i, 1); }) }, '×'));
+    const body = h('div', { class: 'pgrid' },
+      !(d.rows || []).length ? h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Start from'), h('div', { class: 'wd-row' }, Object.keys(TABLE_TEMPLATES).map((k) => h('button', { type: 'button', class: 'chip', onclick: () => { const tp = TABLE_TEMPLATES[k](); change(() => { it.title = tp.title; it.data = { ...d, cols: tp.cols, rows: [], fresh: undefined }; }); closePop(); setTimeout(() => tablePop(btn), 20); } }, TEMPLATE_LABEL[k])))) : null,
+      h('div', { class: 'pr col' }, h('span', { class: 'pl' }, 'Columns'), h('div', { class: 'cols-ed' }, (d.cols || []).map(colRow),
+        h('div', { class: 'wd-row' }, ['text', 'number', 'money', 'date', 'select', 'check', 'calc'].map((ty) => h('button', { type: 'button', class: 'chip', onclick: () => set((nd) => { nd.cols.push(newCol(ty, ty === 'calc' ? 'Result' : COL_LABEL[ty], ty === 'calc' ? { expr: '' } : {})); }) }, `＋ ${COL_LABEL[ty]}`))))),
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Currency'), h('input', { class: 'num-in', value: d.currency ?? 'TZS', placeholder: 'TZS', onchange: (e) => set((nd) => { nd.currency = e.target.value.trim().slice(0, 6); }, false) })),
+      segRow('Order', [['', 'As added'], ['new', 'Newest first'], ['big', 'Biggest first']], d.sort || '', (v) => set((nd) => { nd.sort = v || undefined; }, false)),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn sm', onclick: () => download(`${(it.title || 'table').replace(/[^\w-]+/g, '-')}.csv`, toCSV(it.data)) }, '⬇ Export CSV'), h('button', { type: 'button', class: 'btn sm', onclick: () => { closePop(); addStatFor(it); } }, '📊 Add a stat for it')),
+      h('p', { class: 'phint' }, 'Formula columns work things out for every row, e.g. [Qty] * [Price] or [Owed] - [Paid]. Totals add up at the bottom. Add rows any time, even when the board is locked.'));
+    openPop({ ...anchorFor(btn), title: '🧮 Table', width: 560, body });
+  }
+  function addStatFor(tb) {
+    const st = makeItem('stat', { x: tb.x + tb.w + 70, y: tb.y, z: maxZ() + 1, title: '', data: { view: 'months' }, anim: { in: 'pop' } });
+    const l = makeLink({ item: tb.id }, { item: st.id }, { style: { ...LINK_DEFAULT, ...(data.settings.linkStyle || {}) } });
+    change(() => { data.items.push(st); data.links.push(l); });
+    select([st.id]);
+  }
+  function statPop(btn) {
+    const it = oneSel();
+    if (!it || it.type !== 'stat') return;
+    const d = it.data || {};
+    const set = (patch, again = false) => { change(() => { it.data = { ...it.data, ...patch }; }); if (again) { closePop(); setTimeout(() => statPop(btn), 20); } };
+    const tables = data.items.filter((i) => i.type === 'table');
+    const src = sourceOf(it), cols = src?.data?.cols || [];
+    const opt = (v, label, on) => h('option', { value: v, selected: on }, label);
+    const body = h('div', { class: 'pgrid' },
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'From'), h('select', { class: 'sel-in', onchange: (e) => set({ source: e.target.value || undefined, col: undefined, filterCol: undefined, filterVal: undefined }, true) }, opt('', src && !d.source ? `Connected: ${src.title || 'table'}` : 'The table connected to it', !d.source), tables.map((t) => opt(t.id, `🧮 ${t.title || 'Table'}`, d.source === t.id)))),
+      src ? h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Number'), h('select', { class: 'sel-in', onchange: (e) => set({ col: e.target.value || undefined }) }, opt('', 'The total (automatic)', !d.col), cols.filter(isNumeric).map((c) => opt(c.id, c.name, d.col === c.id)))) : null,
+      segRow('Show', STAT_FNS, d.fn || 'sum', (v) => set({ fn: v })),
+      segRow('Period', STAT_PERIODS, d.period || 'month', (v) => set({ period: v, offset: 0 })),
+      segRow('Look', STAT_VIEWS, d.view || 'months', (v) => set({ view: v })),
+      src ? h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Only rows'), h('select', { class: 'sel-in', onchange: (e) => set({ filterCol: e.target.value || undefined, filterVal: undefined }, true) }, opt('', 'All rows', !d.filterCol), cols.filter((c) => ['select', 'text', 'check'].includes(c.type)).map((c) => opt(c.id, `where ${c.name}…`, d.filterCol === c.id)))) : null,
+      src && d.filterCol ? (() => { const c = cols.find((x) => x.id === d.filterCol); const vals = c?.type === 'check' ? ['true', 'false'] : [...new Set((src.data.rows || []).map((r) => String(r.c?.[c.id] ?? '')).filter(Boolean))].slice(0, 60); return h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'is'), h('select', { class: 'sel-in', onchange: (e) => set({ filterVal: e.target.value || undefined }) }, opt('', 'Pick…', !d.filterVal), vals.map((v) => opt(v, c?.type === 'check' ? (v === 'true' ? 'ticked' : 'not ticked') : v, d.filterVal === v)))); })() : null,
+      segRow('Going up is', [['up', '👍 Good (sales)'], ['down', '👎 Bad (spending)']], d.good || 'up', (v) => set({ good: v })),
+      h('p', { class: 'phint' }, 'Use ‹ › on the stat to look at earlier months or years. “By category” splits the total by a Choice column, like spending per category.'));
+    openPop({ ...anchorFor(btn), title: '📊 Stat', width: 520, body });
+  }
+  function invoicePop(btn) {
+    const it = oneSel();
+    if (!it || it.type !== 'invoice') return;
+    const d = { ...invoiceDefaults(), ...it.data };
+    const set = (patch) => change(() => { it.data = { ...invoiceDefaults(), ...it.data, ...patch }; });
+    const tables = data.items.filter((i) => i.type === 'table');
+    const tt = invoiceTotals(d);
+    const body = h('div', { class: 'pgrid' },
+      segRow('Status', [['draft', 'Draft'], ['sent', 'Sent'], ['paid', '✓ Paid']], d.status || 'draft', (v) => set({ status: v })),
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Currency'), h('input', { class: 'num-in', value: d.currency, onchange: (e) => set({ currency: e.target.value.trim().slice(0, 6) }) })),
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Tax %'), h('input', { class: 'num-in', type: 'number', min: 0, max: 100, value: d.taxPct || '', placeholder: '0 (VAT is 18)', onchange: (e) => set({ taxPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }) })),
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Discount'), h('input', { class: 'num-in', type: 'number', min: 0, value: d.discount || '', placeholder: '0', onchange: (e) => set({ discount: Math.max(0, Number(e.target.value) || 0) }) })),
+      h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'btn sm', onclick: () => { closePop(); printInvoice(it); } }, '🖨 Print / PDF'),
+        h('button', { type: 'button', class: 'btn sm', title: 'Same business details, next number, empty lines', onclick: () => { closePop(); const nx = makeItem('invoice', { x: it.x + it.w + 60, y: it.y, w: it.w, h: it.h, z: maxZ() + 1, style: { ...it.style }, data: { ...invoiceDefaults(), from: d.from, currency: d.currency, pay: d.pay, notes: d.notes, taxPct: d.taxPct, no: nextInvoiceNo(d.no), lines: [{ d: '', q: 1, p: 0 }] } }); change(() => data.items.push(nx)); select([nx.id]); } }, '＋ Next invoice')),
+      tables.length ? h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'Log it'), h('select', { class: 'sel-in', onchange: (e) => {
+        const tb = byId(e.target.value);
+        if (!tb) return;
+        const cols = tb.data.cols || [], c = {};
+        const dc = cols.find((x) => x.type === 'date'), tc = cols.find((x) => x.type === 'text'), mc = cols.find((x) => x.type === 'money');
+        if (dc) c[dc.id] = d.date; if (tc) c[tc.id] = d.to?.name || d.no; if (mc) c[mc.id] = tt.total;
+        const pc = cols.find((x) => x.type === 'check'); if (pc) c[pc.id] = d.status === 'paid';
+        change(() => { tb.data = { ...tb.data, rows: [...(tb.data.rows || []), newRow(c)] }; });
+        notify(`Added ${d.no} to ${tb.title || 'the table'}`, 'info'); e.target.value = '';
+      } }, h('option', { value: '' }, 'Add this invoice as a row in…'), tables.map((t) => h('option', { value: t.id }, `🧮 ${t.title || 'Table'}`)))) : null,
+      h('p', { class: 'phint' }, 'Tap any text on the invoice to change it. In the print window choose “Save as PDF” to send it on WhatsApp or email.'));
+    openPop({ ...anchorFor(btn), title: '🧾 Invoice', width: 470, body });
+  }
+
   // ---------- trackers ----------
   const oneSel = () => byId([...sel][0]);
   const LENGTHS = [[0, 'Forever'], [7, '7'], [21, '21'], [30, '30'], [66, '66'], [90, '90'], [180, '180'], [365, '365']];
@@ -2008,7 +2189,7 @@ export function createEditor(host, { board, share = null, onBack, onRenamed }) {
       destroyed = true; save.flush?.(); clearInterval(trackTimer);
       window.removeEventListener('keydown', onKey); document.removeEventListener('paste', onPaste); document.removeEventListener('fullscreenchange', onFs);
       window.removeEventListener('flowmap-theme', offTheme); window.removeEventListener('flowmap-motion', offTheme);
-      presenting?.end?.(); closePop(); closeMenu();
+      presenting?.end?.(); closePop(); closeMenu(); closeInline(false);
       sf.destroy(); root.remove();
     },
     present,

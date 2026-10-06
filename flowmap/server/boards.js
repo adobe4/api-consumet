@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import { HttpError } from './models.js';
 import { hashPassword, verifyPassword } from './auth.js';
+import { TABLE_TEMPLATES, invoiceDefaults } from '../public/js/board/biz.js';
 import { sanitizeBoard, generateBoard, BoardError, emptyBoard, bounds, makeItem, makeLink, newId, ITEM_TYPES, SHAPES, LINK_KINDS, LINK_PATHS, LINK_DASH, LINK_ENDS, FINISHES, SHADOWS, ANIM_IN, ANIM_LOOP, FONT_SIZES, ALIGNS, GROUNDS, CLIP_KINDS, CLIP_METALS, CLIP_SIZE, PAPERS, LIFTS, NOTE_PINS, FONT_PX } from '../shared/board.js';
 
 const HIDE_COVERS = ['blur', 'frost', 'solid', 'curtain'];
@@ -161,6 +162,8 @@ const LOOK_PROPS = {
   length: { type: 'number', description: 'For type=habit: a challenge length in periods (e.g. 30 days, 180 for six months); 0 = forever' },
   onMiss: { type: 'string', enum: ['mark', 'restart'], description: 'For type=habit: a missed period is marked red, or the challenge starts again' },
   view: { type: 'string', enum: ['ring', 'bar', 'calendar', 'line', 'number'], description: 'For type=progress: how it looks. Connect a habit or checklist into it (connections) to feed it, or give value/target to count something yourself' },
+  template: { type: 'string', enum: Object.keys(TABLE_TEMPLATES), description: 'For type=table: sales (date, customer, item, qty, price, total formula, paid), expenses (date, category, note, amount), debts (who, owed, paid, left, due), goals, blank. Connect a table into a type=stat (totals by month/year/category) or a type=progress (goal: target)' },
+  currency: { type: 'string', description: 'For type=table or type=invoice, e.g. TZS' },
   value: { type: 'number', description: 'For type=progress without a habit: the current number' }, target: { type: 'number', description: 'For type=progress: the goal number' }, unit: { type: 'string', description: 'For type=progress: e.g. TZS, videos, km' },
   cover: { type: 'string', enum: HIDE_COVERS, description: 'For type=hide: a cover laid over other items that the viewer taps to reveal what is underneath. Good for quiz answers, prices, the next step.' },
   clip: { type: 'string', enum: CLIP_KINDS, description: 'For type=clip: a realistic paperclip, binder clip, push pin or tape strip that sits on top of a note, card or photo. Put it over the top edge of the thing it holds, rotate it a little.' },
@@ -240,6 +243,13 @@ function applyLook(it, o, { dx = 0, dy = 0 } = {}) {
     if (finite(o.length)) d.length = Math.max(0, Math.min(3650, Math.round(o.length)));
     if (o.onMiss === 'mark' || o.onMiss === 'restart') d.onMiss = o.onMiss;
   }
+  if (it.type === 'table' && !d.cols) {
+    const tp = (TABLE_TEMPLATES[o.template] || TABLE_TEMPLATES.sales)();
+    d.cols = tp.cols; d.rows = []; d.currency = typeof o.currency === 'string' ? o.currency.slice(0, 6) : 'TZS';
+    if (!it.title) it.title = tp.title;
+  }
+  if (it.type === 'stat' && !d.view) d.view = 'months';
+  if (it.type === 'invoice' && !d.lines) Object.assign(d, invoiceDefaults(), typeof o.currency === 'string' ? { currency: o.currency.slice(0, 6) } : {});
   if (it.type === 'progress') {
     if (['ring', 'bar', 'calendar', 'line', 'number'].includes(o.view)) d.view = o.view;
     for (const k of ['value', 'target']) if (finite(o[k])) d[k] = o[k];

@@ -7,6 +7,7 @@ import { fileUrl, videoUrl } from './files.js';
 import { clipSvg } from './clips.js';
 import { arrowPath } from './arrows.js';
 import { habitView, progressView } from './track-ui.js';
+import { tableView, statView, invoiceView } from './biz-ui.js';
 import { checklistState, EVERY_LABEL } from './track.js';
 
 const star = (() => { const pts = []; for (let i = 0; i < 10; i++) { const r = i % 2 ? 22 : 50, a = (i / 10) * Math.PI * 2 - Math.PI / 2; pts.push(`${50 + Math.cos(a) * r},${52 + Math.sin(a) * r}`); } return `M${pts.join(' L')}Z`; })();
@@ -17,7 +18,7 @@ export const SHAPE_PATHS = {
 export const SHAPE_LABEL = { rect: '▭ Box', round: '▢ Rounded', pill: '⬭ Pill', ellipse: '◯ Circle', diamond: '◇ Diamond', triangle: '△ Triangle', hexagon: '⬡ Hexagon', star: '☆ Star', arrow: '➜ Arrow', bubble: '💬 Speech' };
 const NS = 'http://www.w3.org/2000/svg';
 
-export const TYPE_LABEL = { note: 'Sticky note', card: 'Card', text: 'Text', shape: 'Shape', frame: 'Frame', flip: 'Flip card', image: 'Image', video: 'Video', file: 'File', link: 'Link', project: 'Project', sticker: 'Sticker', ink: 'Drawing', checklist: 'Checklist', habit: 'Habit', progress: 'Progress', prompt: 'Prompt', hide: 'Hide', clip: 'Clip', media: 'Video or post', arrow: 'Arrow' };
+export const TYPE_LABEL = { note: 'Sticky note', card: 'Card', text: 'Text', shape: 'Shape', frame: 'Frame', flip: 'Flip card', image: 'Image', video: 'Video', file: 'File', link: 'Link', project: 'Project', sticker: 'Sticker', ink: 'Drawing', checklist: 'Checklist', habit: 'Habit', progress: 'Progress', table: 'Table', stat: 'Stat', invoice: 'Invoice', prompt: 'Prompt', hide: 'Hide', clip: 'Clip', media: 'Video or post', arrow: 'Arrow' };
 // typed text goes in raw: what people write is never turned into icons
 const ed = (cls, text, field, placeholder) => h('div', { class: `ed ${cls}`, 'data-field': field, 'data-ph': placeholder || '' }, raw(text || ''));
 const ellipsis = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -131,6 +132,9 @@ function buildInner(it, ctx) {
     }
     case 'habit': return habitView(it, ctx);
     case 'progress': return progressView(it, ctx);
+    case 'table': return tableView(it, ctx);
+    case 'stat': return statView(it, ctx);
+    case 'invoice': return invoiceView(it, ctx);
     case 'prompt': return [h('div', { class: 'prh' }, h('span', null, '✦'), ed('ttl', it.title, 'title', 'Prompt'), h('button', { type: 'button', class: 'btn sm primary', 'data-act': 'copy', title: 'Copy the prompt' }, '⧉ Copy')), ed('txt selectable sf-scroll', it.text, 'text', 'Write or paste a prompt…')];
     // a cover over other things: blurred, frosted, solid or striped; tapped away while presenting
     case 'clip': return [clipSvg(it)];

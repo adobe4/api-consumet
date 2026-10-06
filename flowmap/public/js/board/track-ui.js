@@ -1,7 +1,8 @@
 // How trackers look on a board: a habit you tick, and progress views (ring, bar, calendar, line, number)
 // fed by a habit, a checklist, or a number you count yourself.
 import { h, raw, fmtNum } from '../util.js';
-import { habitState, progressOf, EVERY_LABEL, UNIT, fmtLeft } from './track.js';
+import { habitState, progressOf, tableProgress, EVERY_LABEL, UNIT, fmtLeft } from './track.js';
+import { statOf } from './biz.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs, ...kids) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v); kids.forEach((c) => c && el.append(c)); return el; };
@@ -75,11 +76,11 @@ export const PROGRESS_VIEWS = [['ring', '◯ Ring'], ['bar', '▬ Bar'], ['calen
 export function progressView(it, ctx) {
   const d = it.data || {};
   const src = ctx.source?.(it) || null;
-  const p = progressOf(src, d);
+  const p = src?.type === 'table' ? tableProgress(statOf(src.data, { col: d.col, period: d.period || 'month' }), d) : progressOf(src, d);
   const view = d.view || (p.kind === 'habit' ? 'calendar' : 'ring');
   const title = ed('ttl', it.title, 'title', src ? src.title || 'Progress' : 'Progress');
-  const kids = [h('div', { class: 'pg-top' }, title, src ? h('small', { class: 'pg-src', title: 'Fed by a connected item' }, raw(`↳ ${src.title || (src.type === 'habit' ? 'Habit' : 'Checklist')}`)) : null)];
-  const unit = p.kind === 'habit' ? unitOf(p.st.every) : d.unit || '';
+  const kids = [h('div', { class: 'pg-top' }, title, src ? h('small', { class: 'pg-src', title: 'Fed by a connected item' }, raw(`↳ ${src.title || ({ habit: 'Habit', checklist: 'Checklist', table: 'Table' })[src.type]}${p.kind === 'table' ? ` · ${{ month: 'this month', year: 'this year', '30d': 'last 30 days', all: 'all time' }[d.period || 'month']}` : ''}`)) : null)];
+  const unit = p.kind === 'habit' ? unitOf(p.st.every) : p.kind === 'table' ? (src.data?.currency ?? 'TZS') : d.unit || '';
   const label = p.kind === 'habit' ? `${fmtNum(p.value)} / ${plural(p.target, unit)}` : p.kind === 'checklist' ? `${p.value} / ${p.target} done` : `${fmtNum(p.value)}${p.target ? ` / ${fmtNum(p.target)}` : ''}${unit ? ` ${unit}` : ''}`;
   if (view === 'ring') kids.push(ring(p.frac, pctText(p.frac), label));
   else if (view === 'bar') kids.push(h('div', { class: 'pg-bar' }, h('div', { class: 'pg-barl' }, h('b', null, raw(pctText(p.frac))), h('small', null, raw(label))), h('div', { class: 'pg-track-bar' }, h('i', { style: { width: `${p.frac * 100}%` } }))));
